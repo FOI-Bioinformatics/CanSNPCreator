@@ -3,6 +3,8 @@ import re
 import os.path
 import sys
 import csv
+import yaml
+from typing import List, Dict, Union, NoReturn
 
 
 def clean_name(name):
@@ -97,5 +99,95 @@ class hc_parser():
         return self.dictonary
 
 
+def snp_file_parser(snpfile):
+	snps = []
+	with open(snpfile,'r') as snp_file:
+		allsnps = snp_file.read().split("\n")
+		del allsnps[-1] #last element is empty due to split
+	for snp in allsnps:
+		if "#" in snp:
+			continue
+		else:
+			try:
+				variants = snp.split(" ")
+				variants[0] = int(variants[0])
+				snps.append(variants)
+			except ValueError:
+				print("ValueError, could not convert snp %s to an integer. Ignoring snp." %snp)
+	return snps
+def reference_parser(reference):
+	ref = ""
+	chromosomes = 0
+	chro_lengths = []
+	with open(reference,'r') as fil:
+		temp = fil.read().split("\n")
+		for line in temp:
+			if ">" not in line:
+				ref = ref + line.strip("\n")
+			else:
+				if chromosomes != 0:
+					chro_lengths.append(len(ref))
+				chromosomes += 1
+	return_list = [ref] + chro_lengths
+	return return_list
+
+def gff_parser(gff_file):
+	genes = {}
+	with open(gff_file,'r') as gff:
+		current_region = 0
+		for line in gff:
+			if "#" in line:
+				continue
+			gene = line.split("\t")
+			if "region" in gene:
+				current_region += 1
+				genes[current_region] = []
+			elif "gene" in gene:
+				index = gene.index("gene")
+				genes[current_region].append([int(gene[index+1])-1, int(gene[index+2])-1,gene[index+4]])
+	return genes
+
+def trf_parser(input):
+	intervals = {}
+	with open(input, 'r') as trf:
+		chromosome = 0
+		for line in trf:
+			if "@" in line:
+				chromosome += 1
+				intervals[chromosome] = []
+				continue
+
+			temp_line = line.strip("\n")
+			temp_line = temp_line.split(" ")
+			try:
+				first = int(temp_line[0])
+				second = int(temp_line[1])
+				intervals[chromosome].append([first,second])
+			except ValueError:
+				continue
+	for i in intervals:
+		intervals[i] = sorted(intervals[i], key=itemgetter(0))
+
+	return intervals
 
 
+# Writes a csv file with snps
+def file_writer(data, output):
+	with open(output, 'w') as out_file:
+		writer = csv.writer(out_file, delimiter=',')
+		writer.writerow(["SNP", "Group", "Score", "Neighbour-snps", "GC-content", "tandem", "Gene", "Mutation"])
+		for line in data:
+			writer.writerow(line)
+
+def read(file: str) -> Dict:
+	with open(file,'r') as yam:
+		return next(yaml.load_all(yam, Loader=yaml.FullLoader))
+
+def check_files_exist(files: List[str]) -> bool:
+    return all(os.path.isfile(file) for file in files)
+
+def cansnp_file_writer(data: List, output: str) -> None:
+	with open(output, 'w') as out_file:
+		for line in data:
+			info = " ".join(line)
+			out_file.write(info+"\n")
