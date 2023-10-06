@@ -13,9 +13,9 @@ setup(
     ],
     entry_points={
         'console_scripts': [
+            'CanSNPScorer=cansnpscorer.cansnp_scorer:main',
             'cansnp-evaluator=cansnpscorer.cansnp_evaluator:main',
             'cansnp-extractor=cansnpscorer.cansnp_extractor:main',
         ],
     },
 )
-

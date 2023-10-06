@@ -1,39 +1,57 @@
 import argparse
-import yaml
+import logging
+from datetime import datetime
 
-from cansnpscorer.helpers.file_utils import fasta_parser, hc_parser, cansnp_file_writer
+
+from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file
 from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Extract Single Nucleotide Polymorphisms (SNPs) and Canonical SNPs (canSNPs) from genomic data.")
 
-    parser.add_argument("--csvfile", required=True, help="Path to the input CSV file containing genome data.")
-    parser.add_argument("--hcfile", required=True, help="Path to the input Hierarchical Clustering (HC) file.")
-    parser.add_argument("--fastafile", required=True,
-                        help="Path to the input FASTA file containing sequence alignments.")
-    parser.add_argument("-o", "--output", required=True,
-                        help="Path to the output file where extracted SNPs and canSNPs will be saved.")
+def main(csvfile=None, hcfile=None, fastafile=None, output=None):
+    if csvfile is None and hcfile is None:  # If no arguments passed in, use argparse
+        parser = argparse.ArgumentParser(
+            description="Extract Single Nucleotide Polymorphisms (SNPs) and Canonical SNPs (canSNPs) from genomic data.")
+        parser.add_argument("--csvfile", required=True, help="Path to the input CSV file containing genome data.")
+        parser.add_argument("--hcfile", required=True, help="Path to the input Hierarchical Clustering (HC) file.")
+        parser.add_argument("--fastafile", required=True,
+                            help="Path to the input FASTA file containing sequence alignments.")
+        parser.add_argument("-o", "--output", required=True,
+                            help="Path to the output file where extracted SNPs and canSNPs will be saved.")
+        args = parser.parse_args()
 
-    args = parser.parse_args()
+        csvfile = args.csvfile
+        hcfile = args.hcfile
+        fastafile = args.fastafile
+        output = args.output
+
+    # Initialize logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info(f"Parameters: csvfile={csvfile}, hcfile={hcfile}, fastafile={fastafile}, output={output}")
+
 
     # Parse HC data from YAML file
-    hc_parser_obj = hc_parser(args.csvfile)
+    hc_parser_obj = HCParser(csvfile)
 
-    with open(args.hcfile, 'r') as stream:
-        yaml_data = next(yaml.load_all(stream, Loader=yaml.SafeLoader))
+    yaml_data = read_yaml_file(hcfile)
 
     hc_data = hc_parser_obj.reader(yaml_data)
 
     # Parse FASTA data
-    fasta_data = fasta_parser(args.fastafile, True, True)
+    fasta_data = fasta_parser(fastafile, 'dict')
 
-    # Extract SNPs and canSNPs
+    # Extract SNPs
     snps = snp_extractor(fasta_data)
+
+    # ExtractCanSNPs
     cansnps = canSNP_extractor(fasta_data, hc_data, snps)
 
     # Write canSNPs to the output file
-    cansnp_file_writer(cansnps, args.output)
+    cansnp_file_writer(cansnps, outputfile_name)
+
+    logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
 
 if __name__ == "__main__":
     main()
