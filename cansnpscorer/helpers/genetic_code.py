@@ -1,0 +1,67 @@
+codon_table = {
+    # Phenylalanine
+    "TTT": "F", "TTC": "F",
+
+    # Leucine
+    "TTA": "L", "TTG": "L",
+    "CTT": "L", "CTC": "L", "CTA": "L", "CTG": "L",
+
+    # Serine
+    "TCT": "S", "TCC": "S", "TCA": "S", "TCG": "S",
+    "AGT": "S", "AGC": "S",
+
+    # Tyrosine
+    "TAT": "Y", "TAC": "Y",
+
+    # Stop codon
+    "TAA": "*", "TAG": "*", "TGA": "*",
+
+    # Cysteine
+    "TGT": "C", "TGC": "C",
+
+    # Tryptophan
+    "TGG": "W",
+
+    # Proline
+    "CCT": "P", "CCC": "P", "CCA": "P", "CCG": "P",
+
+    # Histidine
+    "CAT": "H", "CAC": "H",
+
+    # Glutamine
+    "CAA": "Q", "CAG": "Q",
+
+    # Arginine
+    "CGT": "R", "CGC": "R", "CGA": "R", "CGG": "R",
+    "AGA": "R", "AGG": "R",
+
+    # Isoleucine
+    "ATT": "I", "ATC": "I", "ATA": "I",
+
+    # Methionine
+    "ATG": "M",
+
+    # Threonine
+    "ACT": "T", "ACC": "T", "ACA": "T", "ACG": "T",
+
+    # Asparagine
+    "AAT": "N", "AAC": "N",
+
+    # Lysine
+    "AAA": "K", "AAG": "K",
+
+    # Valine
+    "GTT": "V", "GTC": "V", "GTA": "V", "GTG": "V",
+
+    # Alanine
+    "GCT": "A", "GCC": "A", "GCA": "A", "GCG": "A",
+
+    # Aspartic Acid
+    "GAT": "D", "GAC": "D",
+
+    # Glutamic Acid
+    "GAA": "E", "GAG": "E",
+
+    # Glycine
+    "GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
+}
