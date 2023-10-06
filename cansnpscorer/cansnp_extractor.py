@@ -1,4 +1,6 @@
 import argparse
+import yaml
+
 from cansnpscorer.helpers.file_utils import fasta_parser, hc_parser, cansnp_file_writer
 from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
 
@@ -16,12 +18,15 @@ def main():
     args = parser.parse_args()
 
     # Parse HC data from YAML file
-    hc_parser_obj = hc_parser.hc_parser(args.csvfile)
-    yaml_data = load(args.hcfile)
+    hc_parser_obj = hc_parser(args.csvfile)
+
+    with open(args.hcfile, 'r') as stream:
+        yaml_data = next(yaml.load_all(stream, Loader=yaml.SafeLoader))
+
     hc_data = hc_parser_obj.reader(yaml_data)
 
     # Parse FASTA data
-    fasta_data = fasta_parse(args.fastafile, True, True)
+    fasta_data = fasta_parser(args.fastafile, True, True)
 
     # Extract SNPs and canSNPs
     snps = snp_extractor(fasta_data)
