@@ -12,10 +12,12 @@ def main():
 
     # Create the parser for the "extract" command
     parser_extract = subparsers.add_parser('extract', help='Extract canSNPs')
-    parser_extract.add_argument("--csvfile", required=True, help="Path to the input CSV file containing genome data.")
-    parser_extract.add_argument("--hcfile", required=True, help="Path to the input Hierarchical Clustering (HC) file.")
-    parser_extract.add_argument("--fastafile", required=True, help="Path to the input FASTA file containing sequence alignments.")
-    parser_extract.add_argument("-o", "--output", required=True, help="Path to the output file where extracted SNPs and canSNPs will be saved.")
+    parser_extract.add_argument("--csvfile", type=str, required=True, help="Path to the input CSV file containing genome data.")
+    parser_extract.add_argument("--hcfile", type=str, required=True, help="Path to the input Hierarchical Clustering (HC) file.")
+    parser_extract.add_argument("--fastafile", type=str, required=True, help="Path to the input FASTA file containing sequence alignments.")
+    parser_extract.add_argument("-o", "--output", type=str, required=True, help="Path to the output file where extracted SNPs and canSNPs will be saved.")
+    parser_extract.add_argument("-t", "--threads", type=int, default=4,
+                        help="Number of threads to use for parallel processing. Default is 4.")
 
     # Create the parser for the "evaluate" command
     parser_evaluate = subparsers.add_parser('evaluate', help='Evaluate canSNPs')
@@ -47,7 +49,7 @@ def main():
 
     if args.command == 'extract':
         logging.info(f"Starting canSNP extraction...")
-        cansnp_extractor.main(args.csvfile, args.hcfile, args.fastafile, args.output)
+        cansnp_extractor.main(args.csvfile, args.hcfile, args.fastafile, args.output, args.threads)
     elif args.command == 'evaluate':
         logging.info(f"Starting canSNP evaluation...")
         cansnp_evaluator.main(args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.output_file)

@@ -1,6 +1,7 @@
 from typing import List, Dict, Union, NoReturn, Tuple
 import re
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 import logging
 from cansnpscorer.helpers.genetic_code import codon_table
 
@@ -182,39 +183,11 @@ def clean_name(name: str) -> str:
     return ''.join(filter(str.isalnum, name))
 
 
-def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, int]]]]:
-    """
-    Extract Single Nucleotide Polymorphisms (SNPs) from genomic alignments.
-
-    Args:
-        fasta (Dict[str, str]): A dictionary where keys are sequence names and values are genomic sequences.
-
-    Returns:
-        List[Dict[str, Union[int, Dict[str, int]]]]: A list of dictionaries. Each dictionary contains:
-            - 'index': The position of the SNP in the reference sequence.
-            - 'variants': A dictionary with the nucleotide variants at that position and their counts.
-
-    Example:
-        Return value might look like:
-        [
-            {'index': 5, 'variants': {'A': 3, 'T': 2}},
-            {'index': 9, 'variants': {'G': 2, 'C': 3}},
-            ...
-        ]
-
-    """
-    alignment = list(fasta.values())
-    reference = alignment[0]
-    alignment = alignment[1:]
+def snp_extractor_worker(worker_id, start, end, alignment, reference, nucleotides):
+    logging.info(f"Worker {worker_id} started, processing indices {start} to {end}")
     snps = []
-
-    nucleotides = set(['A', 'T', 'C', 'G'])
-    total_length = len(reference)
-    last_logged_percent = 0
-
-    logging.info("Starting SNP extraction...")
-
-    for index, nucleotide in enumerate(reference):
+    for index in range(start, end):
+        nucleotide = reference[index]
         if nucleotide not in nucleotides:
             continue
 
@@ -229,46 +202,48 @@ def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, 
         if all(base in nucleotides for base in variants_count) and len(variants_count) == 2:
             snps.append({'index': index, 'variants': dict(variants_count)})
 
-        # Log progress every 10%
-        current_percent = int(((index + 1) / total_length) * 100)
-        if current_percent >= last_logged_percent + 10:
-            logging.info(f"Processed {index + 1}/{total_length} positions ({current_percent}%)")
-            last_logged_percent = current_percent
+    logging.info(f"Worker {worker_id} completed")
+    return snps
+
+def snp_extractor(fasta: Dict[str, str], num_threads=4) -> List[Dict[str, Union[int, Dict[str, int]]]]:
+    alignment = list(fasta.values())
+    reference = alignment[0]
+    alignment = alignment[1:]
+
+    nucleotides = set(['A', 'T', 'C', 'G'])
+    total_length = len(reference)
+
+    # Split the task into chunks for each thread
+    chunk_size = total_length // num_threads
+    futures = []
+
+    logging.info(f"Starting SNP extraction with {num_threads} workers...")
+
+    with ProcessPoolExecutor(max_workers=num_threads) as executor:
+        for i in range(num_threads):
+            start_index = i * chunk_size
+            end_index = (i + 1) * chunk_size if i != num_threads - 1 else total_length
+            futures.append(executor.submit(snp_extractor_worker, i, start_index, end_index, alignment, reference, nucleotides))
+
+    # Collect the results
+    snps = []
+    for future in futures:
+        snps.extend(future.result())
+
+    # Sort the SNPs by their index
+    snps = sorted(snps, key=lambda x: x['index'])
 
     logging.info(f"Extraction of {len(snps)} SNPs complete")
     return snps
 
-def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]], snps: List[Dict[str, Union[int, Dict[str, int]]]]) -> List[List[Union[str, int]]]:
-    """
-    Extract Canonical Single Nucleotide Polymorphisms (canSNPs) from genomic alignments.
 
-    Args:
-        alignment (Dict[str, str]): A dictionary where keys are sequence names and values are genomic sequences.
-        groups (Dict[str, List[str]]): A dictionary defining the groups of sequences.
-        snps (List[Dict[str, Union[int, Dict[str, int]]]]): A list of dictionaries, each containing 'index' and 'variants',
-                                                             representing the SNPs extracted from the genomic alignments.
-
-    Returns:
-        List[List[Union[str, int]]]: A list containing the canonical SNPs. Each element is a list containing the SNP index,
-                                     the group it belongs to, and the variants present at that position.
-
-    Example:
-        Return value might look like:
-        [
-            ['5', 'Group1', 'A', 'T'],
-            ['9', 'Group2', 'G', 'C'],
-            ...
-        ]
-
-    """
-    logging.info("Starting canSNP extraction...")
-    total_snps = len(snps)
+def canSNP_extractor_worker(worker_id, start, end, snps, alignment, groups):
+    logging.info(f"Worker {worker_id} started, processing indices {start} to {end}")
     cansnps = []
-
     canSNP_count = 0  # Counter for the number of canSNPs
-    last_logged_percent = -1  # Initialize to an impossible value
 
-    for i, snp in enumerate(snps):
+    for i in range(start, end):
+        snp = snps[i]
         variant = snp['index']
         frequencies = snp['variants']
         cansnp = "None"
@@ -297,12 +272,35 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]], sn
         if cansnp != "None":
             canSNP_count += 1
 
-        # Log progress every 10%
-        current_percent = int(((i + 1) / total_snps) * 100)
-        if current_percent >= last_logged_percent + 10:
-            logging.info(f"Writing progress: {current_percent}%")
-            last_logged_percent = current_percent  # Update the last logged percentage only when it changes
+    logging.info(f"Worker {worker_id} completed. Total canSNPs extracted in this worker: {canSNP_count}")
 
-    logging.info(f"CanSNP extraction complete. Total canSNPs extracted: {canSNP_count}")
+    return cansnps
+
+
+def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
+                     snps: List[Dict[str, Union[int, Dict[str, int]]]], num_threads=4) -> List[List[Union[str, int]]]:
+    logging.info(f"Starting canSNP extraction with {num_threads} workers...")
+
+    total_snps = len(snps)
+
+    # Split the task into chunks for each thread
+    chunk_size = total_snps // num_threads
+    futures = []
+
+    with ProcessPoolExecutor(max_workers=num_threads) as executor:
+        for i in range(num_threads):
+            start_index = i * chunk_size
+            end_index = (i + 1) * chunk_size if i != num_threads - 1 else total_snps
+            futures.append(executor.submit(canSNP_extractor_worker, i, start_index, end_index, snps, alignment, groups))
+
+    # Collect the results
+    cansnps = []
+    for future in futures:
+        cansnps.extend(future.result())
+
+    # Sort based on the SNP index, which is the first element in each sublist
+    cansnps.sort(key=lambda x: int(x[0]))
+
+    logging.info(f"CanSNP extraction complete. Total canSNPs extracted: {len(cansnps)}")
 
     return cansnps

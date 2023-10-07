@@ -7,7 +7,7 @@ from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_
 from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
 
 
-def main(csvfile=None, hcfile=None, fastafile=None, output=None):
+def main(csvfile=None, hcfile=None, fastafile=None, output=None, num_threads=4):
     if csvfile is None and hcfile is None:  # If no arguments passed in, use argparse
         parser = argparse.ArgumentParser(
             description="Extract Single Nucleotide Polymorphisms (SNPs) and Canonical SNPs (canSNPs) from genomic data.")
@@ -17,18 +17,21 @@ def main(csvfile=None, hcfile=None, fastafile=None, output=None):
                             help="Path to the input FASTA file containing sequence alignments.")
         parser.add_argument("-o", "--output", required=True,
                             help="Path to the output file where extracted SNPs and canSNPs will be saved.")
+        parser.add_argument("-t", "--threads", type=int, default=4,
+                            help="Number of threads to use for parallel processing. Default is 4.")
         args = parser.parse_args()
 
         csvfile = args.csvfile
         hcfile = args.hcfile
         fastafile = args.fastafile
         output = args.output
+        num_threads = args.threads
 
     # Initialize logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logging.info(f"Parameters: csvfile={csvfile}, hcfile={hcfile}, fastafile={fastafile}, output={output}")
+    logging.info(f"Parameters: csvfile={csvfile}, hcfile={hcfile}, fastafile={fastafile}, output={output}, threads={num_threads}")
 
 
     # Parse HC data from YAML file
@@ -42,7 +45,7 @@ def main(csvfile=None, hcfile=None, fastafile=None, output=None):
     fasta_data = fasta_parser(fastafile, 'dict')
 
     # Extract SNPs
-    snps = snp_extractor(fasta_data)
+    snps = snp_extractor(fasta_data, num_threads)
 
     # ExtractCanSNPs
     cansnps = canSNP_extractor(fasta_data, hc_data, snps)
