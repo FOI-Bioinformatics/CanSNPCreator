@@ -5,8 +5,12 @@ import sys
 import csv
 import logging
 from ruamel.yaml import YAML
-from typing import List, Dict, Union, NoReturn, Tuple
+from ruamel.yaml.representer import Representer
+from typing import List, Dict, Union, NoReturn, Tuple, Optional
 from operator import itemgetter
+import json
+from collections import defaultdict
+from io import StringIO
 
 def read_yaml_file(file: str) -> Union[Dict, None]:
     """
@@ -466,3 +470,226 @@ def cansnp_file_writer(cansnp_data: List[List[Union[str, int]]], output_filepath
 
     except Exception as e:
         logging.error(f"Failed to write canSNP data to {output_filepath}. Error: {str(e)}")
+
+
+def recognize_file_format(file_path: str) -> Union[str, None]:
+    logging.info(f"Attempting to recognize the format of file: {file_path}")
+
+    with open(file_path, 'r') as f:
+        first_lines = [next(f).strip() for _ in range(10) if not f.readline().strip() == ""]
+
+    if not first_lines:
+        logging.warning("The file appears to be empty or only contains whitespace.")
+        return None
+
+    # Check if it's a Newick format
+    if any(";" in line for line in first_lines):
+        logging.info(f"The file {file_path} appears to be in Newick format.")
+        return "newick"
+
+    # Check if it's a JSON format
+    if any(line.startswith("{") or line.startswith("[") for line in first_lines):
+        logging.info(f"The file {file_path} appears to be in JSON format.")
+        return "json"
+
+    # Check if it's a YAML format
+    if any(":" in line for line in first_lines):
+        logging.info(f"The file {file_path} appears to be in YAML format.")
+        return "yaml"
+
+    logging.warning(f"Unable to determine the format of the file {file_path}.")
+    return "unknown"
+
+
+def convert_data(data: str, input_format: str, output_format: str) -> str:
+    logging.info(f"Starting conversion from {input_format} to {output_format}")
+
+    def hier_to_child_parent_with_leaf(hier: Union[Dict, List], parent=None, cp_list=[]):
+        logging.debug(f"Converting hierarchy to child-parent: {hier} with parent {parent}")
+        if isinstance(hier, dict):
+            for k, v in hier.items():
+                cp_list.append((k, parent))
+                hier_to_child_parent_with_leaf(v, k, cp_list)
+        elif isinstance(hier, list):
+            for i in hier:
+                hier_to_child_parent_with_leaf(i, parent, cp_list)
+        else:
+            cp_list.append((hier, parent))
+        logging.debug(f"Child-parent list so far: {cp_list}")
+        return cp_list
+
+    def child_parent_to_hier_with_leaf(cp_list: List[Tuple[str, str]], root_is_list: bool = False) -> Union[Dict, List]:
+        logging.debug(f"Converting child-parent list to hierarchy: {cp_list}")
+        parent_to_children = defaultdict(list)
+
+        for child, parent in cp_list:
+            parent_to_children[parent].append(child)
+
+        def build_hier_from_parent_with_leaf(parent: Optional[str]) -> Union[Dict, List]:
+            children = parent_to_children.get(parent, [])
+            if not children:
+                return None
+            if len(children) != len(set(children)):
+                return [build_hier_from_parent_with_leaf(child) for child in children]
+            else:
+                return {child: build_hier_from_parent_with_leaf(child) for child in children}
+
+        hier = build_hier_from_parent_with_leaf(None)
+        logging.debug(f"Hierarchy so far: {hier}")
+
+        return hier
+
+        def hier_to_child_parent(hier: Union[Dict, List], parent=None, cp_list=[]):
+            if isinstance(hier, dict):
+                for k, v in hier.items():
+                    cp_list.append((k, parent))
+                    hier_to_child_parent(v, k, cp_list)
+            elif isinstance(hier, list):
+                for i in hier:
+                    hier_to_child_parent(i, parent, cp_list)
+            else:
+                cp_list.append((hier, parent))
+            return cp_list
+
+        def child_parent_to_hier(cp_list: List[Tuple[str, str]], root_is_list: bool = False) -> Union[Dict, List]:
+            parent_to_children = defaultdict(list)
+
+            for child, parent in cp_list:
+                parent_to_children[parent].append(child)
+
+            def build_hier_from_parent(parent: str) -> Union[Dict, List]:
+                children = parent_to_children.get(parent, [])
+                if not children:
+                    return None
+                if len(children) != len(set(children)):
+                    return [build_hier_from_parent(child) for child in children]
+                else:
+                    return {child: build_hier_from_parent(child) for child in children}
+
+            if root_is_list:
+                return [build_hier_from_parent(None)]
+            else:
+                return build_hier_from_parent(None)
+
+
+        def build_hier_from_parent_with_leaf(parent: Optional[str]) -> Union[Dict, List]:
+            children = parent_to_children.get(parent, [])
+            if not children:
+                return None
+            if len(children) != len(set(children)):
+                return [build_hier_from_parent_with_leaf(child) for child in children]
+            else:
+                return {child: build_hier_from_parent_with_leaf(child) for child in children}
+
+        if root_is_list:
+            return [build_hier_from_parent_with_leaf(None)]
+        else:
+            return build_hier_from_parent_with_leaf(None)
+
+    def remove_leaf_colons(yaml_str: str) -> str:
+        lines = yaml_str.splitlines()
+        processed_lines = []
+        for line in lines:
+            if line.strip().endswith(":"):
+                processed_lines.append(line.rstrip(":"))
+            else:
+                processed_lines.append(line)
+        return "\n".join(processed_lines)
+
+    def newick_to_child_parent(newick_str: str, parent=None, cp_list=[]):
+        stack = []
+        child_name = ""
+        for char in newick_str:
+            if char == "(":
+                stack.append((child_name, parent))
+                parent = child_name
+                child_name = ""
+            elif char == "," or char == ")":
+                stack.append((child_name, parent))
+                cp_list.append((child_name, parent))
+                child_name = ""
+            elif char != ";":
+                child_name += char
+        return cp_list
+
+    def build_newick(node, cp_list):
+        children = [child for child, parent in cp_list if parent == node]
+        if children:
+            return f"({','.join([build_newick(child, cp_list) for child in children])}){node}"
+        else:
+            return node
+
+    # Custom representer for dictionaries with null values
+    def null_dict_representer(dumper, data):
+        return dumper.represent_dict({k: v for k, v in data.items() if v is not None})
+
+    def remove_empty_dicts(yaml_str):
+        return yaml_str.replace(": {}", "")
+
+    # Function to dump YAML with custom representer
+    # Function to dump YAML with custom representer
+    def dump_custom_yaml(data):
+        yaml = YAML()
+        yaml.default_flow_style = None  # Use block style for collections
+        yaml.indent(sequence=4, offset=2)  # Indentation settings
+        yaml.representer.add_representer(dict, null_dict_representer)  # Add custom representer to this instance
+
+        stream = StringIO()
+        yaml.dump(data, stream)
+        yaml_str = stream.getvalue()
+        yaml_str = remove_empty_dicts(yaml_str)
+
+        return yaml_str
+
+    logging.info("Reading input data...")
+    if input_format == 'yaml':
+        yaml = YAML()
+        input_data = yaml.load(data)
+    elif input_format == 'json':
+        input_data = json.loads(data)
+    elif input_format == 'newick':
+        input_data = newick_to_child_parent(data)
+    elif input_format == 'child_parent':
+        input_data = [(line.split()[0], line.split()[1] if len(line.split()) > 1 else None) for line in
+                      data.strip().split('\n') if len(line.split()) > 1]
+    else:
+        logging.error("Unsupported input format")
+        raise ValueError("Unsupported input format")
+
+    logging.info("Converting to child-parent list...")
+    if input_format in ['yaml', 'json']:
+        cp_list = hier_to_child_parent_with_leaf(input_data)
+    else:
+        cp_list = input_data
+
+    logging.info("Converting to output format...")
+    if output_format == 'yaml':
+        output_data = child_parent_to_hier_with_leaf(cp_list, root_is_list=isinstance(input_data, list))
+        return dump_custom_yaml(output_data)
+    elif output_format == 'json':
+        output_data = child_parent_to_hier_with_leaf(cp_list, root_is_list=isinstance(input_data, list))
+        return json.dumps(output_data, indent=2)
+    elif output_format == 'newick':
+        root = [node for node, parent in cp_list if parent is None][0]
+        return build_newick(root, cp_list) + ';'
+    elif output_format == 'child_parent':
+        return "\n".join([f"{child}\t{parent}" for child, parent in cp_list if parent is not None])
+    else:
+        logging.error("Unsupported output format")
+        raise ValueError("Unsupported output format")
+
+def save_to_file(data: str, filename: str, file_format: str):
+    """
+    Save converted data to a file.
+
+    Parameters:
+        - data (str): The converted data as a string
+        - filename (str): The name of the output file
+        - file_format (str): The format of the data ("yaml", "json", "newick", "child_parent")
+
+    """
+    with open(f"{filename}.{file_format}", "w") as f:
+        # Adding a header for child_parent format
+        if file_format == "child_parent":
+            f.write("child\tparent\n")
+        f.write(data)
