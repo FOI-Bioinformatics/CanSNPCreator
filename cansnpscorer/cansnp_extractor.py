@@ -1,9 +1,10 @@
 import argparse
 import logging
 from datetime import datetime
+import os
 
 
-from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file
+from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file, recognize_file_format, convert_data, save_to_file
 from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
 
 
@@ -30,13 +31,20 @@ def main(csvfile=None, hcfile=None, fastafile=None, output=None):
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(f"Parameters: csvfile={csvfile}, hcfile={hcfile}, fastafile={fastafile}, output={output}")
 
+    # Check if the input files exist
+    if not (os.path.isfile(csvfile) and os.path.isfile(hcfile) and os.path.isfile(fastafile)):
+        logging.error(f"Input files do not exist. Exiting...")
+        sys.exit(1)
+
+    # Check the format of the hc file
+    input_format = recognize_file_format(hcfile)
+    logging.info(f"Input file format: {input_format}")
+
+    tree_data = read_yaml_file(hcfile)
 
     # Parse HC data from YAML file
     hc_parser_obj = HCParser(csvfile)
-
-    yaml_data = read_yaml_file(hcfile)
-
-    hc_data = hc_parser_obj.reader(yaml_data)
+    hc_data = hc_parser_obj.reader(tree_data)
 
     # Parse FASTA data
     fasta_data = fasta_parser(fastafile, 'dict')
