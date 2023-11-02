@@ -42,7 +42,7 @@ def main(csvfile=None, hcfile=None, fastafile=None, output=None):
 
     tree_data = read_yaml_file(hcfile)
 
-    # Parse HC data from YAML file
+    # Parse hierarchical data from file
     hc_parser_obj = HCParser(csvfile)
     hc_data = hc_parser_obj.reader(tree_data)
 
