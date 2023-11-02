@@ -464,7 +464,7 @@ def cansnp_file_writer(cansnp_data: List[List[Union[str, int]]], output_filepath
                 if len(cansnp_data) > 10000:
                     current_percent = int(((i + 1) / len(cansnp_data)) * 100)
                     if current_percent % 10 == 0:
-                        logging.info(f"Writing progress: {current_percent}%")
+                        logging.info(f"Writing canSNP data progress: {current_percent}%")
 
         logging.info(f"Successfully wrote {len(cansnp_data)} canSNP entries to {output_filepath}.")
 
