@@ -39,6 +39,34 @@ def read_yaml_file(file: str) -> Union[Dict, None]:
         logging.error(f"Failed to read YAML data from {file}. Exception: {e}")
     return None
 
+def extract_yaml_data(data, data_set=None):
+    """
+    Recursively extract all keys and values from a nested structure (dict or list)
+    and store them in a set. The set is then sorted and returned as a list.
+
+    Args:
+    - data (Union[dict, list]): The input data structure.
+    - data_set (set, optional): Set to store the keys and values. Defaults to an empty set.
+
+    Returns:
+    - list: A sorted list containing all unique keys and values from the data.
+    """
+    if data_set is None:
+        data_set = set()
+
+    if isinstance(data, dict):
+        for key, value in data.items():
+            data_set.add(key)
+            extract_yaml_data(value, data_set)
+    elif isinstance(data, list):
+        for item in data:
+            extract_yaml_data(item, data_set)
+    else:
+        data_set.add(data)
+
+    return sorted(data_set)
+
+
 def clean_name(name: str) -> str:
     """
     Cleans a given string by removing all characters that are not alphanumeric.
@@ -409,7 +437,10 @@ def score_file_writer(snp_data: List[List[Union[str, int, float]]], output_file_
     Returns:
     None
     """
-    header = ["SNP", "Group", "Score", "Neighbour-snps", "GC-content", "Tandem", "Gene", "Mutation"]
+    header = ["Position", "Group", "Score", "NeighborDistanceScore", "GCContentScore", "TandemRepeatProximityScore", "GeneProximityScore", "MutationTypeScore"]
+
+    # Log the number of CanSNPs entries
+    logging.info(f"Writing {len(snp_data)} CanSNP entries to the file {output_file_path}.")
 
     with open(output_file_path, 'w', newline='') as out_file:
         csv_writer = csv.writer(out_file, delimiter=',')

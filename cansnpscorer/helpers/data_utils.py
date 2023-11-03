@@ -1,8 +1,12 @@
 from typing import List, Dict, Union, NoReturn, Tuple
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 import logging
+
+import heapq
+
 from cansnpscorer.helpers.genetic_code import codon_table
+
 
 def neighbour_distance(snp: int, left: int, right: int, min_dist: int = 25) -> float:
     """
@@ -306,3 +310,78 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]], sn
     logging.info(f"CanSNP extraction complete. Total canSNPs extracted: {canSNP_count}")
 
     return cansnps
+
+
+def filter_scores_by_cutoff(scores, cutoff, top=None):
+    """
+    Filters scores based on a specified cutoff for the 'Score' field and selects the top scoring SNPs for each node_id.
+
+    Args:
+        scores: List of score entries, each entry is a list containing the SNP position, SNP variant, total score, and individual scores.
+        cutoff: A score cutoff value. Only scores higher than this value are retained.
+        top: Number of top scores to retain for each node_id. If None, all scores above cutoff are retained.
+
+    Returns:
+        filtered_scores: List of score entries that have a 'Score' higher than the cutoff and are in the top n for their node_id.
+    """
+    # Score is the third item in each score entry based on the ScoringManager's final_score structure.
+    # Adjust the index if the structure changes.
+    SCORE_INDEX = 2
+    NODE_ID_INDEX = 1
+
+    # First, filter scores by the cutoff
+    filtered_scores = [score for score in scores if score[SCORE_INDEX] > cutoff]
+
+    if top is not None:
+        # Group scores by node_id
+        scores_by_node = defaultdict(list)
+        for score in filtered_scores:
+            node_id = score[NODE_ID_INDEX]
+            # We use negative scores because heapq is a min-heap, but we want the max scores
+            heapq.heappush(scores_by_node[node_id], (-score[SCORE_INDEX], score))
+
+        # Now select the top n scores for each node_id
+        top_scores_by_node = {}
+        for node_id, node_scores in scores_by_node.items():
+            top_scores_by_node[node_id] = [heapq.heappop(node_scores)[1] for _ in range(min(len(node_scores), top))]
+
+        # Flatten the dictionary of top scores into a list
+        top_scores = [score for scores_list in top_scores_by_node.values() for score in scores_list]
+        filtered_scores = top_scores
+
+    return filtered_scores
+
+
+def summarize_scores(nodes_data, scores):
+    """
+    Provides a summary of the scores, including the count of occurrences for each node.
+
+    Args:
+        nodes_data: Set of node identifiers.
+        scores: List of score entries that have been filtered by a score cutoff.
+
+    Returns:
+        dict: A dictionary with nodes as keys and their counts as values.
+    """
+    # Assuming that the second element (index 1) of each score list is the node identifier.
+    NODE_ID_INDEX = 1
+
+    # Initialize a dictionary to count occurrences
+    node_counts = {node: 0 for node in nodes_data}
+
+    # Count occurrences of each node in scores
+    for score in scores:
+        node_id = score[NODE_ID_INDEX]
+        if node_id in node_counts:
+            node_counts[node_id] += 1
+
+    # Log info or warnings and build the export dictionary
+    export_dict = {}
+    for node_id, count in node_counts.items():
+        if count > 0:
+            logging.info(f"ID: {node_id}, Count: {count}")
+            export_dict[node_id] = count
+        else:
+            logging.warning(f"ID: {node_id} is not represented by a CanSNP!!.")
+
+    return export_dict

@@ -18,12 +18,18 @@ def main():
     parser_extract.add_argument("-o", "--output", required=True, help="Path to the output file where extracted SNPs and canSNPs will be saved.")
 
     # Create the parser for the "evaluate" command
-    parser_evaluate = subparsers.add_parser('evaluate', help='Evaluate canSNPs')
+    parser_evaluate = subparsers.add_parser('evaluate', help="Evaluate CanSNP data with more contextual information.")
     parser_evaluate.add_argument("--snp-file", type=str, required=True, help="Path to the input SNP file.")
     parser_evaluate.add_argument("--reference-file", type=str, required=True, help="Path to the input reference genome file.")
     parser_evaluate.add_argument("--gff-file", type=str, required=True, help="Path to the input GFF (General Feature Format) file.")
     parser_evaluate.add_argument("--trf-file", type=str, required=True, help="Path to the input TRF (Tandem Repeats Finder) file.")
+    parser_evaluate.add_argument("--hcfile", type=str, required=True, help="Path to the input Hierarchical Clustering (HC) file.")
     parser_evaluate.add_argument("--output-file", type=str, required=True, help="Path to the output file where results will be saved.")
+    parser_evaluate.add_argument("--tandem-limit", type=int, default=50, help="Tandem repeat proximity limit.")
+    parser_evaluate.add_argument("--gene-limit", type=int, default=0, help="Gene proximity limit.")
+    parser_evaluate.add_argument("--gc-goal", type=float, default=0.5, help="Goal for GC content scoring.")
+    parser_evaluate.add_argument("--cutoff-value", type=int, default=500, help="Cutoff value for SNP score filtering.")
+    parser_evaluate.add_argument("--top-n-snp", type=int, default=None, help="The number of top scoring SNPs to select for each node_id.")
 
     # Create the parser for the "trf" command
     parser_trf = subparsers.add_parser('trf', help='Perform TRF on canSNPs')
@@ -56,7 +62,7 @@ def main():
         cansnp_extractor.main(args.csvfile, args.hcfile, args.fastafile, args.output)
     elif args.command == 'evaluate':
         logging.info(f"Starting canSNP evaluation...")
-        cansnp_evaluator.main(args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.output_file)
+        cansnp_evaluator.main(args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.hcfile, args.output_file, args.tandem_limit, args.gene_limit, args.gc_goal, args.cutoff_value, args.top_n_snp)
     elif args.command == 'trf':
         logging.info(f"Starting canSNP TRF...")
         cansnp_trf.run_trf(
