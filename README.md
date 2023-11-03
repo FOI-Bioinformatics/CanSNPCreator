@@ -1,4 +1,4 @@
-# CanSNPScorer
+# CanSNPCreator
 
 ## Introduction
 
