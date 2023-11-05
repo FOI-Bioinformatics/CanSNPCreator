@@ -2,33 +2,34 @@
 
 ## Introduction
 
-CanSNPScorer is a comprehensive tool designed for the extraction and evaluation of Canonical Single Nucleotide Polymorphisms (canSNPs) in microbial genomes. The tool integrates multiple genomic data types and formats, offering a unified platform for canSNP analysis.
+CanSNPCreator, formerly known as CanSNPScorer, is an advanced tool designed for the extraction, evaluation, and analysis of Canonical Single Nucleotide Polymorphisms (canSNPs) in microbial genomes. With enhanced support for various hierarchical clustering file formats, CanSNPCreator provides a robust platform for genomic analysis.
 
 ## Features
 
 - **SNP Extraction**: Extract SNPs from genomic sequence alignments.
-- **canSNP Extraction**: Identify canSNPs based on Hierarchical Clustering (HC).
-- **Evaluation**: Evaluate canSNPs with additional genomic context.
-- **TRF**: Tandem Repeats Finder integration for canSNP evaluation.
+- **canSNP Extraction**: Identify canSNPs from multiple hierarchical clustering file formats including YAML and repgenr HC formats.
+- **Evaluation**: Assess canSNPs with additional genomic context using a comprehensive set of parameters.
+- **TRF Integration**: Incorporate Tandem Repeats Finder results for more nuanced canSNP evaluation.
+- **Data Conversion**: Convert between different hierarchical data formats for increased flexibility in genomic analysis.
 
 ## Requirements
 
 - Python 3.9 or higher
 - Additional Python libraries as specified in `requirements.txt`
-- Tandem Repeat Finder (trf)
+- Tandem Repeat Finder (TRF)
 
 ## Installation
 
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/yourusername/CanSNPScorer.git
+    git clone https://github.com/yourusername/CanSNPCreator.git
     ```
 
 2. Navigate to the cloned directory:
 
     ```bash
-    cd CanSNPScorer
+    cd CanSNPCreator
     ```
 
 3. Install the required Python packages:
@@ -44,19 +45,25 @@ CanSNPScorer is a comprehensive tool designed for the extraction and evaluation 
 1. **Extract canSNPs**
 
     ```bash
-    CanSNPScorer extract --csvfile <path-to-csvfile> --hcfile <path-to-hcfile> --fastafile <path-to-fastafile> -o <output-file>
+    CanSNPCreator extract --csvfile <path-to-csvfile> --hcfile <path-to-hcfile> --fastafile <path-to-fastafile> -o <output-file>
     ```
 
 2. **Evaluate canSNPs**
 
     ```bash
-    CanSNPScorer evaluate --snp-file <path-to-snpfile> --reference-file <path-to-reference-file> --gff-file <path-to-gff-file> --trf-file <path-to-trf-file> --output-file <output-file>
+    CanSNPCreator evaluate --snp-file <path-to-snpfile> --reference-file <path-to-reference-file> --gff-file <path-to-gff-file> --trf-file <path-to-trf-file> --output-file <output-file>
     ```
 
 3. **Perform TRF on canSNPs**
 
     ```bash
-    CanSNPScorer trf --input <input-file> --output <output-file>
+    CanSNPCreator trf --input <input-file> --output <output-file>
+    ```
+
+4. **Convert Hierarchical Data Formats**
+
+    ```bash
+    CanSNPCreator convert --infile <input-file> --prefix <output-prefix> --format_in <input-format> --format_out <output-format>
     ```
 
 ### Advanced Options
@@ -64,7 +71,7 @@ CanSNPScorer is a comprehensive tool designed for the extraction and evaluation 
 For a complete list of options, run:
 
 ```bash
-CanSNPScorer -h
+CanSNPCreator -h
 ```
 
 ## Contributing
