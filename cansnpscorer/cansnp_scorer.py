@@ -4,18 +4,23 @@ from datetime import datetime
 
 from cansnpscorer import cansnp_evaluator, cansnp_extractor, cansnp_trf, cansnp_converter
 
+# Import the version number
+from cansnpscorer import __version__
 
 def main():
     # Create the top-level parser
     parser = argparse.ArgumentParser(description='CanSNP Scorer')
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}',
+                                help="Show the current version of the script.")
     subparsers = parser.add_subparsers(dest='command', help='Sub-command help')
 
     # Create the parser for the "extract" command
     parser_extract = subparsers.add_parser('extract', help='Extract canSNPs')
-    parser_extract.add_argument("--csvfile", required=True, help="Path to the input CSV file containing genome data.")
+    parser_extract.add_argument("--groupfile", required=True, help="Path to the input group file containing genome data.")
     parser_extract.add_argument("--hcfile", required=True, help="Path to the input Hierarchical Clustering (HC) file.")
     parser_extract.add_argument("--fastafile", required=True, help="Path to the input FASTA file containing sequence alignments.")
     parser_extract.add_argument("-o", "--output", required=True, help="Path to the output file where extracted SNPs and canSNPs will be saved.")
+    parser_extract.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
     # Create the parser for the "evaluate" command
     parser_evaluate = subparsers.add_parser('evaluate', help="Evaluate CanSNP data with more contextual information.")
@@ -30,6 +35,7 @@ def main():
     parser_evaluate.add_argument("--gc-goal", type=float, default=0.5, help="Goal for GC content scoring.")
     parser_evaluate.add_argument("--cutoff-value", type=int, default=500, help="Cutoff value for SNP score filtering.")
     parser_evaluate.add_argument("--top-n-snp", type=int, default=None, help="The number of top scoring SNPs to select for each node_id.")
+    parser_evaluate.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
     # Create the parser for the "trf" command
     parser_trf = subparsers.add_parser('trf', help='Perform TRF on canSNPs')
@@ -42,6 +48,7 @@ def main():
     parser_trf.add_argument('--pi', type=int, default=10, help='Indel probability (whole number). Default is 10.')
     parser_trf.add_argument('--minscore', type=int, default=10, help='Minimum alignment score to report. Default is 10.')
     parser_trf.add_argument('--max_period', type=int, default=2000, help='Maximum period size to report. Default is 2000.')
+    parser_trf.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
     # Create the parser for the "convert" command
     parser_convert = subparsers.add_parser('convert', help='Convert hierarchical data formats')
@@ -49,6 +56,7 @@ def main():
     parser_convert.add_argument("-p", "--prefix", type=str, help="The output file name")
     parser_convert.add_argument("--format_in", type=str, default=None, help="The format of the input file ('yaml', 'json', 'newick', 'child_parent')")
     parser_convert.add_argument("--format_out", type=str, required=True, help="The format of the output file ('yaml', 'json', 'newick', 'child_parent')")
+    parser_convert.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
 
     # Parse the arguments
@@ -59,7 +67,7 @@ def main():
 
     if args.command == 'extract':
         logging.info(f"Starting canSNP extraction...")
-        cansnp_extractor.main(args.csvfile, args.hcfile, args.fastafile, args.output)
+        cansnp_extractor.main(args.groupfile, args.hcfile, args.fastafile, args.output)
     elif args.command == 'evaluate':
         logging.info(f"Starting canSNP evaluation...")
         cansnp_evaluator.main(args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.hcfile, args.output_file, args.tandem_limit, args.gene_limit, args.gc_goal, args.cutoff_value, args.top_n_snp)
