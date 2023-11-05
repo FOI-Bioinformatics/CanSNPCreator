@@ -39,6 +39,53 @@ def read_yaml_file(file: str) -> Union[Dict, None]:
         logging.error(f"Failed to read YAML data from {file}. Exception: {e}")
     return None
 
+
+def read_hc_file(file_path: str, file_format: str) -> Optional[Dict]:
+    """
+    Read and load data from a hierarchical clustering file which may be in YAML or repgenr format.
+
+    Parameters:
+        file_path (str): Path to the hierarchical clustering file.
+        file_format (str): The format of the file ('yaml' or 'repgenr_group').
+
+    Returns:
+        Optional[Dict]: Dictionary containing the loaded data, or None if an error occurs.
+    """
+
+    if file_format == 'yaml':
+        logging.info(f"Attempting to read YAML data from {file_path}")
+        try:
+            yaml = YAML(typ='safe')
+            with open(file_path, 'r') as file:
+                yaml_data = next(yaml.load_all(file))
+            logging.info(f"Successfully read YAML data from {file_path}")
+            return yaml_data
+        except FileNotFoundError:
+            logging.error(f"File {file_path} not found")
+        except PermissionError:
+            logging.error(f"Permission denied: Cannot read {file_path}")
+        except Exception as e:
+            logging.error(f"Failed to read YAML data from {file_path}. Exception: {e}")
+
+    elif file_format == 'repgenr':
+        logging.info(f"Attempting to read repgenr HC data from {file_path}")
+        try:
+            with open(file_path, 'r') as file:
+                reader = csv.DictReader(file, delimiter='\t')
+                hc_data = {row['child']: row['parent'] for row in reader}
+            logging.info(f"Successfully read repgenr HC data from {file_path}")
+            return hc_data
+        except FileNotFoundError:
+            logging.error(f"File {file_path} not found")
+        except PermissionError:
+            logging.error(f"Permission denied: Cannot read {file_path}")
+        except Exception as e:
+            logging.error(f"Failed to read repgenr HC data from {file_path}. Exception: {e}")
+
+    else:
+        logging.error(f"Unrecognized file format '{file_format}' provided for file: {file_path}")
+        return None
+
 def extract_yaml_data(data, data_set=None):
     """
     Recursively extract all keys and values from a nested structure (dict or list)
@@ -566,30 +613,36 @@ def recognize_group_file_format(file_path: str) -> str:
         logging.error(f"An error occurred while trying to read the file: {e}")
         raise
 
-def recognize_file_format(file_path: str) -> Union[str, None]:
+def recognize_hc_file_format(file_path: str) -> Union[str, None]:
     logging.info(f"Attempting to recognize the format of file: {file_path}")
 
     with open(file_path, 'r') as f:
-        first_lines = [next(f).strip() for _ in range(10) if not f.readline().strip() == ""]
+        first_line = f.readline().strip()  # Read the first line which should be the header
 
-    if not first_lines:
+    # Check if the file is empty or only contains whitespace
+    if not first_line:
         logging.warning("The file appears to be empty or only contains whitespace.")
         return None
 
     # Check if it's a Newick format
-    if any(";" in line for line in first_lines):
+    if ";" in first_line:
         logging.info(f"The file {file_path} appears to be in Newick format.")
         return "newick"
 
     # Check if it's a JSON format
-    if any(line.startswith("{") or line.startswith("[") for line in first_lines):
+    if first_line.startswith("{") or first_line.startswith("["):
         logging.info(f"The file {file_path} appears to be in JSON format.")
         return "json"
 
     # Check if it's a YAML format
-    if any(":" in line for line in first_lines):
+    if ":" in first_line and not first_line.startswith("#"):
         logging.info(f"The file {file_path} appears to be in YAML format.")
         return "yaml"
+
+    # Check if it's the repgenr HC format
+    if "child" in first_line and "parent" in first_line and "\t" in first_line:
+        logging.info(f"The file {file_path} appears to be in repgenr HC format.")
+        return "repgenr"
 
     logging.warning(f"Unable to determine the format of the file {file_path}.")
     return "unknown"
