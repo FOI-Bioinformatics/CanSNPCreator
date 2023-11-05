@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 
 
-from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file, recognize_file_format, convert_data, save_to_file
+from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file, recognize_file_format, convert_data, save_to_file, recognize_group_file_format
 from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
 
 
@@ -38,12 +38,14 @@ def main(csvfile=None, hcfile=None, fastafile=None, output=None):
 
     # Check the format of the hc file
     input_format = recognize_file_format(hcfile)
-    logging.info(f"Input file format: {input_format}")
+
 
     tree_data = read_yaml_file(hcfile)
 
     # Parse hierarchical data from file
-    hc_parser_obj = HCParser(csvfile)
+    data_format = recognize_group_file_format(csvfile)
+
+    hc_parser_obj = HCParser(csvfile, data_format=data_format)
     hc_data = hc_parser_obj.reader(tree_data)
 
     # Parse FASTA data

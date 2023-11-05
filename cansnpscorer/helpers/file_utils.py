@@ -167,21 +167,48 @@ class HCParser:
     """
     A class to handle hierarchical clustering data from CSV and YAML files.
     """
-    def __init__(self, csvfile: str) -> None:
+
+    def __init__(self, group_data: str, data_format: str = 'csv') -> None:
         """
         Initialize the HCParser object.
 
         Args:
-            csvfile (str): The path to the CSV file containing group and strain information.
+            group_data (str): The path to the file containing group and strain information.
+            data_format (str): The format of the group data ('csv' or 'repgenr_group').
         """
-        logging.info(f"Initializing HCParser with CSV file: {csvfile}")
+        logging.info(f"Initializing HCParser with data file: {group_data}")
         self.dictionary: Dict[str, List[str]] = {}
         self.group_label = "Group"
-        self.group_index = 0
         self.strain_label = "Strain"
-        self.strain_index = 0
         self.isolates: Dict[str, List[str]] = {}
-        self._group_handler(csvfile)
+        if data_format == 'csv':
+            self._group_handler(group_data)
+        elif data_format == 'repgenr_group':
+            self._repgenr_group_handler(group_data)
+        else:
+            raise ValueError(f"Unknown data format: {data_format}")
+
+    def _repgenr_group_handler(self, repgenr_group_data_file: str) -> None:
+        """
+        Process the repgenr_group data file and populate the 'isolates' dictionary.
+
+        Args:
+            repgenr_group_data_file (str): The path to the repgenr_group data file.
+        """
+        logging.info(f"Processing repgenr_group data file: {repgenr_group_data_file}")
+        with open(repgenr_group_data_file, 'r') as file:
+            reader = csv.DictReader(file, delimiter='\t')
+            for row in reader:
+                representative = row['representative'].replace('.fasta', '')
+                contained = row['contained'].replace('.fasta', '')
+                is_self = row['is_self'] == 'True'
+                if is_self:
+                    # If the row indicates that the strain is representative of itself, create a new group
+                    self.isolates[representative] = [contained]
+                else:
+                    # Otherwise, add the strain to the group of its representative
+                    self.isolates.setdefault(representative, []).append(contained)
+
 
     def _group_handler(self, csv_file: str) -> None:
         """
@@ -502,6 +529,42 @@ def cansnp_file_writer(cansnp_data: List[List[Union[str, int]]], output_filepath
     except Exception as e:
         logging.error(f"Failed to write canSNP data to {output_filepath}. Error: {str(e)}")
 
+def recognize_group_file_format(file_path: str) -> str:
+    """
+    Recognize the file format by inspecting the first few lines.
+
+    Args:
+        file_path (str): The path to the file to inspect.
+
+    Returns:
+        str: The recognized file format ('csv' or 'repgenr_group').
+    """
+    logging.basicConfig(level=logging.INFO)
+    try:
+        with open(file_path, 'r') as file:
+            lines: List[str] = [file.readline().strip() for _ in range(5)]  # Read the first 5 lines
+            header: str = lines[0]  # Typically the header should be the first line
+
+            # Define headers for the formats
+            csv_header: str = 'Strain,Group'
+            repgenr_group_header: str = 'representative\tcontained\tis_self'
+
+            # Check if any of the first five lines starts with the expected headers
+            if any(line.startswith(csv_header) for line in lines):
+                logging.info(f"The file at '{file_path}' is recognized as CSV format.")
+                return 'csv'
+            elif any(line.startswith(repgenr_group_header) for line in lines):
+                logging.info(f"The file at '{file_path}' is recognized as repgenr_group format.")
+                return 'repgenr_group'
+            else:
+                raise ValueError(f"Unknown file format for file: {file_path}")
+
+    except FileNotFoundError:
+        logging.error(f"The file at '{file_path}' was not found.")
+        raise
+    except Exception as e:
+        logging.error(f"An error occurred while trying to read the file: {e}")
+        raise
 
 def recognize_file_format(file_path: str) -> Union[str, None]:
     logging.info(f"Attempting to recognize the format of file: {file_path}")
