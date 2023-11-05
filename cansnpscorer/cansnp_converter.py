@@ -1,5 +1,5 @@
 import argparse
-from cansnpscorer.helpers.file_utils import convert_data, save_to_file, recognize_file_format
+from cansnpscorer.helpers.file_utils import convert_data, save_to_file, recognize_hc_file_format
 
 def main(infile: str, prefix: str, format_in: str, format_out: str):
     input_format = format_in or recognize_file_format(infile)

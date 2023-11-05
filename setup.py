@@ -4,7 +4,7 @@ setup(
     name='CanSNPScorer',
     version='0.1.0',
     description='A tool for evaluating CanSNPs',
-    author='Your Name',
+    author='Andreas Sjödin',
     author_email='your.email@example.com',
     packages=find_packages(),  # Automatically discover and include all packages in the package directory
     install_requires=[
@@ -13,9 +13,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'CanSNPScorer=cansnpscorer.cansnp_scorer:main',
-            'cansnp-evaluator=cansnpscorer.cansnp_evaluator:main',
-            'cansnp-extractor=cansnpscorer.cansnp_extractor:main',
+            'CanSNPCreator=cansnpscorer.cansnp_scorer:main',
         ],
     },
 )
