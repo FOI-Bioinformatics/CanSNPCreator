@@ -5,7 +5,6 @@ import sys
 import csv
 import logging
 from ruamel.yaml import YAML
-from ruamel.yaml.representer import Representer
 from typing import List, Dict, Union, NoReturn, Tuple, Optional
 from operator import itemgetter
 import json
