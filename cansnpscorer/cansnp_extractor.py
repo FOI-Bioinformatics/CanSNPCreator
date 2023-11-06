@@ -1,4 +1,3 @@
-import argparse
 import logging
 from datetime import datetime
 import os
@@ -6,6 +5,7 @@ import os
 
 from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file, recognize_hc_file_format, convert_data, save_to_file, recognize_group_file_format, read_hc_file
 from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
+
 
 
 def main(groupfile=None, hcfile=None, fastafile=None, output=None):
@@ -31,6 +31,7 @@ def main(groupfile=None, hcfile=None, fastafile=None, output=None):
 
     hc_parser_obj = HCParser(groupfile, data_format=group_format)
     hc_data = hc_parser_obj.reader(tree_data)
+
 
     # Parse FASTA data
     fasta_data = fasta_parser(fastafile, 'dict')

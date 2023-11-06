@@ -1,8 +1,8 @@
 import argparse
 import logging
-from datetime import datetime
 
-from cansnpscorer import cansnp_evaluator, cansnp_extractor, cansnp_trf, cansnp_converter
+
+from cansnpscorer import cansnp_evaluator, cansnp_extractor, cansnp_trf
 
 # Import the version number
 from cansnpscorer import __version__
@@ -50,15 +50,6 @@ def main():
     parser_trf.add_argument('--max_period', type=int, default=2000, help='Maximum period size to report. Default is 2000.')
     parser_trf.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
-    # Create the parser for the "convert" command
-    parser_convert = subparsers.add_parser('convert', help='Convert hierarchical data formats')
-    parser_convert.add_argument("-i", "--infile", type=str, help="The input file name")
-    parser_convert.add_argument("-p", "--prefix", type=str, help="The output file name")
-    parser_convert.add_argument("--format_in", type=str, default=None, help="The format of the input file ('yaml', 'json', 'newick', 'child_parent')")
-    parser_convert.add_argument("--format_out", type=str, required=True, help="The format of the output file ('yaml', 'json', 'newick', 'child_parent')")
-    parser_convert.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
-
-
     # Parse the arguments
     args = parser.parse_args()
 
@@ -84,9 +75,6 @@ def main():
             args.minscore,
             args.max_period
         )
-    elif args.command == 'convert':
-        logging.info(f"Starting hierarchical data conversion...")
-        cansnp_converter.main(args.infile, args.prefix, args.format_in, args.format_out)
     else:
         parser.print_help()
 
