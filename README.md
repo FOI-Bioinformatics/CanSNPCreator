@@ -48,23 +48,21 @@ CanSNPCreator, formerly known as CanSNPScorer, is an advanced tool designed for 
     CanSNPCreator extract --csvfile <path-to-csvfile> --hcfile <path-to-hcfile> --fastafile <path-to-fastafile> -o <output-file>
     ```
 
+3. **Perform TRF on reference genome**
+
+    ```bash
+    CanSNPCreator trf --input <input-file> --output <output-file>
+    ```
+
+
 2. **Evaluate canSNPs**
 
     ```bash
     CanSNPCreator evaluate --snp-file <path-to-snpfile> --reference-file <path-to-reference-file> --gff-file <path-to-gff-file> --trf-file <path-to-trf-file> --output-file <output-file>
     ```
 
-3. **Perform TRF on canSNPs**
 
-    ```bash
-    CanSNPCreator trf --input <input-file> --output <output-file>
-    ```
 
-4. **Convert Hierarchical Data Formats**
-
-    ```bash
-    CanSNPCreator convert --infile <input-file> --prefix <output-prefix> --format_in <input-format> --format_out <output-format>
-    ```
 
 ### Advanced Options
 
