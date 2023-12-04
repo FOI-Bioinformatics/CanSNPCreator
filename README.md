@@ -10,7 +10,7 @@ CanSNPCreator, formerly known as CanSNPScorer, is an advanced tool designed for 
 - **canSNP Extraction**: Identify canSNPs from multiple hierarchical clustering file formats including YAML and repgenr HC formats.
 - **Evaluation**: Assess canSNPs with additional genomic context using a comprehensive set of parameters.
 - **TRF Integration**: Incorporate Tandem Repeats Finder results for more nuanced canSNP evaluation.
-- **Data Conversion**: Convert between different hierarchical data formats for increased flexibility in genomic analysis.
+
 
 ## Requirements
 
