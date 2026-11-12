@@ -1,6 +1,7 @@
 import argparse
 import logging
 import sys
+import zlib
 
 from cansnpscorer import (
     __version__,
@@ -13,6 +14,50 @@ from cansnpscorer import (
 )
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, TERMS
+
+
+def at_least(minimum: int):
+    """An argparse type for a whole number no smaller than minimum."""
+    def parse(text: str) -> int:
+        try:
+            value = int(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"'{text}' is not a whole number") from None
+        if value < minimum:
+            raise argparse.ArgumentTypeError(f"must be at least {minimum}, not {value}")
+        return value
+    return parse
+
+
+def between(low: int, high: int):
+    """An argparse type for a whole number from low to high."""
+    def parse(text: str) -> int:
+        value = at_least(low)(text)
+        if value > high:
+            raise argparse.ArgumentTypeError(f"must be at most {high}, not {value}")
+        return value
+    return parse
+
+
+def fraction(text: str) -> float:
+    """An argparse type for a number from 0 to 1."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a number") from None
+    if not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError(f"must be from 0 to 1, not {value:g}")
+    return value
+
+
+def non_negative_float(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a number") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must not be negative, not {value:g}")
+    return value
 
 
 def score_weights(settings):
@@ -105,7 +150,8 @@ def main():
     add_version(parser)
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                        help="How much to report while running. Default: INFO.")
+                        help="How much to report while running; given before the subcommand. "
+                             "Default: INFO.")
     subparsers = parser.add_subparsers(dest="command")
 
     # extract
@@ -136,18 +182,18 @@ def main():
     add_hierarchy(evaluate, required=False,
                   purpose="With it, the nodes left without a canSNP are reported.")
     evaluate.add_argument("-o", "--output", required=True, help="The scored canSNPs to write.")
-    evaluate.add_argument("--tandem-limit", type=int, default=50,
+    evaluate.add_argument("--tandem-limit", type=at_least(0), default=50,
                           help="How near a tandem repeat still lowers the score, in bases. "
                                "Default: 50.")
-    evaluate.add_argument("--gene-limit", type=int, default=0,
+    evaluate.add_argument("--gene-limit", type=at_least(0), default=0,
                           help="How near a gene still raises the score, in bases. Default: 0.")
-    evaluate.add_argument("--gc-goal", type=float, default=0.5,
+    evaluate.add_argument("--gc-goal", type=fraction, default=0.5,
                           help="The GC content that scores highest. Default: 0.5.")
-    evaluate.add_argument("--cutoff", type=int, default=500,
+    evaluate.add_argument("--cutoff", type=at_least(0), default=500,
                           help=f"Only pass canSNPs scoring above this. The highest reachable "
                                f"total is {MAXIMUM_SCORE} with the default weights, and the "
                                f"default of 500 in practice requires the SNP to fall in a gene.")
-    evaluate.add_argument("--top-n", type=int, default=None,
+    evaluate.add_argument("--top-n", type=at_least(1), default=None,
                           help="Only pass the best this many canSNPs of each node.")
     evaluate.add_argument("--score-weight", action="append", metavar="TERM=FACTOR",
                           help=f"Weight one score term before the terms are summed. Terms: "
@@ -210,10 +256,10 @@ def main():
                             "the scheme names more than one.")
     add_masks(audit, "SNPs of the scheme in them are reported. Needs --reference.")
     add_contig_aliases(audit)
-    audit.add_argument("--min-required-hits", type=int, default=MINIMUM_SNPS_PER_NODE,
+    audit.add_argument("--min-required-hits", type=at_least(1), default=MINIMUM_SNPS_PER_NODE,
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
-    audit.add_argument("--proximity", type=int, default=50,
+    audit.add_argument("--proximity", type=at_least(0), default=50,
                        help="Report two canSNPs closer than this many bases. Default: 50.")
     add_alignment(audit, required=False)
     add_genome_map(audit, required=False,
@@ -224,10 +270,10 @@ def main():
                             "alignment's genomes, which places them on the scheme by the tree, "
                             "as the place subcommand does, rather than by typing.")
     add_members(audit)
-    audit.add_argument("--min-clade-size", type=int, default=2,
+    audit.add_argument("--min-clade-size", type=at_least(1), default=2,
                        help="Report a clade the scheme does not resolve only when it holds at "
                             "least this many genomes. Default: 2.")
-    audit.add_argument("--min-clade-snps", type=int, default=1,
+    audit.add_argument("--min-clade-snps", type=at_least(1), default=1,
                        help="Report a clade the scheme does not resolve only when at least this "
                             "many SNPs mark it. Default: 1.")
     audit.add_argument("-o", "--output", default=None,
@@ -246,12 +292,12 @@ def main():
                           help="RepGenR2's tree2tax_nodes.tsv, for the support and branch length "
                                "of each node. A Newick tree carries both.")
     add_members(collapse)
-    collapse.add_argument("--min-support", type=float, default=None,
+    collapse.add_argument("--min-support", type=fraction, default=None,
                           help="Remove internal nodes with a lower support, as a fraction; a tree "
                                "in percentages is read as fractions.")
-    collapse.add_argument("--min-genomes", type=int, default=2,
+    collapse.add_argument("--min-genomes", type=at_least(1), default=2,
                           help="Remove internal nodes with fewer genomes below them. Default: 2.")
-    collapse.add_argument("--min-branch-length", type=float, default=None,
+    collapse.add_argument("--min-branch-length", type=non_negative_float, default=None,
                           help="Remove internal nodes whose branch is shorter, in the tree's "
                                "units.")
     collapse.add_argument("--outgroup", action="append", default=[], metavar="LEAF",
@@ -282,7 +328,7 @@ def main():
                        help="Which of the scheme's reference genomes --reference holds, when the "
                             "scheme names more than one.")
     add_members(place)
-    place.add_argument("--min-match", type=float, default=0.5,
+    place.add_argument("--min-match", type=fraction, default=0.5,
                        help="The lowest Jaccard index between a node's derived genomes and a "
                             "side of a branch that counts as a match. Default: 0.5.")
     place.add_argument("-o", "--output", required=True,
@@ -296,20 +342,33 @@ def main():
     add_reference(trf)
     trf.add_argument("-o", "--output", required=True, metavar="BED",
                      help="The repeats to write, as BED.")
-    trf.add_argument("--match", type=int, default=2, help="Matching weight. Default: 2.")
-    trf.add_argument("--mismatch", type=int, default=7, help="Mismatch penalty. Default: 7.")
-    trf.add_argument("--delta", type=int, default=7, help="Indel penalty. Default: 7.")
-    trf.add_argument("--pm", type=int, default=80, help="Match probability. Default: 80.")
-    trf.add_argument("--pi", type=int, default=10, help="Indel probability. Default: 10.")
-    trf.add_argument("--min-score", type=int, default=10,
+    trf.add_argument("--match", type=at_least(1), default=2, help="Matching weight. Default: 2.")
+    trf.add_argument("--mismatch", type=at_least(1), default=7, help="Mismatch penalty. Default: 7.")
+    trf.add_argument("--delta", type=at_least(1), default=7, help="Indel penalty. Default: 7.")
+    trf.add_argument("--pm", type=between(0, 100), default=80, help="Match probability. Default: 80.")
+    trf.add_argument("--pi", type=between(0, 100), default=10, help="Indel probability. Default: 10.")
+    trf.add_argument("--min-score", type=at_least(1), default=10,
                      help="Minimum alignment score to report. Default: 10.")
-    trf.add_argument("--max-period", type=int, default=2000,
+    trf.add_argument("--max-period", type=between(1, 2000), default=2000,
                      help="Maximum period size to report. Default: 2000.")
     add_version(trf)
 
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level),
                         format="%(asctime)s - %(levelname)s - %(message)s")
+    if getattr(args, "masks_concatenated", False) and not getattr(args, "masks", None):
+        parser.error("--masks-concatenated applies to --masks")
+    try:
+        return run(args, parser, evaluate)
+    except (OSError, EOFError, zlib.error) as error:
+        # A file that cannot be written, or a truncated or corrupt compressed
+        # file, is reported as what it is rather than as a traceback.
+        logging.error(f"{type(error).__name__}: {error}")
+        return 1
+
+
+def run(args, parser, evaluate) -> int:
+    """Run the subcommand the arguments name. Returns an exit status."""
 
     if args.command == "extract":
         return cansnp_extractor.main(

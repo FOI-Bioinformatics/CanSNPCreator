@@ -111,7 +111,7 @@ class Scheme:
 
 def schemes_in(directory: str) -> List[str]:
     """The organisms whose tree file is in this directory."""
-    found = glob.glob(os.path.join(directory, "*" + TREE_SUFFIX))
+    found = glob.glob(os.path.join(glob.escape(directory), "*" + TREE_SUFFIX))
     return sorted(os.path.basename(path)[:-len(TREE_SUFFIX)] for path in found)
 
 
@@ -127,8 +127,12 @@ def paths_for(directory: str, organism: str) -> Tuple[str, str, str]:
 def _rows(path: str, columns: Sequence[str], problems: List[str]) -> List[Tuple[int, List[str]]]:
     """Read a tab separated file with a header, checking the column names."""
     rows: List[Tuple[int, List[str]]] = []
-    with open(path) as handle:
-        lines = handle.read().splitlines()
+    with open(path, newline="") as handle:
+        # Only LF and CR LF end a line; splitlines would also split on Unicode
+        # line separators inside a field.
+        lines = [line.rstrip("\r") for line in handle.read().split("\n")]
+        while lines and not lines[-1]:
+            lines.pop()
 
     if not lines:
         problems.append(f"{os.path.basename(path)} is empty")
@@ -159,8 +163,9 @@ def read_tree_file(path: str) -> Tuple[List[List[str]], List[str]]:
     problems: List[str] = []
     paths: List[List[str]] = []
 
-    with open(path) as handle:
-        for number, line in enumerate(handle.read().splitlines(), 1):
+    with open(path, newline="") as handle:
+        for number, line in enumerate(
+                (line.rstrip("\r") for line in handle.read().split("\n")), 1):
             if not line.strip():
                 continue
             nodes = [field.strip() for field in line.split("\t")]

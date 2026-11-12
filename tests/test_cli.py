@@ -103,14 +103,14 @@ def test_failing_canSNPs_are_kept_with_a_filter(monkeypatch, dataset, tmp_path):
     assert any("cutoff of 600" in line for line in header if line.startswith("##FILTER"))
 
 
-def test_an_existing_score_file_is_backed_up(monkeypatch, dataset, tmp_path):
+def test_an_existing_output_is_replaced_without_a_backup(monkeypatch, dataset, tmp_path):
+    # Every subcommand overwrites its output, as command line tools do.
     snp_file = str(tmp_path / "snps.vcf")
     scores = str(tmp_path / "scores.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores) == 0
-    backups = [name for name in os.listdir(tmp_path) if name.endswith(".backup")]
-    assert len(backups) == 1
+    assert not [name for name in os.listdir(tmp_path) if name.endswith(".backup")]
 
 
 # -- failures ----------------------------------------------------------------

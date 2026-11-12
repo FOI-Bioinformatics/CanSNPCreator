@@ -34,8 +34,10 @@ from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
 from cansnpscorer.validate import report
 
-GENBANK = re.compile(r"^GCA_\d{9}\.\d+$")
-REFSEQ = re.compile(r"^GCF_\d{9}\.\d+$")
+GENBANK = re.compile(r"GCA_\d{9}\.\d+")
+REFSEQ = re.compile(r"GCF_\d{9}\.\d+")
+#: An organism names the files, so it is limited to what a file name holds safely.
+ORGANISM = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 BASES = frozenset("ACGT")
 
 TREE_SUFFIX = "_tree.txt"
@@ -68,9 +70,13 @@ def best_per_node(scores: Sequence[ScoredSnp]) -> Dict[str, ScoredSnp]:
 
 
 def check_metadata(genome: str, strain: str, reference: str, genbank_id: str,
-                   refseq_id: str, assembly_name: str) -> List[str]:
+                   refseq_id: str, assembly_name: str, organism: str = "x") -> List[str]:
     """The reference genome's row must satisfy the CanSNPer2-data rules."""
     problems: List[str] = []
+    if not ORGANISM.fullmatch(organism or ""):
+        problems.append(
+            f"the organism '{organism}' names the files, so it may hold only letters, digits, "
+            f"'_', '.' and '-', as francisella_tularensis does")
 
     if "_" in genome:
         problems.append(
@@ -78,10 +84,10 @@ def check_metadata(genome: str, strain: str, reference: str, genbank_id: str,
             f"name from an alignment file name by splitting on the first underscore")
     if not genome:
         problems.append("the genome name is empty")
-    if not GENBANK.match(genbank_id):
+    if not GENBANK.fullmatch(genbank_id):
         problems.append(
             f"'{genbank_id}' is not a well formed GenBank accession, such as GCA_000007125.1")
-    if not REFSEQ.match(refseq_id):
+    if not REFSEQ.fullmatch(refseq_id):
         problems.append(
             f"'{refseq_id}' is not a well formed RefSeq accession, such as GCF_000007125.1")
     if not assembly_name:
@@ -92,6 +98,10 @@ def check_metadata(genome: str, strain: str, reference: str, genbank_id: str,
         if ";" in value:
             problems.append(
                 f"the {label} '{value}' holds a semicolon, which the tree reader cannot carry")
+        if any(character in value for character in "\t\r\n"):
+            problems.append(
+                f"the {label} {value!r} holds a tab or a line break, which would shift the "
+                f"columns of the files")
         if value != value.strip():
             problems.append(f"the {label} '{value}' has leading or trailing whitespace")
 
@@ -278,7 +288,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     best = best_per_node(scored)
     problems, warnings = check_scheme(tree, best, sequence)
     problems += check_metadata(genome, strain, citation, genbank_id, refseq_id,
-                               assembly_name)
+                               assembly_name, organism)
 
     without = [node for node in tree.nodes if node not in best]
     if without:

@@ -112,6 +112,10 @@ bcftools view -f PASS -i 'INFO/NODE="B.Br.004"' scores.vcf
 
 ## Making a new scheme
 
+The hierarchy and the genome map below are written by `collapse` from a genome
+tree, as [Starting from a genome tree](#starting-from-a-genome-tree) describes,
+or by hand. Every subcommand overwrites its output files.
+
 ```sh
 # The canSNPs of every node, and every other SNP
 CanSNPCreator extract \
@@ -133,8 +137,14 @@ CanSNPCreator export \
     --scores scores.vcf --hierarchy hierarchy.tsv --reference reference.fasta \
     --outdir scheme --organism francisella_tularensis \
     --genome SCHUS4.2 --strain francisella --citation Svensson2009 \
-    --genbank-id GCA_000008985.1 --refseq-id GCF_000008985.1 --assembly-name ASM898v1
+    --genbank-id GCA_000008985.1 --refseq-id GCF_000008985.1 --assembly-name ASM898v1 \
+    --genome-map genome_map.tsv --alignment alignment.fasta
 ```
+
+`extract` uses only sites where every genome has one of two bases (a strict
+core): a genome with no base at a site, as an accessory region or a gap gives,
+leaves the site out, so a large set of draft genomes leaves fewer sites than a
+small set of complete ones.
 
 ### Scores
 
@@ -296,10 +306,11 @@ clade.
 | Status | Meaning |
 | ------ | ------- |
 | 0 | finished, output written |
-| 1 | a file could not be read, or an input is not usable |
-| 2 | the inputs are inconsistent with one another, the audited scheme holds a problem, or no subcommand was given; nothing was written |
+| 1 | a file could not be read or written, an input is not usable, or options were combined that do not go together |
+| 2 | the inputs were read but are inconsistent with one another, the audited scheme holds a problem, `place` placed no genome, or no subcommand was given; also an option argparse refuses, such as a value out of range |
 
-`--log-level DEBUG` reports more, `--log-level WARNING` only what went wrong.
+`--log-level DEBUG` reports more, `--log-level WARNING` only what went wrong;
+it is given before the subcommand.
 
 ## Development
 

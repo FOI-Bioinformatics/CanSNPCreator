@@ -128,8 +128,15 @@ def test_report_says_whether_the_run_may_go_ahead():
 
 def test_a_missing_trf_binary_is_reported(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(cansnp_trf.shutil, "which", lambda name: None)
-    assert cansnp_trf.run_trf("in.fasta", str(tmp_path / "out.bed")) == 1
+    reference = tmp_path / "in.fasta"
+    reference.write_text(">c1\nACGT\n")
+    assert cansnp_trf.run_trf(str(reference), str(tmp_path / "out.bed")) == 1
     assert "is not on the PATH" in caplog.text
+
+
+def test_a_missing_reference_is_reported_before_trf_runs(tmp_path, caplog):
+    assert cansnp_trf.run_trf(str(tmp_path / "absent.fasta"), str(tmp_path / "out.bed")) == 1
+    assert "does not exist" in caplog.text
 
 
 NGS = """@c1 Testus organismus c1, complete sequence
@@ -159,7 +166,9 @@ def fake_trf(monkeypatch, tmp_path, output=NGS, status=0):
 def test_trf_output_is_written_as_bed(monkeypatch, tmp_path):
     fake_trf(monkeypatch, tmp_path)
     output = tmp_path / "repeats.bed"
-    assert cansnp_trf.run_trf("in.fasta", str(output)) == 0
+    reference = tmp_path / "in.fasta"
+    reference.write_text(">c1\nACGT\n")
+    assert cansnp_trf.run_trf(str(reference), str(output)) == 0
     # 0-based and half open, sorted within each sequence, named by the ID alone.
     assert output.read_text().splitlines() == [
         "c1\t9\t20\tperiod=2,copies=5.5",
@@ -173,7 +182,9 @@ def test_a_failing_trf_run_writes_nothing(monkeypatch, tmp_path, caplog):
     # evaluator then read as a genome with no repeats anywhere.
     fake_trf(monkeypatch, tmp_path, output="", status=1)
     output = tmp_path / "repeats.bed"
-    assert cansnp_trf.run_trf("in.fasta", str(output)) == 1
+    reference = tmp_path / "in.fasta"
+    reference.write_text(">c1\nACGT\n")
+    assert cansnp_trf.run_trf(str(reference), str(output)) == 1
     assert "nothing was written" in caplog.text and "cannot read the input" in caplog.text
     assert not output.exists()
 

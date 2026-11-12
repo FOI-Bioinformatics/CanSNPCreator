@@ -1,15 +1,13 @@
 """Scoring of extracted canSNPs for their suitability as assay targets."""
 
 import logging
-import os
-import shutil
 from bisect import bisect_right
-from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
 from cansnpscorer.helpers.file_utils import (
+    merge_intervals,
     read_contig_aliases,
     read_gff3,
     read_hierarchy,
@@ -152,16 +150,6 @@ def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
     return located
 
 
-def back_up_existing(output: str) -> None:
-    """Copy an output file out of the way before it is overwritten."""
-    if not os.path.isfile(output):
-        return
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    backup_name = f"{output}_{timestamp}.backup"
-    shutil.copy(output, backup_name)
-    logging.warning(f"{output} already existed; copied it to {backup_name}")
-
-
 def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
                          reference: Reference) -> Dict[str, List[Tuple[int, int]]]:
     """Place regions given over the whole concatenated reference on its contigs.
@@ -185,7 +173,9 @@ def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
                 if start <= contig.end - 1 and end >= contig.start:
                     placed[contig.name].append(
                         (max(start, contig.start) - contig.start, min(end, contig.end - 1) - contig.start))
-    return {name: sorted(found) for name, found in placed.items()}
+    # Regions from several sequence names may overlap once placed; in_regions
+    # needs them joined.
+    return {name: merge_intervals(found) for name, found in placed.items()}
 
 
 def read_masks(path: str, reference: Reference, concatenated: bool = False,
@@ -237,7 +227,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         located = locate_snps(parsed, genome)
     except (ValueError, ReferenceError) as error:
         logging.error(error)
-        return 1
+        return 2
 
     if not cds:
         logging.warning(
@@ -268,7 +258,6 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     if tree is not None:
         summarize_scores(tree.nodes, passing)
 
-    back_up_existing(output)
     written = vcf.write_scores(output, scores, genome, reference, cutoff, top_n, weights)
     logging.info(f"Wrote {written} scored canSNPs to {output}")
     return 0

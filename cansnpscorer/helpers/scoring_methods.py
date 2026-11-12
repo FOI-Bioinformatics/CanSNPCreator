@@ -84,7 +84,13 @@ class SnpContext:
 
 
 def neighbour_score(context: SnpContext, minimum_distance: int = 25) -> float:
-    """Distance to the closest neighbouring SNP, normalized to minimum_distance."""
+    """Distance to the closest neighbouring SNP or contig end, normalized to
+    minimum_distance.
+
+    A contig end counts as a neighbour on purpose: an assay needs flanking
+    sequence on both sides of its SNP, which a SNP near the end of a contig of
+    a draft assembly does not have.
+    """
     left = context.previous if context.previous is not None else 0
     right = context.following if context.following is not None else context.contig.length
     return neighbour_distance(context.position, left, right, minimum_distance)

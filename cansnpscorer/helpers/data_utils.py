@@ -1,5 +1,6 @@
 import heapq
 import logging
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -67,46 +68,38 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> flo
 #Binary search algorithm
 def search(snp: int, intervals: Sequence[Sequence[int]], limit: int) -> Tuple[float, Optional[Sequence[int]]]:
     """
-    Find the interval that contains the given position, or lies within limit of it.
+    Find the interval that holds a position, or the nearest one within limit of it.
 
     Args:
-        snp (int): The position to search for.
-        intervals (Sequence[Sequence[int]]): Intervals sorted by their start, each
-            beginning with a start and an end. Further elements, such as a strand,
-            are carried through untouched.
-        limit (int): How far outside an interval still counts as close to it.
+        snp: The position.
+        intervals: Intervals sorted by their start that do not overlap, each
+            beginning with a start and an end, inclusive. Further elements, such
+            as a strand, are carried through.
+        limit: How far outside an interval still counts as near it.
 
     Returns:
-        Tuple[float, Optional[Sequence[int]]]: The normalized distance to the
-        nearest interval and that interval, or (1.0, None) if none is close.
-        The distance is 0.0 inside an interval and 1.0 at or beyond the limit.
-        The second element is the interval only when the position is inside it,
-        so that the caller knows the reading frame applies.
+        The distance to the nearest interval as a fraction of limit, 0.0 inside
+        one and 1.0 at or beyond the limit, and that interval when the position
+        is inside it, or None.
     """
-    lowerbound = 0
-    upperbound = len(intervals) - 1
+    index = bisect_right([interval[0] for interval in intervals], snp) - 1
+    nearest = None
+    # Only the interval starting at or before the position, and the one after
+    # it, can be the nearest when the intervals do not overlap.
+    for candidate in (index, index + 1):
+        if not 0 <= candidate < len(intervals):
+            continue
+        start, end = intervals[candidate][0], intervals[candidate][1]
+        if start <= snp <= end:
+            return 0.0, intervals[candidate]
+        distance = start - snp if snp < start else snp - end
+        if nearest is None or distance < nearest:
+            nearest = distance
+    if nearest is None or limit <= 0 or nearest >= limit:
+        return 1.0, None
+    return nearest / float(limit), None
 
-    while lowerbound <= upperbound:
-        current = (lowerbound + upperbound) // 2
-        temp = intervals[current]
 
-        left = max(temp[0] - limit, 0)
-        right = temp[1] + limit
-
-        if left <= snp <= right:
-            if snp < temp[0]:
-                return (temp[0] - snp) / float(limit), None
-            if snp > temp[1]:
-                return (snp - temp[1]) / float(limit), None
-            return 0.0, temp
-        if snp < left:
-            upperbound = current - 1
-        else:
-            lowerbound = current + 1
-
-    return 1.0, None
-
-#Compare two codons
 def codon_comparer(variants: List[str], strand: str) -> float:
     """
     Compare two codons to determine their similarity.
@@ -146,7 +139,7 @@ def codon_complement(codon: str) -> str:
     Returns:
         str: The complement codon.
     """
-    translation = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    translation = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
     return "".join([translation[nucleotide] for nucleotide in codon])
 
 

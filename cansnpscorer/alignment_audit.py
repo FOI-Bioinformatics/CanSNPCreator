@@ -316,7 +316,9 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
     for node in scheme.hierarchy.nodes:
         if not placement.below.get(node):
             continue
-        found = canonical.get(node, [])
+        # Sites are credited to the deepest of nodes holding the same genomes,
+        # and separate this node's genomes as well.
+        found = canonical.get(placement.node_by_set.get(placement.below[node], node), [])
         if node in failed and found:
             findings.append(recommendation(
                 MODIFY, "replacement", node,

@@ -13,6 +13,9 @@ import re
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 SUPPORT_LABEL = re.compile(r"^\d+(\.\d+)?(/\d+(\.\d+)?)*$")
+#: Marks a token that was a quoted label, so that a quoted "(" or ":" is a
+#: name and never structure.
+QUOTED = "\x00"
 
 
 class HierarchyError(ValueError):
@@ -46,7 +49,7 @@ def _newick_tokens(text: str) -> List[str]:
                 end += 1
             else:
                 raise HierarchyError("the Newick string holds an unclosed quoted label")
-            tokens.append("".join(label))
+            tokens.append(QUOTED + "".join(label))
             index = end + 1
         elif character == "[":
             end = text.find("]", index)
@@ -170,6 +173,15 @@ class Hierarchy:
         tokens = _newick_tokens(text)
         if not tokens:
             raise HierarchyError("the Newick string holds no nodes")
+        structure = {"(", ")", ",", ";"}
+
+        def is_label(token: Optional[str]) -> bool:
+            return token is not None and (token.startswith(QUOTED) or (
+                token not in structure and not token.startswith(":")))
+
+        # Generated names must not take a name the tree already uses.
+        taken = {token.lstrip(QUOTED) for token in tokens if is_label(token)}
+        names_seen: Set[str] = set()
 
         pairs: List[Tuple[str, Optional[str]]] = []
         support: Dict[str, float] = {}
@@ -198,12 +210,13 @@ class Hierarchy:
                     raise HierarchyError(f"unexpected '{peek()}' in the Newick string")
 
             label = ""
-            if peek() is not None and peek() not in {"(", ")", ",", ";"} \
-                    and not peek().startswith(":"):
-                label = tokens[position]
+            quoted = False
+            if is_label(peek()):
+                quoted = tokens[position].startswith(QUOTED)
+                label = tokens[position].lstrip(QUOTED)
                 position += 1
             length = None
-            if peek() is not None and peek().startswith(":"):
+            if peek() is not None and not peek().startswith(QUOTED) and peek().startswith(":"):
                 try:
                     length = float(tokens[position][1:])
                 except ValueError:
@@ -211,13 +224,21 @@ class Hierarchy:
                         f"'{tokens[position][1:]}' is not a branch length") from None
                 position += 1
 
-            value = _support_value(label) if children and support_labels else None
+            value = (_support_value(label) if children and support_labels and not quoted
+                     else None)
             name = label if value is None else ""
             if not name:
                 if not children:
                     raise HierarchyError("the Newick string holds a leaf without a name")
                 generated += 1
+                while f"node{generated}" in taken:
+                    generated += 1
                 name = f"node{generated}"
+            if name in names_seen:
+                raise HierarchyError(
+                    f"the Newick string names '{name}' twice; every node of a tree needs its "
+                    f"own name")
+            names_seen.add(name)
             if value is not None:
                 support[name] = value
             if length is not None:

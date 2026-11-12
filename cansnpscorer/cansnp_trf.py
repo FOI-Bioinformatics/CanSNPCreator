@@ -2,6 +2,7 @@
 repeats as BED."""
 
 import logging
+import os
 import shutil
 import subprocess
 from typing import List, Tuple
@@ -71,6 +72,9 @@ def run_trf(reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi
         Nothing is written when TRF fails, since an empty file would read as a
         genome without repeats.
     """
+    if not os.path.isfile(reference):
+        logging.error(f"the reference {reference} does not exist")
+        return 1
     if shutil.which(TRF_EXECUTABLE) is None:
         logging.error(
             f"'{TRF_EXECUTABLE}' is not on the PATH. Install Tandem Repeats Finder, for "
@@ -102,6 +106,10 @@ def run_trf(reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi
     except ValueError as error:
         logging.error(error)
         return 1
+    if not repeats:
+        logging.warning(
+            "Tandem Repeats Finder reported no repeat at all, which is unusual for a bacterial "
+            "genome; check its parameters before relying on the empty file")
     write_bed(repeats, output)
     logging.info(f"Wrote {len(repeats)} tandem repeats to {output}")
     return 0

@@ -77,4 +77,7 @@ def place_main(scheme_dir=None, organism=None, tree_file=None, alignment=None,
         (logging.error if finding.severity == PROBLEM else logging.warning)(str(finding))
     logging.info(f"Wrote the genome map to {output}" + (f" and the report to {report}"
                                                          if report else ""))
+    if not placement.clusters:
+        logging.error("no genome was placed at any node of the scheme; the genome map is empty")
+        return 2
     return 2 if any(finding.severity == PROBLEM for finding in placement.findings) else 0

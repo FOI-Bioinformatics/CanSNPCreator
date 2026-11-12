@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from operator import itemgetter
 from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import unquote
 
 from cansnpscorer.helpers.names import strip_fasta_suffix
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
@@ -21,9 +22,11 @@ def open_text(path: str, newline: Optional[str] = None):
     """
     with open(path, "rb") as probe:
         compressed = probe.read(2) == b"\x1f\x8b"
+    # utf-8-sig drops a byte order mark, which would otherwise become part of
+    # the first header or column name.
     if compressed:
-        return gzip.open(path, "rt", newline=newline)
-    return open(path, newline=newline)
+        return gzip.open(path, "rt", newline=newline, encoding="utf-8-sig")
+    return open(path, newline=newline, encoding="utf-8-sig")
 
 
 def hierarchy_format(path: str) -> str:
@@ -99,6 +102,10 @@ def read_hierarchy(path: str) -> Hierarchy:
     return hierarchy
 
 
+#: IUPAC nucleotide codes, and the gap and unknown characters aligners write.
+SEQUENCE_CHARACTERS = frozenset("ACGTURYSWKMBDHVN-.~*?")
+
+
 def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     """
     Read a FASTA file into (name, sequence) pairs, in file order.
@@ -128,20 +135,27 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     with open_text(fasta_file) as handle:
         for line_number, line in enumerate(handle, 1):
             line = line.strip()
-            if not line:
-                continue
+            if not line or line.startswith(";"):
+                continue  # ';' opens a comment line in the original FASTA format
             if line.startswith(">"):
                 if name is not None:
                     records.append((name, "".join(chunks)))
                 words = line[1:].split()
-                if not words:
-                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID")
+                if not words or line[1:2].isspace():
+                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
+                                     f"directly after '>'")
                 name = words[0]
                 chunks = []
             else:
                 if name is None:
                     raise ValueError(
                         f"{fasta_file}: sequence before the first header, at line {line_number}")
+                line = "".join(line.split())
+                invalid = set(line.upper()) - SEQUENCE_CHARACTERS
+                if invalid:
+                    raise ValueError(
+                        f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
+                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
                 masked += sum(1 for base in line if base.islower())
                 chunks.append(line.upper())
 
@@ -150,6 +164,9 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
 
     if not records:
         raise ValueError(f"{fasta_file}: holds no FASTA records")
+    empty = [record_name for record_name, sequence in records if not sequence]
+    if empty:
+        raise ValueError(f"{fasta_file}: records hold no sequence: {', '.join(empty[:5])}")
 
     counts = Counter(record_name for record_name, _ in records)
     repeated = sorted(record_name for record_name, count in counts.items() if count > 1)
@@ -241,6 +258,8 @@ def read_genome_map(path: str) -> Dict[str, List[str]]:
             if not line.strip() or line.startswith("#"):
                 continue
             fields = line.split("\t")
+            if not placed and [field.strip().lower() for field in fields] == ["genome", "node"]:
+                continue  # a header naming the columns, which the format does not need
             if len(fields) != 2 or not fields[0].strip() or not fields[1].strip():
                 raise ValueError(
                     f"{path}: line {number} should hold a genome and a node separated by one "
@@ -310,8 +329,6 @@ class GeneModel:
 
 def gff3_attributes(text: str) -> Dict[str, str]:
     """The attributes of a GFF3 feature, percent-decoding their values."""
-    from urllib.parse import unquote
-
     attributes = {}
     for item in text.strip().split(";"):
         key, _equals, value = item.partition("=")
@@ -379,7 +396,7 @@ def read_gff3(gff_file: str) -> GeneModel:
                     f"{gff_file}: line {line_number} has no readable start and end") from None
             if end < start or start < 0:
                 raise ValueError(f"{gff_file}: line {line_number} has an impossible interval")
-            sequence = fields[GFF_SEQID]
+            sequence = unquote(fields[GFF_SEQID])
             strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
             genes.setdefault(sequence, []).append((start, end, strand))
             if fields[GFF_TYPE] != "CDS":
@@ -477,10 +494,10 @@ def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
     Read regions of the reference from BED or GFF3: tandem repeats, or regions
     to mask such as the recombinant regions Gubbins reports.
 
-    A file whose first line is a ##gff-version directive is GFF3, and every
-    feature in it is a region, 1-based and inclusive. Anything else is BED:
-    chrom, start and end in the first three tab separated columns, 0-based and
-    half open, with track, browser and '#' lines skipped. Sequences are named
+    A file whose leading comments hold a ##gff-version directive is GFF3, and
+    every feature in it is a region, 1-based and inclusive. Anything else is
+    BED: chrom, start and end in the first three columns, 0-based and half
+    open, with track, browser and '#' lines skipped. Sequences are named
     exactly as the reference FASTA's IDs name them.
 
     Returns:
@@ -494,8 +511,15 @@ def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
     regions: Dict[str, List[Tuple[int, int]]] = {}
     with open_text(path, newline="") as handle:
         lines = [line.rstrip("\r\n") for line in handle]
-    content = [line for line in lines if line.strip()]
-    is_gff = bool(content) and content[0].startswith("##gff-version")
+    is_gff = False
+    for line in lines:
+        if not line.strip():
+            continue
+        if line.startswith("##gff-version"):
+            is_gff = True
+            break
+        if not line.startswith("#"):
+            break
 
     for number, line in enumerate(lines, 1):
         if not line.strip():
@@ -516,9 +540,12 @@ def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
             except ValueError:
                 raise ValueError(f"{path}: line {number} has no readable start and end") from None
         else:
-            if line.startswith(("#", "track", "browser")):
+            if line.startswith("#") or line.split()[0] in ("track", "browser"):
                 continue
             fields = line.split("\t")
+            if len(fields) < 3:
+                # BED is tab separated, but whitespace separated files exist.
+                fields = line.split()
             if len(fields) < 3:
                 raise ValueError(
                     f"{path}: line {number} holds {len(fields)} tab separated columns where BED "

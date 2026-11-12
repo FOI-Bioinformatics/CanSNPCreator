@@ -25,6 +25,7 @@ none. Reserved characters in INFO values are percent-encoded, as VCF 4.3 asks.
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -38,7 +39,10 @@ BASES = frozenset("ACGT")
 
 #: The characters VCF 4.3 asks to be percent-encoded in INFO values.
 RESERVED = {":": "%3A", ";": "%3B", "=": "%3D", "%": "%25", ",": "%2C",
-            "\r": "%0D", "\n": "%0A", "\t": "%09"}
+            "\r": "%0D", "\n": "%0A", "\t": "%09", " ": "%20"}
+
+#: A contig ID as VCF 4.3 allows it (section 1.4.7).
+CONTIG_ID = re.compile(r"^[0-9A-Za-z!#$%&+./:;?@^_|~-][0-9A-Za-z!#$%&*+./:;=?@^_|~-]*$")
 
 
 def encode(value: str) -> str:
@@ -148,6 +152,12 @@ def header_lines(reference: Reference, reference_path: str, command: str,
         f"##source=CanSNPCreator {__version__} {command}",
         f"##reference=file://{os.path.abspath(reference_path)}",
     ]
+    illegal = [contig.name for contig in reference if not CONTIG_ID.match(contig.name)]
+    if illegal:
+        raise VcfError(
+            f"the reference names contigs VCF 4.3 does not allow as IDs: "
+            f"{', '.join(illegal[:3])}. Rename them in the reference FASTA, which the alignment "
+            f"and annotations must then follow")
     lines += [f"##contig=<ID={contig.name},length={contig.length}>" for contig in reference]
     lines += [info.header() for info in infos]
     lines += [definition.header() for definition in filters]

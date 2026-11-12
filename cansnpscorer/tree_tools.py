@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
 
 from cansnpscorer.findings import CHECK, MODIFY, Finding, problem, recommendation
-from cansnpscorer.helpers.file_utils import hierarchy_format, read_hierarchy
+from cansnpscorer.helpers.file_utils import hierarchy_format, open_text, read_hierarchy
 from cansnpscorer.helpers.names import resolve_names
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import AlignmentMap, Reference
@@ -66,12 +66,12 @@ def read_genome_tree(path: str, nodes_file: Optional[str] = None) -> Hierarchy:
     """
     if hierarchy_format(path) == "newick":
         # A genome tree's numeric internal labels are support values.
-        with open(path) as handle:
+        with open_text(path) as handle:
             tree = Hierarchy.from_newick(handle.read(), support_labels=True)
     else:
         tree = read_hierarchy(path)
     if nodes_file:
-        with open(nodes_file) as handle:
+        with open_text(nodes_file) as handle:
             reader = csv.DictReader(handle, delimiter="\t")
             missing = [name for name in NODE_TABLE_COLUMNS
                        if name not in (reader.fieldnames or [])]
@@ -88,6 +88,9 @@ def read_genome_tree(path: str, nodes_file: Optional[str] = None) -> Hierarchy:
                     value = (row.get(column) or "").strip()
                     if value and value.upper() != "NA":
                         target[node] = float(value)
+        # As for Newick, supports written as percentages are read as fractions.
+        if any(value > 1.0 for value in tree.support.values()):
+            tree.support = {node: value / 100.0 for node, value in tree.support.items()}
     logging.info(
         f"Read a genome tree of {len(tree.leaves)} genomes and "
         f"{len(tree) - len(tree.leaves)} internal nodes, {len(tree.support)} with a support "
@@ -105,7 +108,9 @@ def read_members(path: str, tree: Hierarchy) -> Dict[str, List[str]]:
     leaves = set(tree.leaves)
     members: Dict[str, List[str]] = {}
     foreign: Set[str] = set()
-    with open(path) as handle:
+    placed: Dict[str, str] = {}
+    twice: List[str] = []
+    with open_text(path) as handle:
         for number, line in enumerate(handle, 1):
             fields = line.rstrip("\n").split("\t")
             if not line.strip() or line.startswith("#"):
@@ -119,7 +124,20 @@ def read_members(path: str, tree: Hierarchy) -> Dict[str, List[str]]:
             own, _unmatched, _ambiguous = resolve_names([genome], [leaf])
             if own:
                 continue
+            # A genome that is a leaf itself, as in a tree of all genomes, sits
+            # at its own leaf; one listed under two leaves keeps the first.
+            if resolve_names([genome], list(leaves))[0]:
+                continue
+            if genome in placed:
+                if placed[genome] != leaf:
+                    twice.append(genome)
+                continue
+            placed[genome] = leaf
             members.setdefault(leaf, []).append(genome)
+    if twice:
+        logging.warning(
+            f"{path} places {len(twice)} genomes under two leaves; each was kept under the "
+            f"first: {', '.join(sorted(twice)[:3])}")
     if foreign:
         logging.warning(
             f"{path} places genomes at {len(foreign)} leaves the tree does not have, and they "
@@ -406,6 +424,15 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     in_tree = clades[tree.root]
 
     matches: Dict[str, Match] = {}
+    annotated = sorted({snp.genome for snp in scheme.snps})
+    if genome is None and len(annotated) > 1:
+        raise ValueError(
+            f"the scheme annotates {len(annotated)} reference genomes ({', '.join(annotated)}), "
+            f"so --genome must say which one the alignment is against")
+    if genome is not None and genome not in annotated:
+        raise ValueError(
+            f"the scheme annotates no SNP on genome '{genome}'; it names "
+            f"{', '.join(annotated) or 'none'}")
     snps = {}
     for snp in scheme.snps:
         if genome is not None and snp.genome != genome:
@@ -458,7 +485,10 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         for tree_node in tree.nodes:
             inside_called, inside_carriers = below_called[tree_node], below_carriers[tree_node]
             sides = [(inside_called, inside_carriers, 0)]
-            if tree_node != tree.root:
+            # The genomes outside one leaf are a side only of the branch to
+            # that leaf, which every tree has; it says nothing about clades, and
+            # on an unresolved tree it would stand in for one.
+            if tree_node != tree.root and tree.children[tree_node]:
                 sides.append((n_called - inside_called, n_carriers - inside_carriers, 1))
             for side_called, shared, outside in sides:
                 if not shared:

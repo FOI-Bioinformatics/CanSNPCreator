@@ -153,12 +153,12 @@ def check_references(scheme: Scheme) -> List[Finding]:
                 MODIFY, "genome-name", node,
                 f"the genome name '{reference.genome}' holds an underscore; CanSNPer2 recovers "
                 f"the reference name from an alignment file name by splitting on the first one"))
-        if not GENBANK.match(reference.genbank_id):
+        if not GENBANK.fullmatch(reference.genbank_id):
             findings.append(problem(
                 MODIFY, "accession", node,
                 f"'{reference.genbank_id}' is not a well formed GenBank accession, such as "
                 f"GCA_000007125.1; CanSNPer2-download builds NCBI paths from its digits"))
-        if not REFSEQ.match(reference.refseq_id):
+        if not REFSEQ.fullmatch(reference.refseq_id):
             findings.append(problem(
                 MODIFY, "accession", node,
                 f"'{reference.refseq_id}' is not a well formed RefSeq accession, such as "
@@ -316,21 +316,33 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> List[Finding]:
 
 
 def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
-                         reference: Reference) -> List[Finding]:
+                         reference: Reference, genome: Optional[str] = None) -> List[Finding]:
     """Compare the scheme against scored candidates for the same nodes.
 
     The scores give positions by contig; the scheme counts them over the
     concatenated genome, so the candidates are converted before they are
     matched. A candidate is offered only if it passed evaluate's filters, but
-    the scheme's own SNP is looked up among all of them.
+    the scheme's own SNP is looked up among all of them, by position and node.
+    The scores are against one reference genome, so only the scheme's SNPs on
+    that genome are compared.
     """
     findings: List[Finding] = []
+    annotated = sorted({snp.genome for snp in scheme.snps})
+    if genome is None:
+        if len(annotated) > 1:
+            return [recommendation(
+                CHECK, "not-scored", "",
+                f"the scheme annotates {len(annotated)} reference genomes "
+                f"({', '.join(annotated)}), so --genome must say which one the scores are "
+                f"against; the scores were not compared")]
+        genome = annotated[0] if annotated else None
 
     best: Dict[str, ScoredSnp] = {}
-    global_position: Dict[int, ScoredSnp] = {}
+    scored_at: Dict[Tuple[int, str], ScoredSnp] = {}
     for score in scores:
         if score.contig in reference.names:
-            global_position[reference.contig(score.contig).start + score.position] = score
+            position = reference.contig(score.contig).start + score.position
+            scored_at[(position, score.node)] = score
     for score in scores:
         if not score.passed:
             continue
@@ -340,8 +352,10 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
             best[score.node] = score
 
     for snp in scheme.snps:
+        if snp.genome != genome:
+            continue
         candidate = best.get(snp.node)
-        current = global_position.get(snp.position)
+        current = scored_at.get((snp.position, snp.node))
 
         if candidate is None:
             findings.append(recommendation(
@@ -431,7 +445,7 @@ def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
     if reference is not None:
         findings += check_against_reference(scheme, reference, genome)
         if scores is not None:
-            findings += check_against_scores(scheme, scores, reference)
+            findings += check_against_scores(scheme, scores, reference, genome)
         if masks:
             findings += check_masks(scheme, reference, masks, genome)
         if alignment is not None and clusters is not None:
@@ -508,8 +522,20 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         logging.error("--members applies to the leaves of --tree")
         return 1
 
+    if genome and not reference:
+        logging.error("--genome names the scheme's reference genome that --reference holds, so "
+                      "it needs --reference")
+        return 1
+    if masks_concatenated and not masks:
+        logging.error("--masks-concatenated applies to --masks")
+        return 1
     try:
         scheme = read_scheme(scheme_dir, organism)
+        annotated = sorted({snp.genome for snp in scheme.snps})
+        if genome and genome not in annotated:
+            logging.error(f"the scheme annotates no SNP on genome '{genome}'; it names "
+                          f"{', '.join(annotated) or 'none'}")
+            return 1
         sequence = reference_parser(reference) if reference else None
         scored = vcf.read_scores(scores, sequence) if scores else None
         aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
@@ -541,13 +567,14 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
                 clusters = {}
                 listed = [entry for entry in scheme.genomes if entry[2] != "outgroup"]
                 matched, _unmatched, _ambiguous = resolve_names(
-                    [genome for genome, _node, _role in listed], list(aligned))
+                    [accession for accession, _node, _role in listed], list(aligned))
                 skipped = 0
-                for genome, node, role in listed:
-                    if role == "member" and genome not in matched:
+                # The loop names its own variables: genome is the --genome option.
+                for accession, node, role in listed:
+                    if role == "member" and accession not in matched:
                         skipped += 1
                         continue
-                    clusters.setdefault(node, []).append(genome)
+                    clusters.setdefault(node, []).append(accession)
                 logging.info(
                     f"Placed {sum(len(found) for found in clusters.values())} genomes as the "
                     f"scheme's genomes file lists them"
