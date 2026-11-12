@@ -104,6 +104,42 @@ def back_up_existing(output: str) -> None:
     logging.warning(f"{output} already existed; copied it to {backup_name}")
 
 
+def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
+                         reference: Reference) -> Dict[str, List[Tuple[int, int]]]:
+    """Place regions given over the whole concatenated reference on its contigs.
+
+    Gubbins, run on an alignment in reference coordinates such as RepGenR2's
+    full_alignment.fasta, reports recombinant regions by alignment column,
+    which is a position in the concatenated reference whatever sequence name
+    the file gives. A region that spans two contigs is split between them.
+
+    Raises:
+        ValueError: If a region extends past the end of the reference.
+    """
+    placed: Dict[str, List[Tuple[int, int]]] = {name: [] for name in reference.names}
+    for name, found in regions.items():
+        for start, end in found:
+            if end >= reference.length:
+                raise ValueError(
+                    f"the region {name}:{start + 1}-{end + 1} extends past the end of the "
+                    f"reference, which holds {reference.length} bases over all its contigs")
+            for contig in reference:
+                if start <= contig.end - 1 and end >= contig.start:
+                    placed[contig.name].append(
+                        (max(start, contig.start) - contig.start, min(end, contig.end - 1) - contig.start))
+    return {name: sorted(found) for name, found in placed.items()}
+
+
+def read_masks(path: str, reference: Reference, concatenated: bool = False
+               ) -> Dict[str, List[Tuple[int, int]]]:
+    """Masked regions by contig, from BED or GFF3 named by contig, or, with
+    ``concatenated``, given over the whole concatenated reference."""
+    regions = read_intervals(path)
+    if concatenated:
+        return regions_over_contigs(regions, reference)
+    return annotations_by_contig(regions, reference, "mask")
+
+
 def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
     """Whether a 0-based position lies in one of these sorted, joined regions."""
     index = bisect_right(regions, (position, float("inf"))) - 1
@@ -112,7 +148,8 @@ def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
 
 def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
-         weights: Optional[Dict[str, float]] = None, masks=None) -> int:
+         weights: Optional[Dict[str, float]] = None, masks=None,
+         masks_concatenated=False) -> int:
     """Score the canSNPs extract found. Returns a process exit status."""
     weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
     try:
@@ -122,7 +159,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         gene_intervals = annotations_by_contig(model.genes, genome, "gene")
         cds = annotations_by_contig(model.cds, genome, "CDS") if model.cds else {}
         repeat_intervals = annotations_by_contig(read_intervals(repeats), genome, "repeat")
-        masked = annotations_by_contig(read_intervals(masks), genome, "mask") if masks else {}
+        masked = read_masks(masks, genome, masks_concatenated) if masks else {}
         tree = read_hierarchy(hierarchy) if hierarchy else None
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)

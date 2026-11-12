@@ -31,6 +31,8 @@ from cansnpscorer.helpers.data_utils import codon_comparer, gc_content, neighbou
 from cansnpscorer.model import Contig
 from cansnpscorer.model import complement as complement_base
 
+BASES = frozenset("ACGT")
+
 #: The score terms, in the order they are reported.
 TERMS = ("neighbour_score", "gc_score", "tandem_score", "gene_score", "mutation_score")
 
@@ -56,7 +58,7 @@ class SnpContext:
     following: Optional[int] = None
     """0-based position of the closest SNP to the right on this contig."""
     genes: Sequence[Sequence[int]] = field(default_factory=list)
-    """Gene and CDS intervals on this contig as (start, end, strand), sorted by start."""
+    """Bases covered by a gene or CDS on this contig as (start, end), sorted and joined."""
     cds: Sequence[Sequence[int]] = field(default_factory=list)
     """CDS intervals on this contig as (start, end, strand, phase), sorted by start."""
     repeats: Sequence[Sequence[int]] = field(default_factory=list)
@@ -133,24 +135,26 @@ def codons_at(context: SnpContext) -> Optional[List[str]]:
             # and each codon reads towards lower coordinates.
             first = end - phase
             if position > first:
-                return None
+                continue
             index = (first - position) % 3
             top = position + index
             positions = [top, top - 1, top - 2]
             if positions[-1] < start:
-                return None
+                continue
             codon = [complement_base(sequence[at]) for at in positions]
             alleles = [complement_base(allele) for allele in context.alleles]
         else:
             first = start + phase
             if position < first:
-                return None
+                continue
             index = (position - first) % 3
             positions = [position - index + offset for offset in range(3)]
             if positions[-1] > end:
-                return None
+                continue
             codon = [sequence[at] for at in positions]
             alleles = list(context.alleles)
+        if not set(codon) <= BASES:
+            return None
         codons = []
         for allele in alleles:
             changed = list(codon)

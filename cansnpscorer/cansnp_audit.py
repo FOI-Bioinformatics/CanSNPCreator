@@ -32,7 +32,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cansnpscorer import vcf
 from cansnpscorer.alignment_audit import check_against_alignment
-from cansnpscorer.cansnp_evaluator import annotations_by_contig
+from cansnpscorer.cansnp_evaluator import read_masks
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
 from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of this module
     CHECK,
@@ -48,7 +48,6 @@ from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
     read_alignment,
     read_genome_map,
-    read_intervals,
     reference_parser,
 )
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
@@ -480,7 +479,8 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
 def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=None,
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
-         min_clade_snps=1, tree=None, members=None, masks=None) -> int:
+         min_clade_snps=1, tree=None, members=None, masks=None,
+         masks_concatenated=False) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
@@ -510,8 +510,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         scheme = read_scheme(scheme_dir, organism)
         sequence = reference_parser(reference) if reference else None
         scored = vcf.read_scores(scores, sequence) if scores else None
-        masked = (annotations_by_contig(read_intervals(masks), sequence, "mask")
-                  if masks else None)
+        masked = read_masks(masks, sequence, masks_concatenated) if masks else None
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1

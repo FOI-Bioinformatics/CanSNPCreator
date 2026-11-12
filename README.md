@@ -36,9 +36,12 @@ work with other tools as well as with this one.
 | hierarchy | `child`/`parent` table, or Newick | The scheme's tree. The table is tab separated with a header naming `child` and `parent`, as FlexTaxD's taxonomy and RepGenR2's `tree2tax.tsv`; other columns are ignored. In Newick every label is a node name. |
 | genome map | two tab separated columns, no header | Genome and the node it sits at, as FlexTaxD's `--genomeid2taxid` and RepGenR2's `genomes_map.tsv`. A genome may sit at an internal node. |
 | genes | GFF3 | `gene` and `CDS` features say whether a SNP is in a gene; each CDS's phase gives the reading frame. |
-| repeats, masked regions | BED, or GFF3 | BED is 0-based and half open. |
+| repeats, masked regions | BED, or GFF3 | BED is 0-based and half open. Regions are named by contig ID, or, with `--masks-concatenated`, given over the whole concatenated reference, as Gubbins reports recombinant regions for an alignment in reference coordinates such as RepGenR2's `full_alignment.fasta`. |
 | SNPs and scores | VCF 4.3 | Described below. |
 | CanSNPer2-data scheme | that repository's three tab separated files | Written by `export`, read by `audit` and `place`. |
+
+A root given as its own parent, as NCBI's `nodes.dmp` gives it, is read as the
+root.
 
 The hierarchy and the genome map are kept apart, as NCBI Taxonomy keeps its
 nodes apart from its accession table: a node may hold no genome yet, and a

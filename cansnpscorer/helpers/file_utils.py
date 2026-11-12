@@ -45,7 +45,8 @@ def read_hierarchy(path: str) -> Hierarchy:
     and 'parent' columns holds one row per node; the root's parent is empty,
     or the root is the one node named only as a parent. This is the layout of
     FlexTaxD's taxonomy and RepGenR2's tree2tax.tsv, and other columns, such as
-    tree2tax's rank, are ignored. A Newick tree names its nodes in its labels;
+    tree2tax's rank, are ignored. A root given as its own parent, as NCBI's
+    nodes.dmp gives it, is read as the root. A Newick tree names its nodes in its labels;
     every label is read as a name, so a node called 2.1 stays 2.1.
 
     Raises:
@@ -71,6 +72,8 @@ def read_hierarchy(path: str) -> Hierarchy:
             if len(fields) <= child_at or not fields[child_at].strip():
                 raise HierarchyError(f"{path}: row {number} names no child")
             parent = fields[parent_at] if len(fields) > parent_at else ""
+            if parent.strip() == fields[child_at].strip():
+                parent = ""  # NCBI's nodes.dmp names the root as its own parent
             pairs.append((fields[child_at], parent))
         if not pairs:
             raise HierarchyError(f"{path}: holds no rows below its header")
@@ -261,12 +264,13 @@ GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE = 0, 2, 3, 4, 6, 
 class GeneModel:
     """The genes of a GFF3 file, by sequence ID, 0-based and inclusive.
 
-    ``genes`` holds every gene and CDS as (start, end, strand) and decides
-    whether a SNP lies in a gene. ``cds`` holds the CDS features as (start,
-    end, strand, phase), which give the reading frame a codon is read in.
+    ``genes`` holds the bases covered by any gene or CDS as (start, end),
+    joined where they overlap, and decides whether a SNP lies in a gene.
+    ``cds`` holds the CDS features as (start, end, strand, phase), which give
+    the reading frame a codon is read in.
     """
 
-    genes: Dict[str, List[Tuple[int, int, str]]]
+    genes: Dict[str, List[Tuple[int, int]]]
     cds: Dict[str, List[Tuple[int, int, str, int]]]
 
 
@@ -318,10 +322,12 @@ def read_gff3(gff_file: str) -> GeneModel:
                         f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
                 cds.setdefault(sequence, []).append((start, end, strand, int(phase)))
 
-    # A gene and its CDS usually cover the same bases; one interval is enough
-    # to say a SNP is in a gene.
+    # Whether a SNP is in a gene does not depend on the strand, and the genes
+    # are searched with a binary search, which needs intervals that do not
+    # overlap: a gene with its CDS, or a gene holding smaller features, would
+    # otherwise hide the bases it covers.
     for sequence in genes:
-        genes[sequence] = sorted(set(genes[sequence]), key=itemgetter(0, 1))
+        genes[sequence] = merge_intervals([(start, end) for start, end, _ in genes[sequence]])
     for sequence in cds:
         cds[sequence].sort(key=itemgetter(0, 1))
     logging.info(
@@ -398,6 +404,8 @@ def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
                 start, end = int(fields[1]), int(fields[2]) - 1
             except ValueError:
                 raise ValueError(f"{path}: line {number} has no readable start and end") from None
+            if end == start - 1 and start >= 0:
+                continue  # BED allows an empty region, which covers no base
         if start < 0 or end < start:
             raise ValueError(f"{path}: line {number} has an impossible interval")
         regions.setdefault(sequence, []).append((start, end))

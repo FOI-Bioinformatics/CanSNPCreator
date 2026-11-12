@@ -257,15 +257,18 @@ def read(path: str) -> Vcf:
                 raise VcfError(f"{path}: is not VCF; its first line is not ##fileformat")
             if line.startswith("##"):
                 meta.append(line)
-                if line.startswith("##contig=<") and line.endswith(">"):
-                    attributes = _attributes(line[len("##contig=<"):-1])
-                    if "ID" in attributes and "length" in attributes:
-                        contigs[attributes["ID"]] = int(attributes["length"])
-                elif line.startswith("##INFO=<") and line.endswith(">"):
-                    attributes = _attributes(line[len("##INFO=<"):-1])
-                    infos[attributes["ID"]] = Info(
-                        attributes["ID"], attributes.get("Number", "."),
-                        attributes.get("Type", "String"), attributes.get("Description", ""))
+                try:
+                    if line.startswith("##contig=<") and line.endswith(">"):
+                        attributes = _attributes(line[len("##contig=<"):-1])
+                        if "ID" in attributes and "length" in attributes:
+                            contigs[attributes["ID"]] = int(attributes["length"])
+                    elif line.startswith("##INFO=<") and line.endswith(">"):
+                        attributes = _attributes(line[len("##INFO=<"):-1])
+                        infos[attributes["ID"]] = Info(
+                            attributes["ID"], attributes.get("Number", "."),
+                            attributes.get("Type", "String"), attributes.get("Description", ""))
+                except (KeyError, IndexError, ValueError):
+                    raise VcfError(f"{path}: line {number} is a malformed header line") from None
                 continue
             if line.startswith("#CHROM"):
                 if tuple(line.split("\t")[:8]) != COLUMNS:

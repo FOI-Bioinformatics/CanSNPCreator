@@ -23,39 +23,52 @@ ACCESSION = re.compile(r"GC[AF]\d{9}\d+")
 def resolve_names(names, records):
     """Match genome names from one file to the record names of another.
 
-    A name matches a record when the two are equal once cleaned. Failing
-    that, a name that is an assembly accession matches the one record whose
-    name contains it, since RepGenR2 names records ``Family_Genus_species_Acc``
-    while its genomes_map.tsv gives the accession alone.
+    In order: a name equal to a record, with or without a FASTA suffix on
+    either, matches it. Failing that, a name matches the record it equals once
+    both are reduced to their alphanumeric characters, provided only one record
+    does. Failing that, a name that is an assembly accession matches the one
+    record whose name contains it, since RepGenR2 names records
+    ``Family_Genus_species_Acc`` while its genomes_map.tsv gives the accession
+    alone. A name that would match two records is reported, not guessed.
 
     Args:
         names: The names to match, as the file gives them.
-        records: The record names to match them against, already cleaned.
+        records: The record names to match them against, as their IDs.
 
     Returns:
         A dictionary from each name that matched to its record, the names that
         matched nothing, and the names that matched more than one record.
     """
-    by_clean = {clean_name(record): record for record in records}
+    by_name = {}
+    by_clean = {}
+    for record in records:
+        for key in {record, strip_fasta_suffix(record)}:
+            by_name.setdefault(key, set()).add(record)
+        by_clean.setdefault(clean_name(strip_fasta_suffix(record)), set()).add(record)
+
     matched = {}
     unmatched = []
     ambiguous = []
     for name in names:
-        cleaned = clean_name(strip_fasta_suffix(name))
-        if cleaned in by_clean:
-            matched[name] = by_clean[cleaned]
+        stripped = strip_fasta_suffix(name)
+        if name in by_name and len(by_name[name]) == 1:
+            matched[name] = next(iter(by_name[name]))
             continue
-        if ACCESSION.fullmatch(cleaned):
+        if stripped in by_name and len(by_name[stripped]) == 1:
+            matched[name] = next(iter(by_name[stripped]))
+            continue
+        found = by_clean.get(clean_name(stripped), set())
+        if not found and ACCESSION.fullmatch(clean_name(stripped)):
             # Not followed by a digit, so that version 1 does not match version 10.
-            inside = re.compile(re.escape(cleaned) + r"(?!\d)")
-            found = [record for key, record in by_clean.items() if inside.search(key)]
-            if len(found) == 1:
-                matched[name] = found[0]
-                continue
-            if found:
-                ambiguous.append(name)
-                continue
-        unmatched.append(name)
+            inside = re.compile(re.escape(clean_name(stripped)) + r"(?!\d)")
+            found = {record for key, group in by_clean.items() if inside.search(key)
+                     for record in group}
+        if len(found) == 1:
+            matched[name] = next(iter(found))
+        elif found:
+            ambiguous.append(name)
+        else:
+            unmatched.append(name)
     return matched, unmatched, ambiguous
 
 

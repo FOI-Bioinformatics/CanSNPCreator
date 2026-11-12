@@ -291,7 +291,7 @@ def test_a_prokka_gff3_with_cds_only_gives_genes_and_frames(tmp_path):
                     "c1\tAragorn:001002\ttRNA\t20\t90\t.\t+\t.\tID=X_00002\n"
                     "##FASTA\n>c1\nACGTACGTACGT\n")
     model = read_gff3(str(path))
-    assert model.genes == {"c1": [(2, 10, "-")]}
+    assert model.genes == {"c1": [(2, 10)]}
     assert model.cds == {"c1": [(2, 10, "-", 0)]}
 
 
@@ -317,3 +317,100 @@ def test_genome_names_are_resolved_to_alignment_records():
     resolved, unmatched, ambiguous = resolve_clusters(clusters, records)
     assert resolved == {"A": ["Fam_Gen_sp_GCF_000000001.1", "strain-7"], "B": []}
     assert unmatched == ["missing"] and ambiguous == []
+
+
+
+# -- found in review ---------------------------------------------------------
+
+
+def test_record_ids_with_a_fasta_suffix_match_the_genome_map():
+    # Parsnp names alignment records after their files, as g1.fna.
+    from cansnpscorer.helpers.names import resolve_names
+
+    matched, unmatched, _ambiguous = resolve_names(["g1.fna", "g2"], ["g1.fna", "g2.fna"])
+    assert matched == {"g1.fna": "g1.fna", "g2": "g2.fna"} and unmatched == []
+
+
+def test_an_exact_name_wins_and_a_collision_is_reported():
+    from cansnpscorer.helpers.names import resolve_names
+
+    matched, _unmatched, ambiguous = resolve_names(["A_1", "A1"], ["A_1", "A-1"])
+    assert matched == {"A_1": "A_1"}
+    assert ambiguous == ["A1"], "A1 could be either record"
+
+
+def test_a_snp_in_a_gene_holding_smaller_features_is_in_a_gene(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_gff3
+    from cansnpscorer.helpers.scoring_methods import SnpContext, gene_score
+    from cansnpscorer.model import Contig
+
+    path = tmp_path / "nested.gff"
+    path.write_text("##gff-version 3\n" + "".join(
+        f"c1\tx\tgene\t{start}\t{end}\t.\t+\t.\tID=g{start}\n"
+        for start, end in [(1, 1000), (11, 20), (31, 40), (51, 60), (71, 80)]))
+    genes = read_gff3(str(path)).genes["c1"]
+    assert genes == [(0, 999)]
+    snp = SnpContext(Contig("c1", "A" * 1000, 0), 500, "A", ("A", "G"), genes=genes)
+    assert gene_score(snp, 0) == 1.0
+
+
+def test_a_codon_holding_an_unknown_base_has_no_amino_acid():
+    from cansnpscorer.helpers.scoring_methods import SnpContext, mutation_score
+    from cansnpscorer.model import Contig
+
+    snp = SnpContext(Contig("c1", "ATGNAATAA", 0), 4, "A", ("C", "A"), cds=[(0, 8, "+", 0)])
+    assert mutation_score(snp) == 0.0
+
+
+def test_a_later_cds_is_read_when_the_first_cannot_give_a_codon():
+    from cansnpscorer.helpers.scoring_methods import SnpContext, mutation_score
+    from cansnpscorer.model import Contig
+
+    # In the first CDS the SNP's codon would run past the CDS's end; the
+    # second reads it whole.
+    snp = SnpContext(Contig("c1", "TTATTGTAA", 0), 2, "A", ("A", "G"),
+                     cds=[(0, 3, "+", 2), (0, 8, "+", 0)])
+    assert mutation_score(snp) == 1.0, "TTA and TTG are both Leu"
+
+
+@pytest.mark.parametrize("line", [
+    "##INFO=<Number=1,Type=String,Description=\"no ID\">",
+    "##INFO=<ID=X,Number=1,Type=String,Description=\"unterminated>",
+    "##contig=<ID=c1,length=many>",
+])
+def test_a_malformed_vcf_header_line_is_refused_cleanly(tmp_path, line):
+    from cansnpscorer import vcf
+
+    path = tmp_path / "bad.vcf"
+    path.write_text("##fileformat=VCFv4.3\n" + line + "\n"
+                    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    with pytest.raises(vcf.VcfError, match="malformed header line"):
+        vcf.read(str(path))
+
+
+def test_an_empty_bed_region_is_skipped(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_intervals
+
+    path = tmp_path / "r.bed"
+    path.write_text("c1\t5\t5\nc1\t10\t20\n")
+    assert read_intervals(str(path)) == {"c1": [(10, 19)]}
+
+
+def test_a_root_given_as_its_own_parent_is_the_root(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_hierarchy
+
+    path = tmp_path / "nodes.tsv"
+    path.write_text("child\tparent\n1\t1\n2\t1\n")
+    assert read_hierarchy(str(path)).root == "1"
+
+
+def test_masks_over_the_concatenated_reference_are_placed_on_contigs():
+    from cansnpscorer.cansnp_evaluator import regions_over_contigs
+
+    reference = Reference.from_records([("c1", "A" * 700), ("c2", "A" * 300)])
+    # Gubbins reports alignment columns whatever the sequence is called; one
+    # region here spans the end of c1 and the start of c2.
+    placed = regions_over_contigs({"SEQUENCE": [(10, 19), (690, 709)]}, reference)
+    assert placed == {"c1": [(10, 19), (690, 699)], "c2": [(0, 9)]}
+    with pytest.raises(ValueError, match="past the end of the reference"):
+        regions_over_contigs({"SEQUENCE": [(995, 1005)]}, reference)

@@ -39,8 +39,8 @@ def test_clean_name_keeps_only_alphanumeric():
 def test_gff3_genes_and_cds_are_read_per_sequence_zero_based(dataset):
     model = read_gff3(dataset.gff)
     assert sorted(model.genes) == ["c1", "c2"]
-    assert model.genes["c1"] == [(150, 449, "+"), (550, 649, "-")], "gene and CDS once"
-    assert model.genes["c2"] == [(10, 199, "+")]
+    assert model.genes["c1"] == [(150, 449), (550, 649)], "gene and CDS once"
+    assert model.genes["c2"] == [(10, 199)]
     assert model.cds["c1"] == [(150, 449, "+", 0), (550, 649, "-", 0)]
 
 
