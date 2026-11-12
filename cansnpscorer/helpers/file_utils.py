@@ -1,15 +1,29 @@
 
+import gzip
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from operator import itemgetter
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from cansnpscorer.helpers.names import strip_fasta_suffix
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 
 HIERARCHY_FORMATS = ("table", "newick")
+
+
+def open_text(path: str, newline: Optional[str] = None):
+    """Open a text file for reading, gzip or bgzip compressed or not.
+
+    NCBI distributes genomes and annotations gzipped, and VCF is often
+    bgzipped; both are recognised by their first two bytes.
+    """
+    with open(path, "rb") as probe:
+        compressed = probe.read(2) == b"\x1f\x8b"
+    if compressed:
+        return gzip.open(path, "rt", newline=newline)
+    return open(path, newline=newline)
 
 
 def hierarchy_format(path: str) -> str:
@@ -21,7 +35,7 @@ def hierarchy_format(path: str) -> str:
     Raises:
         HierarchyError: If the file is empty or is neither.
     """
-    with open(path) as handle:
+    with open_text(path) as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -58,11 +72,11 @@ def read_hierarchy(path: str) -> Hierarchy:
     logging.info(f"Reading the hierarchy in {path} as a {file_format}")
 
     if file_format == "newick":
-        with open(path) as handle:
+        with open_text(path) as handle:
             hierarchy = Hierarchy.from_newick(handle.read())
     else:
         pairs = []
-        with open(path, newline="") as handle:
+        with open_text(path, newline="") as handle:
             lines = [line.rstrip("\r\n") for line in handle
                      if line.strip() and not line.startswith("#")]
         header = lines[0].split("\t")
@@ -111,7 +125,7 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     chunks: List[str] = []
     masked = 0
 
-    with open(fasta_file) as handle:
+    with open_text(fasta_file) as handle:
         for line_number, line in enumerate(handle, 1):
             line = line.strip()
             if not line:
@@ -209,7 +223,7 @@ def read_genome_map(path: str) -> Dict[str, List[str]]:
     logging.info(f"Reading the genome map {path}")
     clusters: Dict[str, List[str]] = {}
     placed: Dict[str, str] = {}
-    with open(path, newline="") as handle:
+    with open_text(path, newline="") as handle:
         for number, line in enumerate(handle, 1):
             line = line.rstrip("\r\n")
             if not line.strip() or line.startswith("#"):
@@ -257,7 +271,12 @@ def reference_parser(reference: str) -> Reference:
 #: gene, since Prokka writes CDS features without gene features by default.
 GENE_FEATURES = frozenset({"gene", "CDS"})
 
-GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE = 0, 2, 3, 4, 6, 7
+#: Genetic codes whose codons translate as the standard table does. Table 11,
+#: for bacteria, differs from table 1 only in its start codons.
+STANDARD_CODES = frozenset({"1", "11"})
+
+GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE, GFF_ATTRIBUTES = (
+    0, 2, 3, 4, 6, 7, 8)
 
 
 @dataclass
@@ -266,38 +285,74 @@ class GeneModel:
 
     ``genes`` holds the bases covered by any gene or CDS as (start, end),
     joined where they overlap, and decides whether a SNP lies in a gene.
-    ``cds`` holds the CDS features as (start, end, strand, phase), which give
-    the reading frame a codon is read in.
+    ``cds`` holds the CDS features that give a reading frame as (start, end,
+    strand, phase). ``sequences`` holds the sequences a ##FASTA section
+    carries, as Prokka and Bakta write them, by which the annotated sequences
+    can be matched to the reference's contigs when their names differ.
     """
 
     genes: Dict[str, List[Tuple[int, int]]]
     cds: Dict[str, List[Tuple[int, int, str, int]]]
+    sequences: Dict[str, str] = field(default_factory=dict)
+
+
+def gff3_attributes(text: str) -> Dict[str, str]:
+    """The attributes of a GFF3 feature, percent-decoding their values."""
+    from urllib.parse import unquote
+
+    attributes = {}
+    for item in text.strip().split(";"):
+        key, _equals, value = item.partition("=")
+        if key:
+            attributes[key.strip()] = unquote(value)
+    return attributes
 
 
 def read_gff3(gff_file: str) -> GeneModel:
     """
     Read the genes and coding sequences of a GFF3 file.
 
-    Columns are read by position, as GFF3 fixes them, and sequences are named
-    by their seqid exactly, as the reference FASTA names them by its IDs. A
-    line beginning with '#' is a comment or directive, and a ##FASTA directive
-    ends the annotation.
+    Prokka's, Bakta's and NCBI's GFF3 are read alike. Columns are read by
+    position, as GFF3 fixes them, and sequences are named by their seqid. A
+    line beginning with '#' is a comment or directive; a ##FASTA directive ends
+    the features, and the sequences after it are kept.
+
+    A CDS gives no reading frame when it is a pseudogene's (NCBI marks it
+    pseudo=true) or uses a genetic code whose codons translate differently from
+    the standard code (transl_table other than 1 or 11). It still places the
+    SNP in a gene.
 
     Raises:
-        ValueError: If a feature has no readable start and end.
+        ValueError: If a feature is malformed.
         OSError: If the file cannot be read.
     """
     logging.info(f"Reading genes from {gff_file}")
     genes: Dict[str, List[Tuple[int, int, str]]] = {}
     cds: Dict[str, List[Tuple[int, int, str, int]]] = {}
+    sequences: Dict[str, List[str]] = {}
+    pseudo = 0
+    other_code: Counter = Counter()
 
-    with open(gff_file) as gff:
+    with open_text(gff_file) as gff:
+        in_fasta = False
+        name = None
         for line_number, line in enumerate(gff, 1):
+            line = line.rstrip("\r\n")
+            if in_fasta:
+                if line.startswith(">"):
+                    words = line[1:].split()
+                    name = words[0] if words else None
+                    if name is not None:
+                        sequences[name] = []
+                elif name is not None and line.strip():
+                    sequences[name].append(line.strip().upper())
+                continue
             if line.startswith("##FASTA"):
-                break
+                in_fasta = True
+                continue
             if line.startswith("#") or not line.strip():
                 continue
-            fields = line.rstrip("\r\n").split("\t")
+            fields = line.split("\t")
             if len(fields) != 9:
                 raise ValueError(
                     f"{gff_file}: line {line_number} holds {len(fields)} tab separated columns "
@@ -315,26 +370,83 @@ def read_gff3(gff_file: str) -> GeneModel:
             sequence = fields[GFF_SEQID]
             strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
             genes.setdefault(sequence, []).append((start, end, strand))
-            if fields[GFF_TYPE] == "CDS":
-                phase = fields[GFF_PHASE]
-                if phase not in {"0", "1", "2"}:
-                    raise ValueError(
-                        f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
-                cds.setdefault(sequence, []).append((start, end, strand, int(phase)))
+            if fields[GFF_TYPE] != "CDS":
+                continue
+            phase = fields[GFF_PHASE]
+            if phase not in {"0", "1", "2"}:
+                raise ValueError(
+                    f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
+            attributes = gff3_attributes(fields[GFF_ATTRIBUTES])
+            if attributes.get("pseudo", "").lower() == "true" or "pseudogene" in attributes:
+                pseudo += 1
+                continue
+            code = attributes.get("transl_table", "11")
+            if code not in STANDARD_CODES:
+                other_code[code] += 1
+                continue
+            cds.setdefault(sequence, []).append((start, end, strand, int(phase)))
 
     # Whether a SNP is in a gene does not depend on the strand, and the genes
     # are searched with a binary search, which needs intervals that do not
     # overlap: a gene with its CDS, or a gene holding smaller features, would
     # otherwise hide the bases it covers.
-    for sequence in genes:
-        genes[sequence] = merge_intervals([(start, end) for start, end, _ in genes[sequence]])
+    merged = {sequence: merge_intervals([(start, end) for start, end, _ in found])
+              for sequence, found in genes.items()}
     for sequence in cds:
         cds[sequence].sort(key=itemgetter(0, 1))
+    if pseudo:
+        logging.info(f"{pseudo} pseudogene CDS of {gff_file} give no reading frame")
+    for code, count in sorted(other_code.items()):
+        logging.warning(
+            f"{count} CDS of {gff_file} use genetic code {code}, whose codons translate "
+            f"differently from the standard code, and give no reading frame")
     logging.info(
-        f"Read {sum(len(found) for found in genes.values())} genes and CDS, "
-        f"{sum(len(found) for found in cds.values())} of them CDS, over {len(genes)} "
-        f"sequences from {gff_file}")
-    return GeneModel(genes=genes, cds=cds)
+        f"Read {sum(len(found) for found in genes.values())} genes and CDS features, "
+        f"{sum(len(found) for found in cds.values())} CDS with a reading frame, over "
+        f"{len(genes)} sequences from {gff_file}"
+        + (f", and {len(sequences)} sequences after ##FASTA" if sequences else ""))
+    return GeneModel(genes=merged, cds=cds,
+                     sequences={key: "".join(value) for key, value in sequences.items()})
+
+
+def read_contig_aliases(path: str) -> List[Set[str]]:
+    """
+    Read which names denote the same sequence.
+
+    Two standard layouts are read. NCBI's assembly_report.txt, which sits
+    beside every assembly NCBI distributes, gives each molecule's sequence
+    name, GenBank accession, RefSeq accession and UCSC name; a RefSeq GFF3
+    names the chromosome of Coxiella burnetii RSA 493 NC_002971.4 where the
+    GenBank FASTA names it AE016828.3. A UCSC chromAlias table gives every
+    name of one sequence on one tab separated line.
+
+    Returns:
+        One set of names per sequence.
+
+    Raises:
+        ValueError: If the file holds no names.
+    """
+    groups: List[Set[str]] = []
+    with open_text(path, newline="") as handle:
+        lines = [line.rstrip("\r\n") for line in handle]
+    ncbi = any(line.startswith("# Sequence-Name") for line in lines)
+    for line in lines:
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if ncbi:
+            if len(fields) < 7:
+                continue
+            names = [fields[index] for index in (0, 4, 6, 9) if index < len(fields)]
+        else:
+            names = fields
+        group = {name.strip() for name in names if name.strip() and name.strip() != "na"}
+        if len(group) > 1:
+            groups.append(group)
+    if not groups:
+        raise ValueError(f"{path}: names no sequence by more than one name")
+    logging.info(f"Read {len(groups)} sequences with more than one name from {path}")
+    return groups
 
 
 def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
@@ -368,7 +480,7 @@ def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
         OSError: If the file cannot be read.
     """
     regions: Dict[str, List[Tuple[int, int]]] = {}
-    with open(path, newline="") as handle:
+    with open_text(path, newline="") as handle:
         lines = [line.rstrip("\r\n") for line in handle]
     content = [line for line in lines if line.strip()]
     is_gff = bool(content) and content[0].startswith("##gff-version")

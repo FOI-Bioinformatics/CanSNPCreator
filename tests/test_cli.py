@@ -224,3 +224,14 @@ def test_masks_on_another_genome_are_refused(monkeypatch, dataset, tmp_path):
     assert extract(monkeypatch, dataset, snp_file) == 0
     assert evaluate(monkeypatch, dataset, snp_file, str(tmp_path / "s.vcf"),
                     "--masks", str(masks)) == 1
+
+
+def test_genomes_the_alignment_lacks_are_left_out_with_a_warning(monkeypatch, dataset, tmp_path,
+                                                                  caplog):
+    # A RepGenR2 genome map names every genome, its alignment often only the
+    # representatives.
+    genome_map = tmp_path / "genome_map.tsv"
+    genome_map.write_text(open(dataset.genome_map).read() + "GCF_000999999.1\tA.1\n")
+    snp_file = str(tmp_path / "snps.vcf")
+    assert extract(monkeypatch, dataset, snp_file, groups=str(genome_map)) == 0
+    assert "1 genomes that the alignment does not hold" in caplog.text

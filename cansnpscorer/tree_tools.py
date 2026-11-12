@@ -104,6 +104,7 @@ def read_members(path: str, tree: Hierarchy) -> Dict[str, List[str]]:
     """
     leaves = set(tree.leaves)
     members: Dict[str, List[str]] = {}
+    foreign: Set[str] = set()
     with open(path) as handle:
         for number, line in enumerate(handle, 1):
             fields = line.rstrip("\n").split("\t")
@@ -113,11 +114,17 @@ def read_members(path: str, tree: Hierarchy) -> Dict[str, List[str]]:
                 raise ValueError(f"{path}: line {number} should hold an accession and a leaf")
             genome, leaf = fields[0].strip(), fields[1].strip()
             if leaf not in leaves:
+                foreign.add(leaf)
                 continue
             own, _unmatched, _ambiguous = resolve_names([genome], [leaf])
             if own:
                 continue
             members.setdefault(leaf, []).append(genome)
+    if foreign:
+        logging.warning(
+            f"{path} places genomes at {len(foreign)} leaves the tree does not have, and they "
+            f"were left out: {', '.join(sorted(foreign)[:3])}. The file may come from another "
+            f"tree; RepGenR2 writes it with tree2tax, which must be rerun after phylo")
     logging.info(
         f"Read {sum(len(names) for names in members.values())} genomes folded into "
         f"{len(members)} leaves of the tree")

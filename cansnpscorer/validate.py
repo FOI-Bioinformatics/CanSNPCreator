@@ -93,8 +93,9 @@ def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[s
     ungrouped = sorted(set(alignment) - set(grouped) - {reference_name})
     if ungrouped:
         warnings.append(
-            f"{len(ungrouped)} genomes of the alignment are in no cluster, and they still count "
-            f"against every canSNP: {', '.join(ungrouped[:5])}")
+            f"{len(ungrouped)} genomes of the alignment are placed at no node, so they count as "
+            f"outside every node, as an outgroup should; any other genome among them weakens "
+            f"the canSNPs it differs at: {', '.join(ungrouped[:5])}")
 
     known = {name: isolates for name, isolates in clusters.items() if name in hierarchy}
     without_isolates = sorted(
@@ -107,18 +108,25 @@ def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[s
     return problems, warnings
 
 
-def unresolved_genomes(unmatched: Sequence[str], ambiguous: Sequence[str]) -> List[str]:
-    """Problems for genome names that match no alignment record, or several."""
+def unresolved_genomes(unmatched: Sequence[str], ambiguous: Sequence[str]) -> Report:
+    """Genome names that match no alignment record, or several.
+
+    A genome the alignment does not hold is left out with a warning: a genome
+    map from RepGenR2 names every genome, while its alignment often holds only
+    the representatives. A name that matches two records is a problem, since
+    either choice could be wrong.
+    """
     problems: List[str] = []
+    warnings: List[str] = []
     if unmatched:
-        problems.append(
-            f"the genome map names {len(unmatched)} genomes that the alignment does not hold: "
-            f"{', '.join(unmatched[:5])}")
+        warnings.append(
+            f"the genome map names {len(unmatched)} genomes that the alignment does not hold, "
+            f"and they were left out: {', '.join(unmatched[:5])}")
     if ambiguous:
         problems.append(
             f"{len(ambiguous)} genomes of the genome map match more than one record of the "
             f"alignment: {', '.join(ambiguous[:5])}")
-    return problems
+    return problems, warnings
 
 
 def check_annotations(annotations: Mapping[str, Sequence[Sequence[int]]], reference: Reference,

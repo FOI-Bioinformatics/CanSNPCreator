@@ -414,3 +414,102 @@ def test_masks_over_the_concatenated_reference_are_placed_on_contigs():
     assert placed == {"c1": [(10, 19), (690, 699)], "c2": [(0, 9)]}
     with pytest.raises(ValueError, match="past the end of the reference"):
         regions_over_contigs({"SEQUENCE": [(995, 1005)]}, reference)
+
+
+# -- annotations from Prokka, Bakta and NCBI --------------------------------
+
+
+def two_contig_reference():
+    return Reference.from_records([("NZ_A.1", "ATGAAACCCGGGTAA" * 4), ("NZ_B.1", "GGGCCCAAATTT" * 3)])
+
+
+def test_contigs_renamed_by_prokka_are_matched_by_their_sequence(tmp_path):
+    # prokka --compliant renames contigs gnl|centre|PREFIX_n, but writes the
+    # sequences after ##FASTA, by which they are matched.
+    from cansnpscorer.cansnp_evaluator import annotations_by_contig
+    from cansnpscorer.helpers.file_utils import read_gff3
+
+    reference = two_contig_reference()
+    path = tmp_path / "prokka.gff"
+    path.write_text("##gff-version 3\n"
+                    "gnl|X|PFX_1\tProdigal:002006\tCDS\t1\t15\t.\t+\t0\tID=PFX_00001\n"
+                    "##FASTA\n>gnl|X|PFX_1\n" + "atgaaacccgggtaa" * 4 + "\n"
+                    ">gnl|X|PFX_2\n" + "GGGCCCAAATTT" * 3 + "\n")
+    model = read_gff3(str(path))
+    assert set(model.sequences) == {"gnl|X|PFX_1", "gnl|X|PFX_2"}
+    genes = annotations_by_contig(model.genes, reference, "gene", sequences=model.sequences)
+    assert genes == {"NZ_A.1": [(0, 14)], "NZ_B.1": []}
+
+
+def test_a_sequence_that_differs_is_not_matched(tmp_path):
+    from cansnpscorer.cansnp_evaluator import annotations_by_contig
+
+    reference = two_contig_reference()
+    with pytest.raises(ValueError, match="--contig-aliases"):
+        annotations_by_contig({"other": [(0, 1)]}, reference, "gene",
+                              sequences={"other": "ATGAAACCCGGGTAG" * 4})
+
+
+def test_an_ncbi_assembly_report_pairs_genbank_and_refseq_names(tmp_path):
+    from cansnpscorer.cansnp_evaluator import annotations_by_contig
+    from cansnpscorer.helpers.file_utils import read_contig_aliases
+
+    report = tmp_path / "assembly_report.txt"
+    report.write_text(
+        "# Assembly name:  ASM15779v1\n"
+        "# Sequence-Name\tSequence-Role\tAssigned-Molecule\tAssigned-Molecule-Location/Type\t"
+        "GenBank-Accn\tRelationship\tRefSeq-Accn\tAssembly-Unit\tSequence-Length\t"
+        "UCSC-style-name\n"
+        "supercont1.1\tunplaced-scaffold\tna\tna\tA.1\t=\tNZ_A.1\tPrimary Assembly\t60\tna\n"
+        "supercont1.2\tunplaced-scaffold\tna\tna\tB.1\t=\tNZ_B.1\tPrimary Assembly\t36\tna\n")
+    aliases = read_contig_aliases(str(report))
+    assert {"supercont1.1", "A.1", "NZ_A.1"} in aliases
+    genes = annotations_by_contig({"A.1": [(0, 5)], "B.1": [(1, 2)]}, two_contig_reference(),
+                                  "gene", aliases)
+    assert genes == {"NZ_A.1": [(0, 5)], "NZ_B.1": [(1, 2)]}
+
+
+def test_a_ucsc_chromalias_table_is_read(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_contig_aliases
+
+    table = tmp_path / "chromAlias.txt"
+    table.write_text("# refseq\tgenbank\tucsc\nNZ_A.1\tA.1\tchr1\n")
+    assert read_contig_aliases(str(table)) == [{"NZ_A.1", "A.1", "chr1"}]
+
+
+def test_two_names_for_one_contig_are_refused():
+    from cansnpscorer.cansnp_evaluator import annotations_by_contig
+
+    with pytest.raises(ValueError, match="describes the contig NZ_A.1 twice"):
+        annotations_by_contig({"NZ_A.1": [(0, 1)], "A.1": [(2, 3)]}, two_contig_reference(),
+                              "gene", [{"A.1", "NZ_A.1"}])
+
+
+def test_pseudogenes_and_other_genetic_codes_give_no_frame(tmp_path, caplog):
+    from cansnpscorer.helpers.file_utils import read_gff3
+
+    path = tmp_path / "ncbi.gff"
+    path.write_text(
+        "##gff-version 3\n"
+        "NZ_A.1\tRefSeq\tCDS\t1\t15\t.\t+\t0\tID=cds-1;pseudo=true;transl_table=11\n"
+        "NZ_A.1\tRefSeq\tCDS\t16\t30\t.\t+\t0\tID=cds-2;transl_table=4\n"
+        "NZ_A.1\tRefSeq\tCDS\t31\t45\t.\t+\t0\tID=cds-3;product=a%3Bb;transl_table=11\n")
+    model = read_gff3(str(path))
+    assert model.cds == {"NZ_A.1": [(30, 44, "+", 0)]}
+    assert model.genes == {"NZ_A.1": [(0, 44)]}, "all three still place a SNP in a gene"
+    assert "genetic code 4" in caplog.text
+
+
+def test_gzipped_fasta_and_gff3_are_read(tmp_path):
+    import gzip
+
+    from cansnpscorer.helpers.file_utils import read_fasta, read_gff3
+
+    fasta = tmp_path / "ref.fna.gz"
+    with gzip.open(fasta, "wt") as handle:
+        handle.write(">NZ_A.1 description\nACGT\n")
+    gff = tmp_path / "genes.gff.gz"
+    with gzip.open(gff, "wt") as handle:
+        handle.write("##gff-version 3\nNZ_A.1\tx\tCDS\t1\t3\t.\t+\t0\tID=a\n")
+    assert read_fasta(str(fasta)) == [("NZ_A.1", "ACGT")]
+    assert read_gff3(str(gff)).cds == {"NZ_A.1": [(0, 2, "+", 0)]}

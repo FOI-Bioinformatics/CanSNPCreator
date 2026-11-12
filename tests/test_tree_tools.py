@@ -319,3 +319,11 @@ def test_collapse_reports_a_missing_file(tmp_path):
     assert cli_run("collapse", "--tree", str(tmp_path / "none.nwk"),
                    "--outdir", str(tmp_path)) == 1
 
+
+
+def test_a_members_file_from_another_tree_is_reported(tmp_path, caplog):
+    genome_map = tmp_path / "genomes_map.tsv"
+    genome_map.write_text("a2\ta\nz9\tgone\n")
+    tree = Hierarchy.from_newick("((a,b),c);")
+    assert read_members(str(genome_map), tree) == {"a": ["a2"]}
+    assert "1 leaves the tree does not have" in caplog.text and "tree2tax" in caplog.text

@@ -5,11 +5,12 @@ import os
 import shutil
 from bisect import bisect_right
 from datetime import datetime
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
 from cansnpscorer.helpers.file_utils import (
+    read_contig_aliases,
     read_gff3,
     read_hierarchy,
     read_intervals,
@@ -23,37 +24,94 @@ from cansnpscorer.validate import check_annotations, report
 NUCLEOTIDES = frozenset("ACGT")
 
 
-def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference,
-                          description: str) -> Dict[str, Sequence]:
-    """Attach annotations to the contigs of the reference, by exact sequence ID.
+def contig_of(names: Sequence[str], reference: Reference,
+              aliases: Optional[Sequence[Set[str]]] = None,
+              sequences: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Which contig of the reference each annotated sequence is.
 
-    GFF3, BED and VCF name a sequence by the ID the reference FASTA gives it,
-    the first word of its header, so the names must agree. Annotations on a
-    sequence the reference does not hold are left out with a warning.
+    In order: the sequence's name is a contig ID; an alias of the name is,
+    as NCBI's assembly report pairs a RefSeq accession with a GenBank one; or
+    the annotation file carries the sequence itself, as Prokka and Bakta do
+    after ##FASTA, and it is identical to a contig's. A name that matches
+    nothing is left out of the result.
+    """
+    contigs = set(reference.names)
+    by_sequence: Dict[str, List[str]] = {}
+    if sequences:
+        for contig in reference:
+            by_sequence.setdefault(contig.sequence.upper(), []).append(contig.name)
+
+    found: Dict[str, str] = {}
+    for name in names:
+        if name in contigs:
+            found[name] = name
+            continue
+        for group in aliases or ():
+            if name in group:
+                matches = sorted(group & contigs)
+                if len(matches) == 1:
+                    found[name] = matches[0]
+                    break
+        if name in found:
+            continue
+        sequence = (sequences or {}).get(name)
+        if sequence:
+            matches = by_sequence.get(sequence.upper(), [])
+            if len(matches) == 1:
+                found[name] = matches[0]
+    return found
+
+
+def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference,
+                          description: str,
+                          aliases: Optional[Sequence[Set[str]]] = None,
+                          sequences: Optional[Dict[str, str]] = None) -> Dict[str, Sequence]:
+    """Attach annotations to the contigs of the reference.
+
+    A sequence is matched by its ID, by an alias, or by its own sequence, as
+    ``contig_of`` describes. Annotations on a sequence the reference does not
+    hold are left out with a warning.
 
     Raises:
-        ValueError: If no annotated sequence is a contig of the reference,
-            which means the file describes another genome or another naming.
+        ValueError: If no annotated sequence is a contig of the reference, or
+            two annotated sequences are the same contig.
     """
     if not annotations:
         logging.warning(f"The {description} file describes no sequences")
         return {}
 
-    unmatched = sorted(set(annotations) - set(reference.names))
-    if len(unmatched) == len(annotations):
+    found = contig_of(list(annotations), reference, aliases, sequences)
+    unmatched = sorted(set(annotations) - set(found))
+    if not found:
         raise ValueError(
             f"none of the {len(annotations)} sequences of the {description} file "
             f"({', '.join(unmatched[:5])}) is a contig of the reference "
             f"({', '.join(reference.names[:5])}). Sequences are matched by ID, the first word "
-            f"of each FASTA header, so the files must describe the same assembly under the "
-            f"same names")
+            f"of each FASTA header; a file from another naming of the same assembly needs "
+            f"--contig-aliases, such as NCBI's assembly_report.txt, or the sequences after "
+            f"##FASTA, as Prokka and Bakta write them")
     if unmatched:
         logging.warning(
             f"The {description} file describes sequences that the reference does not hold, "
             f"and they were left out: {', '.join(unmatched[:5])}")
+    renamed = {name: contig for name, contig in found.items() if name != contig}
+    if renamed:
+        logging.info(
+            f"Matched {len(renamed)} sequences of the {description} file to contigs by alias "
+            f"or sequence: " + ", ".join(f"{a}={b}" for a, b in sorted(renamed.items())[:5]))
+
+    attached: Dict[str, List] = {name: [] for name in reference.names}
+    claimed: Dict[str, str] = {}
+    for name, contig in found.items():
+        if contig in claimed:
+            raise ValueError(
+                f"the {description} file describes the contig {contig} twice, as "
+                f"{claimed[contig]} and as {name}")
+        claimed[contig] = name
+        attached[contig] = list(annotations[name])
     # A contig without annotation is reported by check_annotations where it
     # matters; a contig without repeats or masked regions is ordinary.
-    return {name: annotations.get(name, []) for name in reference.names}
+    return attached
 
 
 def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
@@ -130,14 +188,15 @@ def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
     return {name: sorted(found) for name, found in placed.items()}
 
 
-def read_masks(path: str, reference: Reference, concatenated: bool = False
+def read_masks(path: str, reference: Reference, concatenated: bool = False,
+               aliases: Optional[Sequence[Set[str]]] = None
                ) -> Dict[str, List[Tuple[int, int]]]:
     """Masked regions by contig, from BED or GFF3 named by contig, or, with
     ``concatenated``, given over the whole concatenated reference."""
     regions = read_intervals(path)
     if concatenated:
         return regions_over_contigs(regions, reference)
-    return annotations_by_contig(regions, reference, "mask")
+    return annotations_by_contig(regions, reference, "mask", aliases)
 
 
 def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
@@ -149,17 +208,21 @@ def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
 def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
          weights: Optional[Dict[str, float]] = None, masks=None,
-         masks_concatenated=False) -> int:
+         masks_concatenated=False, contig_aliases=None) -> int:
     """Score the canSNPs extract found. Returns a process exit status."""
     weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
     try:
         genome = reference_parser(reference)
         parsed = vcf.read_snps(snps, genome)
+        aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
         model = read_gff3(genes)
-        gene_intervals = annotations_by_contig(model.genes, genome, "gene")
-        cds = annotations_by_contig(model.cds, genome, "CDS") if model.cds else {}
-        repeat_intervals = annotations_by_contig(read_intervals(repeats), genome, "repeat")
-        masked = read_masks(masks, genome, masks_concatenated) if masks else {}
+        gene_intervals = annotations_by_contig(model.genes, genome, "gene", aliases,
+                                               model.sequences)
+        cds = (annotations_by_contig(model.cds, genome, "CDS", aliases, model.sequences)
+               if model.cds else {})
+        repeat_intervals = annotations_by_contig(read_intervals(repeats), genome, "repeat",
+                                                 aliases)
+        masked = read_masks(masks, genome, masks_concatenated, aliases) if masks else {}
         tree = read_hierarchy(hierarchy) if hierarchy else None
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)

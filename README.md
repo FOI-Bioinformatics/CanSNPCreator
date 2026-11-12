@@ -35,7 +35,7 @@ work with other tools as well as with this one.
 | alignment | FASTA | The reference genome as the first record, every record the same length. Gapped, where the reference row carries the aligner's gaps, or projected onto reference coordinates, as x2fa, snippy and RepGenR2 write it. |
 | hierarchy | `child`/`parent` table, or Newick | The scheme's tree. The table is tab separated with a header naming `child` and `parent`, as FlexTaxD's taxonomy and RepGenR2's `tree2tax.tsv`; other columns are ignored. In Newick every label is a node name. |
 | genome map | two tab separated columns, no header | Genome and the node it sits at, as FlexTaxD's `--genomeid2taxid` and RepGenR2's `genomes_map.tsv`. A genome may sit at an internal node. |
-| genes | GFF3 | `gene` and `CDS` features say whether a SNP is in a gene; each CDS's phase gives the reading frame. |
+| genes | GFF3, from Prokka, Bakta or NCBI | `gene` and `CDS` features say whether a SNP is in a gene; each CDS's phase gives the reading frame. Described below. |
 | repeats, masked regions | BED, or GFF3 | BED is 0-based and half open. Regions are named by contig ID, or, with `--masks-concatenated`, given over the whole concatenated reference, as Gubbins reports recombinant regions for an alignment in reference coordinates such as RepGenR2's `full_alignment.fasta`. |
 | SNPs and scores | VCF 4.3 | Described below. |
 | CanSNPer2-data scheme | that repository's three tab separated files | Written by `export`, read by `audit` and `place`. |
@@ -60,6 +60,29 @@ and an assembly accession such as `GCF_000007765.2` matches the one record
 whose name contains it, as RepGenR2 names records
 `Family_Genus_species_Accession` but lists accessions alone. Node names are
 never altered, so `2.10` stays `2.10`.
+
+### Gene annotations
+
+Prokka's, Bakta's and NCBI's GFF3 are read alike, compressed or not. A CDS
+gives the reading frame, from its 5' end after skipping the phase GFF3 gives,
+on either strand; a CDS of a pseudogene (`pseudo=true`, as NCBI marks it) or
+one using a genetic code whose codons translate differently from the standard
+code (`transl_table` other than 1 or 11) still places a SNP in a gene but gives
+no frame. Prokka writes CDS features without gene features, which is enough.
+
+The annotation's sequence names are matched to the reference's contigs in
+three ways, in order:
+
+1. by ID, when the annotation is of the reference FASTA it was made from, as
+   Bakta's and Prokka's usually are and NCBI's are for the same accession;
+2. by `--contig-aliases`, for the same assembly under other names: NCBI's
+   `assembly_report.txt`, which pairs each GenBank accession with its RefSeq
+   one, or a UCSC `chromAlias` table;
+3. by the sequence itself, when the GFF3 carries it after `##FASTA`, as Prokka
+   and Bakta write it, so that contigs Prokka renamed (`--compliant`) are
+   matched by being identical.
+
+An annotation none of whose sequences matches a contig is refused.
 
 ### SNPs and scores as VCF
 

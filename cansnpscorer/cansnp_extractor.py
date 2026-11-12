@@ -49,7 +49,8 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     # Report everything inconsistent between the files before doing any work.
     problems, warnings = check_alignment_against_reference(aligned, genome)
     clusters, unmatched, ambiguous = resolve_clusters(clusters, list(aligned))
-    problems += unresolved_genomes(unmatched, ambiguous)
+    found = unresolved_genomes(unmatched, ambiguous)
+    problems, warnings = problems + found[0], warnings + found[1]
     found = check_groups(aligned, clusters, tree, next(iter(aligned)))
     problems, warnings = problems + found[0], warnings + found[1]
     if not report(problems, warnings):

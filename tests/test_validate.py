@@ -93,7 +93,7 @@ def test_a_genome_in_no_cluster_is_a_warning(pieces):
     alignment, _reference, hierarchy, _clusters = pieces
     clusters = {name: list(isolates) for name, isolates in CLUSTERS.items() if name != "B.2"}
     _problems, warnings = check_groups(alignment, clusters, hierarchy, "ref")
-    assert any("are in no cluster" in warning for warning in warnings)
+    assert any("are placed at no node" in warning for warning in warnings)
     assert any("have no isolates" in warning for warning in warnings)
 
 

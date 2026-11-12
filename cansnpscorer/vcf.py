@@ -250,7 +250,9 @@ def read(path: str) -> Vcf:
     records: List[Record] = []
     seen_header = False
 
-    with open(path, newline="") as handle:
+    from cansnpscorer.helpers.file_utils import open_text
+
+    with open_text(path, newline="") as handle:
         for number, line in enumerate(handle, 1):
             line = line.rstrip("\r\n")
             if number == 1 and not line.startswith("##fileformat=VCF"):

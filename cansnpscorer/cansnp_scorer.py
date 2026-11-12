@@ -90,6 +90,14 @@ def add_masks(parser, purpose: str) -> None:
              "reference coordinates such as RepGenR2's full_alignment.fasta.")
 
 
+def add_contig_aliases(parser) -> None:
+    parser.add_argument(
+        "--contig-aliases", default=None, metavar="FILE",
+        help="Other names of the reference's contigs, so that annotation files from another "
+             "naming of the same assembly can be used: NCBI's assembly_report.txt, which pairs "
+             "GenBank and RefSeq accessions, or a UCSC chromAlias table.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="CanSNPCreator",
@@ -116,12 +124,15 @@ def main():
     evaluate.add_argument("--snps", required=True, help="The SNPs extract wrote.")
     add_reference(evaluate)
     evaluate.add_argument("--genes", required=True, metavar="GFF3",
-                          help="The reference's genes in GFF3; CDS features give the reading "
-                               "frame, gene and CDS features say whether a SNP is in a gene.")
+                          help="The reference's genes in GFF3, as Prokka, Bakta or NCBI write "
+                               "them; CDS features give the reading frame, gene and CDS features "
+                               "say whether a SNP is in a gene. Contigs Prokka or Bakta renamed "
+                               "are matched by the sequences they carry after ##FASTA.")
     evaluate.add_argument("--repeats", required=True, metavar="BED",
                           help="The reference's tandem repeats, in BED as the trf subcommand "
                                "writes them, or in GFF3.")
     add_masks(evaluate, "A canSNP in one is kept with FILTER=Masked.")
+    add_contig_aliases(evaluate)
     add_hierarchy(evaluate, required=False,
                   purpose="With it, the nodes left without a canSNP are reported.")
     evaluate.add_argument("-o", "--output", required=True, help="The scored canSNPs to write.")
@@ -191,6 +202,7 @@ def main():
                        help="Which of the scheme's reference genomes --reference holds, when "
                             "the scheme names more than one.")
     add_masks(audit, "SNPs of the scheme in them are reported. Needs --reference.")
+    add_contig_aliases(audit)
     audit.add_argument("--min-required-hits", type=int, default=MINIMUM_SNPS_PER_NODE,
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
@@ -305,7 +317,7 @@ def main():
             hierarchy=args.hierarchy, output=args.output, tandem_limit=args.tandem_limit,
             gene_limit=args.gene_limit, gc_goal=args.gc_goal, cutoff=args.cutoff,
             top_n=args.top_n, weights=weights, masks=args.masks,
-            masks_concatenated=args.masks_concatenated)
+            masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases)
     if args.command == "export":
         return cansnp_export.main(
             scores=args.scores, hierarchy=args.hierarchy, reference=args.reference,
@@ -320,7 +332,7 @@ def main():
             alignment=args.alignment, genome_map=args.genome_map,
             min_clade_size=args.min_clade_size, min_clade_snps=args.min_clade_snps,
             tree=args.tree, members=args.members, masks=args.masks,
-            masks_concatenated=args.masks_concatenated)
+            masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,

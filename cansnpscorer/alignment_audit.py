@@ -449,7 +449,7 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
             f"the genome map places genomes at {len(placement.unknown_clusters)} nodes the scheme "
             f"does not hold, and they were left out: {_names(placement.unknown_clusters)}"))
     if placement.missing_genomes:
-        findings.append(problem(
+        findings.append(recommendation(
             CHECK, "missing-genome", "",
             f"the genome map names {len(placement.missing_genomes)} genomes the alignment does "
             f"not hold, and they were left out: {_names(placement.missing_genomes)}"))

@@ -47,6 +47,7 @@ from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of th
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
     read_alignment,
+    read_contig_aliases,
     read_genome_map,
     reference_parser,
 )
@@ -480,7 +481,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
          min_clade_snps=1, tree=None, members=None, masks=None,
-         masks_concatenated=False) -> int:
+         masks_concatenated=False, contig_aliases=None) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
@@ -510,7 +511,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         scheme = read_scheme(scheme_dir, organism)
         sequence = reference_parser(reference) if reference else None
         scored = vcf.read_scores(scores, sequence) if scores else None
-        masked = read_masks(masks, sequence, masks_concatenated) if masks else None
+        aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
+        masked = read_masks(masks, sequence, masks_concatenated, aliases) if masks else None
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1
