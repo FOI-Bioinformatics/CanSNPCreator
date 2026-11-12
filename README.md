@@ -31,10 +31,10 @@ or export.
 
 | File | What it holds |
 | ---- | ------------- |
-| alignment | The whole genome alignment in FASTA format, **with the reference genome as its first record**. Every record must be the same length. |
+| alignment | The whole genome alignment in FASTA format, **with the reference genome as its first record**. Every record must be the same length. Either layout is read: gapped, where the reference row carries the aligner's gaps, or projected onto reference coordinates, as x2fa, snippy and RepGenR2 write it, where the reference row has a gap wherever the reference was not aligned. |
 | reference | The reference genome in FASTA format, one record per contig, in the order the alignment concatenates them. |
 | hierarchy | The scheme as nested YAML or JSON, as a Newick tree, or as a repgenr `child`/`parent` table. |
-| group file | The isolates of each leaf: either a CSV with `Strain` and `Group` columns, or a repgenr `representative`/`contained`/`is_self` table. |
+| group file | The node each genome sits at: a CSV with `Strain` and `Group` columns, a repgenr `representative`/`contained`/`is_self` table, or two tab separated columns of genome and node without a header, as RepGenR2 writes `genomes_map.tsv`. A genome may sit at an internal node. |
 | GFF | Gene annotation of the reference, used for the gene and mutation terms. |
 | TRF | Tandem repeats of the reference, as written by `CanSNPCreator trf`. |
 
@@ -161,6 +161,34 @@ formed; this answers whether it can be typed with. The checks are:
 | spacing | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
 | reference base | with `--reference-file`, a position whose reference base is neither allele, and, when most of them are, a scheme whose coordinates were taken against another version of the assembly |
 | better SNPs | with `--score-file` and `--reference-file`, a node where a higher scoring candidate is available, or one the score file does not cover |
+| genomes | with `--fastafile`, `--groupfile` and `--reference-file`, the checks below |
+
+The last group is the only one that tests what defines a canSNP: that every
+isolate below the node carries the derived base and no other genome does. Given
+the alignment and where its genomes sit in the scheme, the audit reports, for
+each SNP of the scheme:
+
+- isolates below the node without the derived base (`not-canonical`), and
+  genomes outside it with the derived base (`homoplasy`), by name and by the
+  node they sit at;
+- SNPs whose isolates carry what the scheme calls ancestral while the genomes
+  outside carry what it calls derived (`polarity`);
+- genomes with no base at the site (`missing-data`), which is how an accessory
+  or poorly aligned region shows;
+- for a SNP that fails, other sites that separate exactly that node's isolates
+  (`replacement`), or that none does (`unsupported-node`);
+- a node that one site alone supports (`single-site`), and a SNP that every
+  genome carries, which nothing tests without an outgroup (`no-outgroup`).
+
+It also reads every variable site at which all genomes have one of two bases,
+and reports groups of genomes that share SNPs no other genome carries and that
+the scheme has no node for (`new-clade`, with the node they would hang from and
+how many SNPs mark them), and sites that fit no grouping the scheme can hold
+(`conflicting-sites`). A grouping that contradicts a better supported one is
+counted as conflicting rather than offered as a clade. Genomes placed at no
+node count as outside every node; an outgroup belongs there. On a 2 Mbp
+genome, eight genomes take about five seconds; time grows with the number of
+genomes.
 
 Each finding is a problem, which makes part of the scheme wrong or impossible
 to type, or a recommendation, which leaves it usable. Each also carries the

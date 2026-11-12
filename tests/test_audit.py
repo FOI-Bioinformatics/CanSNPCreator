@@ -7,65 +7,14 @@ the audit names it.
 """
 
 import os
-import sys
 
 import pytest
+from conftest import REFERENCES, SNPS, TREE, cli_run, edit
 
 from cansnpscorer.cansnp_audit import PROBLEM, RECOMMENDATION, audit_scheme
 from cansnpscorer.cansnp_audit import main as audit_main
-from cansnpscorer.cansnp_export import main as export_main
-from cansnpscorer.cansnp_scorer import main as cli
 from cansnpscorer.helpers.file_utils import read_score_file, reference_parser
 from cansnpscorer.scheme import SchemeError, read_scheme
-
-METADATA = dict(
-    organism="testus_organismus",
-    genome="TEST1",
-    strain="testus",
-    reference_label="Sjodin2026",
-    genbank_id="GCA_000007125.1",
-    refseq_id="GCF_000007125.1",
-    assembly_name="ASM712v1",
-)
-
-TREE = "testus_organismus_tree.txt"
-SNPS = "testus_organismus_snp.txt"
-REFERENCES = "testus_organismus_references.txt"
-
-
-def cli_run(*arguments):
-    argv = sys.argv
-    try:
-        sys.argv = ["CanSNPCreator", *arguments]
-        return cli()
-    finally:
-        sys.argv = argv
-
-
-@pytest.fixture
-def written(dataset, tmp_path):
-    """A scheme written from the planted dataset, and its directory."""
-    snp_file = str(tmp_path / "snps.tsv")
-    scores = str(tmp_path / "scores.csv")
-    outdir = str(tmp_path / "scheme")
-    assert cli_run("extract", "--groupfile", dataset.groups_csv, "--hcfile", dataset.hc_yaml,
-                   "--fastafile", dataset.alignment, "--reference-file", dataset.reference,
-                   "-o", snp_file) == 0
-    assert cli_run("evaluate", "--snp-file", snp_file, "--reference-file", dataset.reference,
-                   "--gff-file", dataset.gff, "--trf-file", dataset.trf,
-                   "--hcfile", dataset.hc_yaml, "--output-file", scores,
-                   "--cutoff-value", "0") == 0
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 0
-    return outdir, scores
-
-
-def edit(directory, name, replace, with_text):
-    path = os.path.join(directory, name)
-    with open(path) as handle:
-        text = handle.read()
-    assert replace in text, replace
-    with open(path, "w") as handle:
-        handle.write(text.replace(replace, with_text))
 
 
 def findings_of(directory, dataset=None, **arguments):

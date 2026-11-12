@@ -138,6 +138,24 @@ def main():
     parser_audit.add_argument("--proximity", type=int, default=50,
                               help="Report two canSNPs closer than this many bases, since a "
                                    "neighbouring SNP falls inside an assay. Default: 50.")
+    parser_audit.add_argument("--fastafile", default=None,
+                              help="A whole genome alignment with the reference genome as its "
+                                   "first record, either gapped or projected onto reference "
+                                   "coordinates as RepGenR2 and snippy write it. With "
+                                   "--groupfile, each SNP is checked in every genome, and the "
+                                   "genomes are searched for clades the scheme has no node for. "
+                                   "Needs --reference-file.")
+    parser_audit.add_argument("--groupfile", default=None,
+                              help="Where the alignment's genomes sit in the scheme: a Strain "
+                                   "and Group CSV, a repgenr group file, or two tab separated "
+                                   "columns of genome and node, as RepGenR2's genomes_map.tsv. "
+                                   "A genome may be placed at an internal node.")
+    parser_audit.add_argument("--min-clade-size", type=int, default=2,
+                              help="Report a clade the scheme does not resolve only when it "
+                                   "holds at least this many genomes. Default: 2.")
+    parser_audit.add_argument("--min-clade-snps", type=int, default=1,
+                              help="Report a clade the scheme does not resolve only when at "
+                                   "least this many SNPs mark it. Default: 1.")
     parser_audit.add_argument("-o", "--output", default=None,
                               help="Write the findings to this tab separated file as well.")
     parser_audit.add_argument("--strict", action="store_true",
@@ -189,7 +207,8 @@ def main():
         logging.info("Auditing the scheme")
         return cansnp_audit.main(
             args.scheme_dir, args.organism, args.reference_file, args.score_file, args.genome,
-            args.min_required_hits, args.proximity, args.output, args.strict)
+            args.min_required_hits, args.proximity, args.output, args.strict,
+            args.fastafile, args.groupfile, args.min_clade_size, args.min_clade_snps)
     elif args.command == 'trf':
         logging.info("Starting canSNP TRF")
         return cansnp_trf.run_trf(

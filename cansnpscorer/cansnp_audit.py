@@ -28,52 +28,34 @@ its default of three required hits.
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
+from cansnpscorer.alignment_audit import check_against_alignment
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
+from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of this module
+    CHECK,
+    EXTEND,
+    MODIFY,
+    PROBLEM,
+    RECOMMENDATION,
+    Finding,
+    problem,
+    recommendation,
+)
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
-from cansnpscorer.helpers.file_utils import read_score_file, reference_parser
+from cansnpscorer.helpers.file_utils import (
+    HCParser,
+    read_alignment,
+    read_score_file,
+    recognize_group_file_format,
+    reference_parser,
+)
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.model import Reference, ReferenceError
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 
 BASES = frozenset("ACGT")
 
-PROBLEM = "problem"
-RECOMMENDATION = "recommendation"
-
-MODIFY = "modify"
-EXTEND = "extend"
-CHECK = "check"
-
-
-@dataclass(frozen=True)
-class Finding:
-    """One thing the audit has to say about a scheme."""
-
-    HEADER = ("severity", "action", "category", "node", "detail")
-
-    severity: str
-    action: str
-    category: str
-    node: str
-    detail: str
-
-    def row(self) -> List[str]:
-        return [self.severity, self.action, self.category, self.node, self.detail]
-
-    def __str__(self) -> str:
-        where = f" [{self.node}]" if self.node else ""
-        return f"{self.action}{where}: {self.detail}"
-
-
-def _problem(action: str, category: str, node: str, detail: str) -> Finding:
-    return Finding(PROBLEM, action, category, node, detail)
-
-
-def _recommendation(action: str, category: str, node: str, detail: str) -> Finding:
-    return Finding(RECOMMENDATION, action, category, node, detail)
 
 
 def check_structure(scheme: Scheme) -> List[Finding]:
@@ -81,7 +63,7 @@ def check_structure(scheme: Scheme) -> List[Finding]:
     findings: List[Finding] = []
 
     for node, parents in scheme.conflicts:
-        findings.append(_problem(
+        findings.append(problem(
             MODIFY, "two-parents", node,
             f"the node is placed under more than one parent ({', '.join(parents)}). The "
             f"CanSNPer2 tree reader does not refuse this: it creates a second node of the same "
@@ -92,7 +74,7 @@ def check_structure(scheme: Scheme) -> List[Finding]:
 
     for node in nodes:
         if ";" in node:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "semicolon", node,
                 "the node name holds a semicolon. The CanSNPer2 tree reader turns tabs into "
                 "semicolons before splitting, so the name is read as two columns"))
@@ -100,19 +82,19 @@ def check_structure(scheme: Scheme) -> List[Finding]:
     for node in nodes:
         found = by_node.get(node, [])
         if not found:
-            findings.append(_problem(
+            findings.append(problem(
                 EXTEND, "no-snp", node,
                 "the node is in the tree but has no SNP, so it can never be called. Every node "
                 "of a CanSNPer2 scheme carries exactly one"))
         elif len(found) > 1:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "repeated-snp", node,
                 f"{len(found)} SNPs annotate the node (lines "
                 f"{', '.join(str(snp.line) for snp in found)}), where one is expected; only one "
                 f"of them is used"))
 
     for node in sorted(set(by_node) - set(nodes)):
-        findings.append(_problem(
+        findings.append(problem(
             MODIFY, "unknown-node", node,
             f"the SNP file annotates '{node}', which the tree file does not hold, so the SNP is "
             f"not used"))
@@ -129,18 +111,18 @@ def check_alleles(scheme: Scheme) -> List[Finding]:
         alleles = {"derived": snp.derived, "ancestral": snp.ancestral}
         for label, base in alleles.items():
             if base not in BASES:
-                findings.append(_problem(
+                findings.append(problem(
                     MODIFY, "allele", snp.node,
                     f"the {label} base is '{base}', not one of A, C, G and T. CanSNPer2 compares "
                     f"an aligned base against both columns, so a sample on this branch is placed "
                     f"above it without a warning"))
         if snp.derived in BASES and snp.derived == snp.ancestral:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "allele", snp.node,
                 f"the derived and ancestral base are both '{snp.derived}', so the branch cannot "
                 f"be told apart from its parent"))
         if snp.position < 1:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "position", snp.node,
                 f"the position is {snp.position}; positions are 1-based and positive"))
 
@@ -148,7 +130,7 @@ def check_alleles(scheme: Scheme) -> List[Finding]:
 
     for (genome, position), nodes in sorted(positions.items()):
         if len(nodes) > 1:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "shared-position", ", ".join(sorted(nodes)),
                 f"{len(nodes)} nodes are annotated at {genome}:{position}. One position cannot "
                 f"mark two branches, so at most one of them is right"))
@@ -164,35 +146,35 @@ def check_references(scheme: Scheme) -> List[Finding]:
     for reference in scheme.references:
         node = reference.genome
         if "_" in reference.genome:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "genome-name", node,
                 f"the genome name '{reference.genome}' holds an underscore; CanSNPer2 recovers "
                 f"the reference name from an alignment file name by splitting on the first one"))
         if not GENBANK.match(reference.genbank_id):
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "accession", node,
                 f"'{reference.genbank_id}' is not a well formed GenBank accession, such as "
                 f"GCA_000007125.1; CanSNPer2-download builds NCBI paths from its digits"))
         if not REFSEQ.match(reference.refseq_id):
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "accession", node,
                 f"'{reference.refseq_id}' is not a well formed RefSeq accession, such as "
                 f"GCF_000007125.1"))
         if not reference.assembly_name:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "assembly-name", node,
                 "the assembly name is empty, and the download needs it to name the file"))
 
     for snp in scheme.snps:
         if snp.genome not in known:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "unknown-genome", snp.node,
                 f"the SNP is annotated on genome '{snp.genome}', which the references file does "
                 f"not hold"))
 
     used = {snp.genome for snp in scheme.snps}
     for genome in sorted(set(known) - used):
-        findings.append(_recommendation(
+        findings.append(recommendation(
             MODIFY, "unused-genome", genome,
             "the references file holds this genome but no SNP is annotated on it"))
 
@@ -228,7 +210,7 @@ def check_against_reference(scheme: Scheme, reference: Reference,
         if snp.genome != genome or snp.position < 1:
             continue
         if snp.position > reference.length:
-            findings.append(_problem(
+            findings.append(problem(
                 MODIFY, "position", snp.node,
                 f"the position {snp.position} is past the end of the reference genome, which "
                 f"holds {reference.length} bases"))
@@ -240,14 +222,14 @@ def check_against_reference(scheme: Scheme, reference: Reference,
             derived_in_reference.append(snp.node)
         elif base != snp.ancestral.upper():
             mismatched.append(snp.node)
-            findings.append(_problem(
+            findings.append(problem(
                 CHECK, "reference-base", snp.node,
                 f"the reference carries '{base}' at {contig.name}:{local + 1} (position "
                 f"{snp.position} of the concatenated genome), which is neither the derived "
                 f"'{snp.derived}' nor the ancestral '{snp.ancestral}' base"))
 
     if checked and len(mismatched) > checked / 2:
-        findings.append(_problem(
+        findings.append(problem(
             MODIFY, "coordinates", "",
             f"{len(mismatched)} of {checked} SNPs disagree with the reference base. That is more "
             f"than half, so the positions were most likely taken against a different version of "
@@ -291,7 +273,7 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
                        >= min_required_hits]
 
     if shallow:
-        findings.append(_recommendation(
+        findings.append(recommendation(
             EXTEND, "min-required-hits", ", ".join(node for node, _ in shallow[:5]),
             f"{len(shallow)} nodes have fewer than {min_required_hits} SNPs on the path from the "
             f"root, so CanSNPer2 cannot call them with its default --min_required_hits of "
@@ -300,7 +282,7 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
             f"documentation"))
 
     if scheme.hierarchy.leaves and not callable_leaves:
-        findings.append(_problem(
+        findings.append(problem(
             EXTEND, "min-required-hits", "",
             f"no leaf of the scheme has {min_required_hits} SNPs on its path from the root, so "
             f"with the default settings every sample is placed above the leaves"))
@@ -321,7 +303,7 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> List[Finding]:
         for (first, left), (second, right) in zip(entries, entries[1:]):
             gap = second - first
             if 0 < gap <= proximity:
-                findings.append(_recommendation(
+                findings.append(recommendation(
                     MODIFY, "spacing", f"{left}, {right}",
                     f"the two SNPs are {gap} bases apart on {genome} ({first} and {second}). A "
                     f"neighbouring SNP falls inside the primer or probe of an assay, so one of "
@@ -355,20 +337,20 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
         current = global_position.get(snp.position)
 
         if candidate is None:
-            findings.append(_recommendation(
+            findings.append(recommendation(
                 CHECK, "not-scored", snp.node,
                 "the score file holds no canSNP for this node, so the scheme's SNP cannot be "
                 "compared and nothing better is on offer"))
             continue
         if current is None:
-            findings.append(_recommendation(
+            findings.append(recommendation(
                 CHECK, "not-scored", snp.node,
                 f"the scheme's position {snp.position} is not among the scored candidates, so "
                 f"its quality is unknown; the best candidate for this node scores "
                 f"{candidate.total}"))
             continue
         if candidate.total > current.total:
-            findings.append(_recommendation(
+            findings.append(recommendation(
                 MODIFY, "better-available", snp.node,
                 f"the scheme's SNP at {snp.position} scores {current.total}, while a candidate "
                 f"at {candidate.contig}:{candidate.position} scores {candidate.total}"))
@@ -379,7 +361,7 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
             continue
         if scheme.hierarchy is not None and node not in scheme.hierarchy:
             continue
-        findings.append(_recommendation(
+        findings.append(recommendation(
             EXTEND, "candidate-available", node,
             f"the node has no SNP in the scheme and a candidate scoring {best[node].total} is "
             f"available at {best[node].contig}:{best[node].position}"))
@@ -391,10 +373,17 @@ def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
                  scores: Optional[Sequence[ScoredSnp]] = None,
                  genome: Optional[str] = None,
                  min_required_hits: int = MINIMUM_SNPS_PER_NODE,
-                 proximity: int = 50) -> List[Finding]:
-    """Every check, in one list of findings, problems first."""
+                 proximity: int = 50,
+                 alignment: Optional[Mapping[str, str]] = None,
+                 clusters: Optional[Mapping[str, Sequence[str]]] = None,
+                 min_clade_size: int = 2, min_clade_snps: int = 1) -> List[Finding]:
+    """Every check, in one list of findings, problems first.
+
+    The checks against the genomes run when an alignment and the clusters
+    placing its genomes are given, and need the reference genome as well.
+    """
     findings: List[Finding] = [
-        _problem(CHECK, "unreadable", "", detail) for detail in scheme.problems
+        problem(CHECK, "unreadable", "", detail) for detail in scheme.problems
     ]
     findings += check_structure(scheme)
     findings += check_alleles(scheme)
@@ -406,6 +395,9 @@ def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
         findings += check_against_reference(scheme, reference, genome)
         if scores is not None:
             findings += check_against_scores(scheme, scores, reference)
+        if alignment is not None and clusters is not None:
+            findings += check_against_alignment(scheme, alignment, reference, clusters, genome,
+                                                min_clade_size, min_clade_snps)
 
     order = {PROBLEM: 0, RECOMMENDATION: 1}
     return sorted(findings, key=lambda finding: (order[finding.severity], finding.category,
@@ -448,7 +440,8 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
 
 def main(scheme_dir=None, organism=None, reference_file=None, score_file=None, genome=None,
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
-         strict=False) -> int:
+         strict=False, fastafile=None, groupfile=None, min_clade_size=2,
+         min_clade_snps=1) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
@@ -468,7 +461,25 @@ def main(scheme_dir=None, organism=None, reference_file=None, score_file=None, g
             "contig and the scheme counts them over the concatenated genome")
         return 1
 
-    findings = audit_scheme(scheme, reference, scores, genome, min_required_hits, proximity)
+    if bool(fastafile) != bool(groupfile) or (fastafile and reference is None):
+        logging.error(
+            "checking the scheme against the genomes needs --fastafile, --groupfile and "
+            "--reference-file together: the alignment, where its genomes sit in the scheme, "
+            "and the reference genome the alignment is against")
+        return 1
+
+    alignment = clusters = None
+    if fastafile:
+        try:
+            alignment = read_alignment(fastafile)
+            clusters = HCParser(groupfile,
+                                data_format=recognize_group_file_format(groupfile)).isolates
+        except (OSError, ValueError) as error:
+            logging.error(error)
+            return 1
+
+    findings = audit_scheme(scheme, reference, scores, genome, min_required_hits, proximity,
+                            alignment, clusters, min_clade_size, min_clade_snps)
 
     for finding in findings:
         if finding.severity == PROBLEM:
