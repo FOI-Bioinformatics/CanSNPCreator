@@ -1,7 +1,7 @@
 """Checks on the inputs, reported together rather than one failure at a time.
 
 The readers refuse what they cannot read at all. The checks here are the ones
-that need more than one file to see: whether the alignment, the group file, the
+that need more than one file to see: whether the alignment, the genome map, the
 hierarchy and the reference describe the same genomes and the same genome. They
 collect problems and warnings in lists, in the same shape as the validation
 script of the CanSNPer2-data repository, so that a run reports everything that
@@ -57,7 +57,7 @@ def check_alignment_against_reference(alignment: Mapping[str, str],
 
 def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[str]],
                  hierarchy: Hierarchy, reference_name: str = "") -> Report:
-    """The group file, the hierarchy and the alignment must describe one set of genomes."""
+    """The genome map, the hierarchy and the alignment must describe one set of genomes."""
     problems: List[str] = []
     warnings: List[str] = []
 
@@ -69,13 +69,13 @@ def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[s
     missing = sorted(set(grouped) - set(alignment))
     if missing:
         problems.append(
-            f"the group file names {len(missing)} isolates that the alignment does not hold: "
+            f"the genome map names {len(missing)} isolates that the alignment does not hold: "
             f"{', '.join(missing[:5])}")
 
     unknown = sorted(set(clusters) - set(hierarchy.parents))
     if unknown:
         problems.append(
-            f"the group file names {len(unknown)} clusters that the hierarchy does not hold: "
+            f"the genome map names {len(unknown)} clusters that the hierarchy does not hold: "
             f"{', '.join(unknown[:5])}")
 
     repeated = sorted(name for name, found in grouped.items() if len(found) > 1)

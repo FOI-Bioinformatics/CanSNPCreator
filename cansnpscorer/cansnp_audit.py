@@ -9,7 +9,7 @@ positions look as though they were taken from a different genome version, and
 where a better SNP is available.
 
 This module answers that question. It reads a scheme back in, optionally beside
-the reference genome it is annotated against and a score file from the evaluate
+the reference genome it is annotated against and the scores from the evaluate
 subcommand, and reports findings of two kinds:
 
 - a problem, which makes part of the scheme wrong or impossible to type, and
@@ -346,7 +346,7 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
         if candidate is None:
             findings.append(recommendation(
                 CHECK, "not-scored", snp.node,
-                "the score file holds no canSNP for this node, so the scheme's SNP cannot be "
+                "the scores hold no canSNP for this node, so the scheme's SNP cannot be "
                 "compared and nothing better is on offer"))
             continue
         if current is None:

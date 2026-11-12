@@ -5,7 +5,7 @@ cannot find the property that defines a canSNP: that the substitution is
 carried by every isolate below its node and by no other genome. That needs the
 base of every genome at every SNP, which a whole genome alignment holds.
 
-Given the alignment and a group file placing its genomes at nodes of the
+Given the alignment and a genome map placing its genomes at nodes of the
 scheme, this module answers three questions:
 
 1. Is each SNP of the scheme canonical in these genomes? It reports isolates
@@ -21,7 +21,7 @@ scheme, this module answers three questions:
    scheme are counted too, since a genome placed at the wrong node, or a
    recombinant region, shows itself as many such sites.
 
-Genomes the group file places nowhere are counted as outside every node, as
+Genomes the genome map places nowhere are counted as outside every node, as
 the extract subcommand counts them, and are reported once.
 """
 
@@ -55,7 +55,7 @@ def _where(reference: Reference, column_position: int) -> str:
 
 
 class Placement:
-    """Where the group file puts each genome, and the isolates below each node."""
+    """Where the genome map puts each genome, and the isolates below each node."""
 
     def __init__(self, scheme: Scheme, clusters: Mapping[str, Sequence[str]],
                  genomes: Sequence[str]) -> None:
@@ -405,7 +405,7 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
         alignment: The whole genome alignment, reference first, in either of
             the layouts ``AlignmentMap`` accepts.
         reference: The reference genome the scheme is annotated against.
-        clusters: The genomes placed at each node, as a group file gives them.
+        clusters: The genomes placed at each node, as a genome map gives them.
         genome: Which of the scheme's reference genomes the alignment is
             against, when it names more than one.
         min_clade_size: The fewest genomes a new clade is reported for.
@@ -446,12 +446,12 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
     if placement.unknown_clusters:
         findings.append(problem(
             CHECK, "unknown-cluster", "",
-            f"the group file places genomes at {len(placement.unknown_clusters)} nodes the scheme "
+            f"the genome map places genomes at {len(placement.unknown_clusters)} nodes the scheme "
             f"does not hold, and they were left out: {_names(placement.unknown_clusters)}"))
     if placement.missing_genomes:
         findings.append(problem(
             CHECK, "missing-genome", "",
-            f"the group file names {len(placement.missing_genomes)} genomes the alignment does "
+            f"the genome map names {len(placement.missing_genomes)} genomes the alignment does "
             f"not hold, and they were left out: {_names(placement.missing_genomes)}"))
     if placement.ungrouped:
         findings.append(recommendation(

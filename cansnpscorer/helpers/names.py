@@ -1,10 +1,12 @@
-"""Cleaning of sequence and strain names.
+"""Matching genome names written differently in different files.
 
-Names reach the tools from FASTA headers, group files and annotation files, and
-the same genome is often written differently in each. They are reduced to their
-alphanumeric characters so that the three can be matched, which is also why a
-cluster name must be compared before it is cleaned: a cluster called A.1 must
-stay A.1 to match the hierarchy.
+Sequences are named by their FASTA ID, exactly, as GFF3, VCF and BED name
+them; nothing here renames a sequence. A genome, though, is often written one
+way in an alignment, another in a genome map and a third in a tree: a file
+name, a record ID, or an assembly accession alone. ``resolve_names`` matches
+such names to alignment records by their alphanumeric characters, or by an
+accession the record name holds, and the record ID is what is used from then
+on. Node names are never cleaned: a node called A.1 stays A.1.
 """
 
 import logging

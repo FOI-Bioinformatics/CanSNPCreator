@@ -103,7 +103,7 @@ def check_scheme(hierarchy: Hierarchy, best: Dict[str, ScoredSnp],
     unknown = sorted(set(best) - set(hierarchy.parents))
     if unknown:
         problems.append(
-            f"the score file names {len(unknown)} nodes that the hierarchy does not hold: "
+            f"the scores name {len(unknown)} nodes that the hierarchy does not hold: "
             f"{', '.join(unknown[:5])}")
 
     for node, score in sorted(best.items()):
@@ -204,7 +204,9 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
         if tree.root in without:
             problems.append(
                 f"the root '{tree.root}' has no canSNP, and a scheme cannot be written "
-                f"without one. Lower the evaluate cutoff, or root the scheme elsewhere")
+                f"without one. A root's canSNP needs a genome outside the root in the "
+                f"alignment, an outgroup placed at no node (collapse --outgroup); with one, "
+                f"lower the evaluate cutoff, or root the scheme elsewhere")
         if prune:
             warnings.append(
                 f"{len(without)} nodes have no canSNP and were left out of the scheme, so their "

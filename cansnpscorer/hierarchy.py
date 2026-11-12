@@ -301,7 +301,7 @@ class Hierarchy:
         """The isolates below each node.
 
         Args:
-            clusters: The isolates of each leaf, as a group file lists them.
+            clusters: The isolates of each leaf, as a genome map lists them.
 
         Returns:
             The isolates at or below every node, so that an internal node
@@ -312,7 +312,7 @@ class Hierarchy:
         unknown = sorted(set(clusters) - set(self.parents))
         if unknown:
             raise HierarchyError(
-                f"the group file names clusters that are not in the hierarchy: "
+                f"the genome map names clusters that are not in the hierarchy: "
                 f"{', '.join(unknown)}")
 
         isolates: Dict[str, List[str]] = {}

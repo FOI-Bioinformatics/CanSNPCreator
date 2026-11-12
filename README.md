@@ -1,98 +1,116 @@
 # CanSNPCreator
 
-CanSNPCreator extracts canonical SNPs (canSNPs) from a whole genome alignment,
+CanSNPCreator finds canonical SNPs (canSNPs) in a whole genome alignment,
 scores them for how well they suit a typing assay, and writes the result as the
 source files of a [CanSNPer2](https://github.com/FOI-Bioinformatics/CanSNPer2)
-scheme.
+scheme. It also audits a scheme that already exists, reporting where it cannot
+be typed with and how it would be extended or modified.
 
-It also audits a scheme that already exists, reporting where it cannot be typed
-with and what would improve it.
-
-A canSNP is a substitution carried by every isolate below one node of a
-hierarchy and by no other genome, so it marks that branch. Given an alignment,
-a hierarchy and the clusters of isolates at its leaves, CanSNPCreator finds
-those substitutions, reports which of them sit in well behaved sequence, and
-exports a scheme for
+A canSNP is a substitution carried by every genome below one node of a scheme
+and by no other genome, so it marks that branch. Given an alignment, the
+scheme's tree and where each genome sits in it, CanSNPCreator finds those
+substitutions, reports which of them sit in well behaved sequence, and exports
+a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
 ## Installation
 
-Python 3.9 or later.
+Python 3.9 or later; the package has no dependencies.
 
 ```sh
 pip install git+https://github.com/FOI-Bioinformatics/CanSNPCreator.git
 ```
 
 The `trf` subcommand also needs Tandem Repeats Finder on the PATH
-(`conda install -c bioconda trf`). Nothing else is needed to extract, evaluate
-or export.
+(`conda install -c bioconda trf`).
 
-## Input files
+## File formats
 
-| File | What it holds |
-| ---- | ------------- |
-| alignment | The whole genome alignment in FASTA format, **with the reference genome as its first record**. Every record must be the same length. Either layout is read: gapped, where the reference row carries the aligner's gaps, or projected onto reference coordinates, as x2fa, snippy and RepGenR2 write it, where the reference row has a gap wherever the reference was not aligned. |
-| reference | The reference genome in FASTA format, one record per contig, in the order the alignment concatenates them. |
-| hierarchy | The scheme as nested YAML or JSON, as a Newick tree, or as a repgenr `child`/`parent` table. |
-| group file | The node each genome sits at: a CSV with `Strain` and `Group` columns, a repgenr `representative`/`contained`/`is_self` table, or two tab separated columns of genome and node without a header, as RepGenR2 writes `genomes_map.tsv`. A genome may sit at an internal node. |
-| GFF | Gene annotation of the reference, used for the gene and mutation terms. |
-| TRF | Tandem repeats of the reference, as written by `CanSNPCreator trf`. |
+Every file is in a standard format, one per kind of data, so that the files
+work with other tools as well as with this one.
 
-Two things about coordinates are worth knowing before reading any output:
+| Data | Format | Notes |
+| ---- | ------ | ----- |
+| reference genome | FASTA | One record per contig. A contig is named by its ID, the first word of its header, as GFF3, VCF and BED name it. |
+| alignment | FASTA | The reference genome as the first record, every record the same length. Gapped, where the reference row carries the aligner's gaps, or projected onto reference coordinates, as x2fa, snippy and RepGenR2 write it. |
+| hierarchy | `child`/`parent` table, or Newick | The scheme's tree. The table is tab separated with a header naming `child` and `parent`, as FlexTaxD's taxonomy and RepGenR2's `tree2tax.tsv`; other columns are ignored. In Newick every label is a node name. |
+| genome map | two tab separated columns, no header | Genome and the node it sits at, as FlexTaxD's `--genomeid2taxid` and RepGenR2's `genomes_map.tsv`. A genome may sit at an internal node. |
+| genes | GFF3 | `gene` and `CDS` features say whether a SNP is in a gene; each CDS's phase gives the reading frame. |
+| repeats, masked regions | BED, or GFF3 | BED is 0-based and half open. |
+| SNPs and scores | VCF 4.3 | Described below. |
+| CanSNPer2-data scheme | that repository's three tab separated files | Written by `export`, read by `audit` and `place`. |
 
-- **Positions are reported by contig, 1-based**, as published schemes record
-  them. The alignment's reference row carries the gaps the aligner introduced,
-  so a column of the alignment is not a position in the genome; the reference
-  file is what the columns are mapped onto.
-- **The reference file must be the genome that was aligned.** The tools check
-  this base for base and refuse to run otherwise, since a mismatch would move
-  every position reported.
+The hierarchy and the genome map are kept apart, as NCBI Taxonomy keeps its
+nodes apart from its accession table: a node may hold no genome yet, and a
+genome may sit at an internal node.
 
-Sequence names are matched after non-alphanumeric characters are removed, so
-`GCA_000007125.1` in a group file matches `GCA0000071251` in the alignment.
-Cluster and node names are matched as written, so a cluster called `A.1` stays
-`A.1`.
+**Positions** are reported by contig, 1-based, as VCF and published schemes
+give them. A column of the alignment is not a position in the genome, so the
+alignment is mapped onto the reference, and the tools refuse to run unless the
+two agree base for base.
 
-## Usage
+**Names.** Contigs are matched by ID exactly, so a GFF3 or BED file must use
+the reference FASTA's IDs; one that uses none of them is refused. Genome
+names are matched more leniently, since a genome is often written as a file
+name in one place and a record ID in another: `strain-7` matches `strain_7`,
+and an assembly accession such as `GCF_000007765.2` matches the one record
+whose name contains it, as RepGenR2 names records
+`Family_Genus_species_Accession` but lists accessions alone. Node names are
+never altered, so `2.10` stays `2.10`.
 
-### Extract canSNPs
+### SNPs and scores as VCF
+
+`extract` writes every SNP of the alignment and `evaluate` the scored canSNPs,
+both as VCF 4.3:
+
+- `REF` is the reference base and `ALT` the other allele.
+- `INFO/AA` is the ancestral allele, a key the VCF specification reserves for
+  it; the derived allele is the other one. This holds whether or not the
+  reference genome itself carries the derived allele.
+- `INFO/NODE` is the node whose genomes carry the derived allele. A SNP that
+  marks no node has neither key; `extract` keeps it, because it still counts as
+  a neighbour when the others are scored.
+- `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
+  `GENE`, `MUTATION`), and records the weights in a `##CanSNPCreatorWeights`
+  line.
+- A canSNP that fails is kept, with a `FILTER` code: `LowScore` (not above
+  `--cutoff`), `NotTop` (not among the `--top-n` best of its node) or `Masked`
+  (in a region given with `--masks`).
+- `##contig` lines give each contig's ID and length. A VCF read against
+  another reference is refused, and so is one whose `REF` disagrees with the
+  reference anywhere.
 
 ```sh
+bcftools view -f PASS -i 'INFO/NODE="B.Br.004"' scores.vcf
+```
+
+## Making a new scheme
+
+```sh
+# The canSNPs of every node, and every other SNP
 CanSNPCreator extract \
-    --fastafile alignment.fasta \
-    --reference-file reference.fasta \
-    --groupfile groups.csv \
-    --hcfile hierarchy.yaml \
-    -o snps.tsv
-```
+    --alignment alignment.fasta --reference reference.fasta \
+    --hierarchy hierarchy.tsv --genome-map genome_map.tsv \
+    -o snps.vcf
 
-Writes one row per variable column, with the node it marks and its polarity:
+# Tandem repeats of the reference, as BED
+CanSNPCreator trf --reference reference.fasta -o repeats.bed
 
-```
-contig	position	node	derived_base	ancestral_base
-c1	101	root	T	A
-c1	201	A	C	G
-c2	1	B.2	T	A
-c2	101	None	G	A
-```
-
-The derived base is the one carried below the node. A row whose node is `None`
-is a SNP that marks no branch; it is kept because it still counts as a
-neighbour when the others are scored.
-
-### Score them
-
-```sh
-CanSNPCreator trf --input reference.fasta --output repeats.trf
-
+# Score them
 CanSNPCreator evaluate \
-    --snp-file snps.tsv \
-    --reference-file reference.fasta \
-    --gff-file genes.gff \
-    --trf-file repeats.trf \
-    --hcfile hierarchy.yaml \
-    --output-file scores.csv
+    --snps snps.vcf --reference reference.fasta \
+    --genes genes.gff3 --repeats repeats.bed --masks recombination.bed \
+    --hierarchy hierarchy.tsv -o scores.vcf
+
+# Write the scheme
+CanSNPCreator export \
+    --scores scores.vcf --hierarchy hierarchy.tsv --reference reference.fasta \
+    --outdir scheme --organism francisella_tularensis \
+    --genome SCHUS4.2 --strain francisella --citation Svensson2009 \
+    --genbank-id GCA_000008985.1 --refseq-id GCF_000008985.1 --assembly-name ASM898v1
 ```
+
+### Scores
 
 Five terms, each 0 to 100 before weighting:
 
@@ -101,57 +119,38 @@ Five terms, each 0 to 100 before weighting:
 | `neighbour_score` | distance to the closest neighbouring SNP; a nearby SNP interferes with an assay |
 | `gc_score` | how close the surrounding GC content is to `--gc-goal` |
 | `tandem_score` | distance to the closest tandem repeat |
-| `gene_score` | whether the SNP falls in a gene, where its context is better defined |
-| `mutation_score` | 100 if the substitution is synonymous, 50 if it changes the amino acid, 0 if a stop codon is gained or lost, or if the SNP is outside a gene |
+| `gene_score` | whether the SNP lies in a gene or CDS, where its context is better defined |
+| `mutation_score` | in the frame of the CDS it lies in: 100 if synonymous, 50 if it changes the amino acid, 0 if a stop codon is gained or lost or if it lies outside every CDS |
 
-The gene term is counted twice by default, so the highest reachable total is
-600. `--score-weight TERM=FACTOR` changes that, for example
-`--score-weight gene_score=1`. `--cutoff-value` defaults to 500, which in
-practice requires the SNP to fall inside a gene; `--top-n-snp` keeps only the
-best few per node.
+The gene term counts twice by default, so the highest total is 600;
+`--score-weight gene_score=1` changes that. `--cutoff` defaults to 500, which in
+practice requires the SNP to lie in a gene. The run reports the nodes left
+without a passing canSNP, and those with fewer than the three CanSNPer2 needs
+on a path to call a node.
 
-The run reports which nodes have no canSNP above the cutoff, and which have
-fewer than the three CanSNPer2 needs on a path to call a node.
+### Export
 
-### Export a CanSNPer2 scheme
+`export` takes the highest scoring passing canSNP of each node and writes
+`<organism>_tree.txt`, `<organism>_snp.txt` and `<organism>_references.txt` as
+CanSNPer2-data expects them, with positions counted over the concatenated
+genome, since its SNP file has no contig column. That repository's rules are
+checked first, so the result passes its `validate.py` unchanged. A node with no
+canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
+children to the nearest node that has one.
 
-```sh
-CanSNPCreator export \
-    --score-file scores.csv \
-    --hcfile hierarchy.yaml \
-    --reference-file reference.fasta \
-    --outdir scheme \
-    --organism francisella_tularensis \
-    --genome SCHUS4.2 --strain francisella --reference Svensson2009 \
-    --genbank-id GCA_000008985.1 --refseq-id GCF_000008985.1 \
-    --assembly-name ASM898v1
-```
+## Starting from a genome tree
 
-Writes `<organism>_tree.txt`, `<organism>_snp.txt` and
-`<organism>_references.txt` in the form CanSNPer2-data expects: one line per
-path from the root, exactly one SNP per node (the highest scoring), and
-positions counted over the concatenated genome, since the SNP file has no
-contig column. The rules of that repository are checked before anything is
-written, so the result passes its `validate.py` unchanged.
-
-A node with no canSNP refuses the scheme, because every node of a CanSNPer2
-scheme carries one. `--prune` leaves those nodes out instead, re-parenting
-their children to the nearest node that has one.
-
-### Start from a genome tree
-
-A genome tree, such as RepGenR2's `tree/tree.nwk` or `tree2tax.tsv`, has a node
-for every split the tree builder found: far more than a scheme has, and many of
-them weakly supported. `collapse` removes the internal nodes below a threshold,
-joining each into its parent, and places every genome at the deepest node that
+A genome tree, such as RepGenR2's `tree/tree.nwk`, has a node for every split
+the tree builder found: far more than a scheme has, and many of them weakly
+supported. `collapse` removes the internal nodes below a threshold, joining
+each into its parent, and places every genome at the deepest node that
 remains:
 
 ```sh
 CanSNPCreator collapse \
-    --tree tree.nwk \
-    --outgroup Coxiella_sp_GCF_000000000.1 \
+    --tree tree.nwk --outgroup Coxiella_sp_GCF_000000000.1 \
     --min-support 0.95 --min-genomes 3 \
-    --rename Cb --outdir scheme_draft --prefix coxiella
+    --members genomes_map.tsv --rename Cb --outdir draft --prefix coxiella
 ```
 
 | Option | Removes an internal node when |
@@ -160,119 +159,102 @@ CanSNPCreator collapse \
 | `--min-branch-length` | the branch above it is shorter, in the tree's units |
 | `--min-genomes` | fewer genomes lie below it (default 2) |
 
-A Newick tree carries its own support values and branch lengths; for
-`tree2tax.tsv`, `--nodes-file tree2tax_nodes.tsv` supplies them. Both keep
-RepGenR2's outgroup as a leaf unless `tree2tax --remove-outgroup` was given;
-its accession is in `outgroup_accession.txt`.
+A node holding exactly its parent's genomes is joined into the parent too.
+`--outgroup` names a leaf placed at no node, so that it stays in the alignment
+as a genome outside every node: that is what lets `extract` find the root's
+canSNP and tell which side of each split is derived. Without one, `extract`
+warns that the two sides of the root cannot be told apart. `--members` reads
+RepGenR2's `genomes_map.tsv`, so that genomes dereplication folded into a
+representative count towards its node and are placed with it. `--rename Cb`
+names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first.
 
-A node that would hold exactly its parent's genomes is joined into the parent
-as well, since no SNP could tell the two apart. `--outgroup` names a leaf that
-is placed at no node: it stays in the alignment as a genome outside every node,
-which is what lets `extract` find the root's canSNP and tell which side of each
-split is derived. Without one, `extract` warns that the two sides of the root
-cannot be told apart. `--genome-map` reads RepGenR2's `genomes_map.tsv`, so that
-genomes folded into a representative by dereplication count towards their
-node and are placed with it. `--rename Cb` names the nodes `Cb`, `Cb.1`,
-`Cb.1.2` and so on, largest first, in place of the tree's hashes.
+A Newick genome tree carries its support values and branch lengths; its
+numeric internal labels are read as support. For `tree2tax.tsv`,
+`--nodes-file tree2tax_nodes.tsv` supplies them. RepGenR2 keeps the outgroup as
+a leaf in both unless `tree2tax --remove-outgroup` was given, and names it in
+`outgroup_accession.txt`.
 
-It writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv`, which are the
-`--hcfile` and `--groupfile` of `extract`, and `PREFIX_nodes.tsv`, which gives
-each node's genome count, support, branch length and name in the tree.
+It writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv`, the `--hierarchy`
+and `--genome-map` of `extract`, and `PREFIX_nodes.tsv`, with each node's
+genome count, support, branch length and name in the tree.
 
-Tree leaves, group files and alignment records are matched by name once
-non-alphanumeric characters are removed, and an assembly accession such as
-`GCF_000007765.2` matches the one record whose name contains it, since RepGenR2
-names records `Family_Genus_species_Accession` but lists accessions alone in
-`genomes_map.tsv`.
+## Checking an existing scheme
 
-### Place genomes on an existing scheme
-
-Checking a scheme against genomes needs each genome placed at a node of the
-scheme. Typing the genomes with the scheme places them by the SNPs under test,
-so a genome that lacks the derived base of its own branch is typed elsewhere
-and is never seen to lack it. `place` instead uses each SNP of the scheme only
-to identify which clade of a genome tree the node means, and places the
-genomes by the tree:
-
-```sh
-CanSNPCreator place \
-    --scheme-dir CanSNPer2-data/source --organism coxiella_burnetii \
-    --tree tree.nwk --fastafile alignment.fasta --reference-file RSA493.fasta \
-    -o placed.tsv --report placement.tsv
-```
-
-Each node is matched to the side of a branch whose genomes best agree with the
-genomes carrying its derived base, by Jaccard index, counting only genomes
-with a base at the site. Both sides of every branch are considered, so a tree
-rooted at its midpoint, inside a clade of the scheme, is matched as well as one
-rooted on an outgroup. A genome is placed at the deepest node whose match
-holds it. `--min-match` (default 0.5) sets the lowest index accepted, and the
-report gives each node's match, its index and the genomes on either side of
-the disagreement. A node with one or two genomes is matched less reliably
-than one with many: in a clade of two in which one genome lacks the derived
-base, the other genome alone matches as well as the clade.
-
-`audit --tree tree.nwk` places the genomes this way in place of `--groupfile`.
-
-### Audit an existing scheme
+### Audit
 
 ```sh
 CanSNPCreator audit \
-    --scheme-dir path/to/CanSNPer2-data/source \
-    --organism francisella_tularensis \
-    --reference-file SCHUS4.2.fasta \
-    --output findings.tsv
+    --scheme-dir CanSNPer2-data/source --organism francisella_tularensis \
+    --reference SCHUS4.2.fasta \
+    --alignment alignment.fasta --tree tree.nwk \
+    -o findings.tsv
 ```
 
-Reads a published scheme back in and reports whether it should be extended or
-modified. CanSNPer2-data's own `validate.py` answers whether a scheme is well
-formed; this answers whether it can be typed with. The checks are:
+CanSNPer2-data's `validate.py` answers whether a scheme is well formed; the
+audit answers whether it can be typed with, and how it would be extended or
+modified.
 
-| Check | What it reports |
-| ----- | --------------- |
-| tree | a node under two parents, a node with no SNP, a node with two, a SNP naming a node the tree does not hold |
-| alleles | a base outside A, C, G and T, which can never be called derived; a derived base equal to the ancestral one; two nodes at one position |
-| references | a genome name with an underscore, a malformed accession, a SNP on a genome the references file does not hold |
-| callability | nodes with fewer than `--min-required-hits` SNPs on the path from the root, which CanSNPer2 cannot call |
-| spacing | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
-| reference base | with `--reference-file`, a position whose reference base is neither allele, and, when most of them are, a scheme whose coordinates were taken against another version of the assembly |
-| better SNPs | with `--score-file` and `--reference-file`, a node where a higher scoring candidate is available, or one the score file does not cover |
-| genomes | with `--fastafile`, `--reference-file`, and `--groupfile` or `--tree`, the checks below |
+| Check | Needs | What it reports |
+| ----- | ----- | --------------- |
+| tree | | a node under two parents, a node with no SNP or two, a SNP naming a node the tree does not hold |
+| alleles | | a base outside A, C, G and T, which can never be called derived; equal derived and ancestral bases; two nodes at one position |
+| references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
+| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, which CanSNPer2 cannot call |
+| spacing | | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
+| reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
+| masked | `--reference`, `--masks` | a SNP in a masked region, such as a recombinant one |
+| better SNPs | `--reference`, `--scores` | a node where a higher scoring passing canSNP is available, or one the scores do not cover |
+| genomes | `--reference`, `--alignment`, and `--genome-map` or `--tree` | the checks below |
 
-The last group is the only one that tests what defines a canSNP: that every
-isolate below the node carries the derived base and no other genome does. Given
-the alignment and where its genomes sit in the scheme, the audit reports, for
-each SNP of the scheme:
-
-- isolates below the node without the derived base (`not-canonical`), and
-  genomes outside it with the derived base (`homoplasy`), by name and by the
-  node they sit at;
-- SNPs whose isolates carry what the scheme calls ancestral while the genomes
-  outside carry what it calls derived (`polarity`);
-- genomes with no base at the site (`missing-data`), which is how an accessory
-  or poorly aligned region shows;
-- for a SNP that fails, other sites that separate exactly that node's isolates
-  (`replacement`), or that none does (`unsupported-node`);
-- a node that one site alone supports (`single-site`), and a SNP that every
-  genome carries, which nothing tests without an outgroup (`no-outgroup`).
+The genome checks are the only ones that test what defines a canSNP. For each
+SNP of the scheme the audit reports genomes below the node without the derived
+base (`not-canonical`) and genomes outside it with it (`homoplasy`), by name
+and by the node they sit at; swapped alleles (`polarity`); genomes with no base
+at the site (`missing-data`); for a failed SNP, other sites that separate
+exactly that node's genomes (`replacement`), or that none does
+(`unsupported-node`); a node that one site alone supports (`single-site`); and
+a SNP that every genome carries, which nothing tests without an outgroup
+(`no-outgroup`).
 
 It also reads every variable site at which all genomes have one of two bases,
 and reports groups of genomes that share SNPs no other genome carries and that
 the scheme has no node for (`new-clade`, with the node they would hang from and
 how many SNPs mark them), and sites that fit no grouping the scheme can hold
 (`conflicting-sites`). A grouping that contradicts a better supported one is
-counted as conflicting rather than offered as a clade. Genomes placed at no
-node count as outside every node; an outgroup belongs there. On a 2 Mbp
-genome, eight genomes take about five seconds; time grows with the number of
-genomes.
+counted as conflicting rather than offered. On a 2 Mbp genome, eight genomes
+take about five seconds; the time grows with the number of genomes.
 
 Each finding is a problem, which makes part of the scheme wrong or impossible
-to type, or a recommendation, which leaves it usable. Each also carries the
-action it asks for: `modify` an existing SNP, `extend` the scheme with SNPs it
-does not have, or `check` something the tool cannot settle itself. A problem
-exits 2, a recommendation exits 0 unless `--strict` is given, which is what to
-use in continuous integration. `--output` writes the findings as a tab
-separated file as well as logging them.
+to type, or a recommendation, which leaves it usable, and each asks to
+`modify` an existing SNP, `extend` the scheme, or `check` something the tool
+cannot settle. A problem exits 2; a recommendation exits 0 unless `--strict` is
+given, for continuous integration. `-o` writes the findings as a tab separated
+file as well.
+
+### Placing genomes by the tree
+
+The genome checks need each genome placed at a node of the scheme. Typing the
+genomes with the scheme places them by the SNPs under test, so a genome lacking
+the derived base of its own branch is typed elsewhere and never seen to lack
+it. `--tree`, like the `place` subcommand, uses each SNP only to identify which
+clade of the genome tree the node means, and places the genomes by the tree:
+
+```sh
+CanSNPCreator place \
+    --scheme-dir CanSNPer2-data/source --organism coxiella_burnetii \
+    --tree tree.nwk --alignment alignment.fasta --reference RSA493.fasta \
+    -o placed.tsv --report placement.tsv
+```
+
+Each node is matched to the side of a branch whose genomes best agree with the
+genomes carrying its derived base, by Jaccard index, counting only genomes
+with a base at the site. Both sides of every branch are considered, so where
+the tree is rooted does not matter. A genome is placed at the deepest node
+whose match holds it. `--min-match` (default 0.5) sets the lowest index
+accepted, and the report gives each node's match and index. A node with one or
+two genomes is matched less reliably than one with many: in a clade of two in
+which one genome lacks the derived base, the other alone matches as well as the
+clade.
 
 ## Exit status
 
@@ -293,10 +275,10 @@ python -m ruff check cansnpscorer tests
 ```
 
 The tests build a small dataset with one canSNP planted per node, including a
-two-contig reference, a node whose clusters hold two isolates each, a SNP
-crossing two branches, a tri-allelic column and a gapped one, and check that
-the planted canSNPs are recovered at the planted coordinates with the planted
-polarity. CI runs them on Python 3.9, 3.11 and 3.13.
+two-contig reference, a node whose genomes are two, a SNP crossing two
+branches, a tri-allelic column and a gapped one, and check that the planted
+canSNPs are recovered at the planted coordinates with the planted polarity. CI
+runs them on Python 3.9, 3.11 and 3.13.
 
 Two tests use the CanSNPer2-data repository when it is checked out beside this
 one, and are skipped otherwise: one runs that repository's `validate.py` over

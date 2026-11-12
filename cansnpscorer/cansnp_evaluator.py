@@ -51,10 +51,8 @@ def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference
         logging.warning(
             f"The {description} file describes sequences that the reference does not hold, "
             f"and they were left out: {', '.join(unmatched[:5])}")
-    missing = sorted(set(reference.names) - set(annotations))
-    if missing:
-        logging.warning(
-            f"These contigs have no {description} annotation: {', '.join(missing[:5])}")
+    # A contig without annotation is reported by check_annotations where it
+    # matters; a contig without repeats or masked regions is ordinary.
     return {name: annotations.get(name, []) for name in reference.names}
 
 

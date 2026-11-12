@@ -257,7 +257,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
     missing = sorted(wanted - set(alignment))
     if missing:
         raise ValueError(
-            f"the group file names {len(missing)} isolates that the alignment does not hold: "
+            f"the genome map names {len(missing)} isolates that the alignment does not hold: "
             f"{', '.join(missing[:5])}")
 
     # Nodes with no isolates cannot be marked by any SNP. They are reported
