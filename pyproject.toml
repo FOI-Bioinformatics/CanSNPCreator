@@ -26,8 +26,10 @@ Homepage = "https://github.com/FOI-Bioinformatics/CanSNPCreator"
 Issues = "https://github.com/FOI-Bioinformatics/CanSNPCreator/issues"
 
 [project.scripts]
+# One script only. A lowercase alias beside it is the same file on a
+# case-insensitive filesystem, which macOS uses by default, and reinstalling
+# over an earlier install then fails while removing it.
 CanSNPCreator = "cansnpscorer.cansnp_scorer:main"
-cansnpcreator = "cansnpscorer.cansnp_scorer:main"
 
 [tool.setuptools]
 packages = ["cansnpscorer", "cansnpscorer.helpers"]
