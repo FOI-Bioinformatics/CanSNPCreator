@@ -6,6 +6,10 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
 
+#: CanSNPer2 calls a node only when at least this many SNPs on its path are
+#: seen, which is its --min_required_hits default.
+MINIMUM_SNPS_PER_NODE = 3
+
 
 def neighbour_distance(snp: int, left: int, right: int, min_dist: int = 25) -> float:
     """
@@ -376,13 +380,22 @@ def summarize_scores(nodes_data, scores):
         if score.node in node_counts:
             node_counts[score.node] += 1
 
-    # Log info or warnings and build the export dictionary
-    export_dict = {}
-    for node_id, count in node_counts.items():
-        if count > 0:
-            logging.info(f"ID: {node_id}, Count: {count}")
-            export_dict[node_id] = count
-        else:
-            logging.warning(f"ID: {node_id} is not represented by a CanSNP!!.")
+    represented = {node: count for node, count in node_counts.items() if count}
+    for node, count in represented.items():
+        logging.info(f"{node}: {count} canSNPs")
 
-    return export_dict
+    without = [node for node, count in node_counts.items() if not count]
+    if without:
+        logging.warning(
+            f"{len(without)} of {len(node_counts)} nodes have no canSNP above the cutoff, so "
+            f"they cannot be typed: {', '.join(without)}")
+
+    # CanSNPer2 calls a node only when enough of the SNPs on its path are
+    # observed, three by default, so a node with fewer is worth naming.
+    shallow = [node for node, count in represented.items() if count < MINIMUM_SNPS_PER_NODE]
+    if shallow:
+        logging.warning(
+            f"{len(shallow)} nodes have fewer than {MINIMUM_SNPS_PER_NODE} canSNPs, which is "
+            f"what CanSNPer2 requires on a path by default: {', '.join(shallow)}")
+
+    return represented

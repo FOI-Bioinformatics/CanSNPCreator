@@ -58,16 +58,17 @@ def test_format_recognition(dataset):
     assert recognize_hc_file_format(dataset.hc_repgenr) == "repgenr"
 
 
-def test_gff_parser_reports_genes_per_region_zero_based(dataset):
+def test_gff_parser_reports_genes_per_sequence_zero_based(dataset):
     genes = gff_parser(dataset.gff)
-    assert sorted(genes) == [1, 2]
-    assert genes[1] == [[150, 449, "+"], [550, 649, "-"]]
-    assert genes[2] == [[10, 199, "+"]]
+    assert sorted(genes) == ["c1", "c2"]
+    assert genes["c1"] == [(150, 449, "+"), (550, 649, "-")]
+    assert genes["c2"] == [(10, 199, "+")]
 
 
-def test_trf_parser_reports_intervals_per_contig(dataset):
-    repeats = trf_parser(dataset.trf)
-    assert repeats == {1: [(60, 95)], 2: [(120, 160)]}
+def test_trf_parser_reports_intervals_per_sequence_zero_based(dataset):
+    # TRF reports 1-based positions, as a GFF does, and both are read into the
+    # same 0-based inclusive intervals; they used to differ by one.
+    assert trf_parser(dataset.trf) == {"c1": [(59, 94)], "c2": [(119, 159)]}
 
 
 def test_group_files_describe_the_same_clusters(dataset):

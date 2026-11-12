@@ -224,8 +224,23 @@ def test_positions_from_the_older_format_are_placed_on_their_contig(dataset, can
     assert (contig.name, local_position) == ("c2", on_second.column - 700)
 
 
-def test_annotations_must_describe_the_same_contigs_as_the_reference(dataset):
+def test_annotations_are_matched_to_contigs_by_name(dataset):
     reference = reference_parser(dataset.reference)
-    assert sorted(annotations_by_contig({1: [], 2: []}, reference, "GFF")) == ["c1", "c2"]
-    with pytest.raises(ValueError, match="describes 1 contigs but the reference has 2"):
-        annotations_by_contig({1: []}, reference, "GFF")
+    matched = annotations_by_contig({"c2": [(1, 2)], "c1": [(3, 4)]}, reference, "gene")
+    assert matched == {"c1": [(3, 4)], "c2": [(1, 2)]}
+
+    # A contig the annotations do not mention is empty rather than missing.
+    assert annotations_by_contig({"c1": [(3, 4)]}, reference, "gene")["c2"] == []
+
+
+def test_annotations_whose_names_match_nothing_fall_back_to_file_order(dataset):
+    reference = reference_parser(dataset.reference)
+    by_accession = {"NC0001": [(1, 2)], "NC0002": [(3, 4)]}
+    assert annotations_by_contig(by_accession, reference, "gene") == {
+        "c1": [(1, 2)], "c2": [(3, 4)]}
+
+
+def test_annotations_that_match_neither_by_name_nor_by_count_are_refused(dataset):
+    reference = reference_parser(dataset.reference)
+    with pytest.raises(ValueError, match="describes 1 sequences .* but the reference has 2"):
+        annotations_by_contig({"NC0001": []}, reference, "gene")

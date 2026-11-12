@@ -442,88 +442,128 @@ def reference_parser(reference: str) -> Reference:
         f"Read {len(parsed)} contigs totalling {parsed.length} bases: {', '.join(parsed.names)}")
     return parsed
 
-def gff_parser(gff_file: str) -> Dict[int, List[List[Union[int, str]]]]:
+#: The GFF feature types read as a reading frame. A gene and its CDS normally
+#: coincide in bacteria, and 'gene' is what this tool has always read.
+GENE_FEATURES = ("gene",)
+
+#: GFF columns, by position, as the specification fixes them.
+GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND = 0, 2, 3, 4, 6
+
+
+def gff_parser(gff_file: str) -> Dict[str, List[Tuple[int, int, str]]]:
     """
-    Parse a GFF (General Feature Format) file to extract gene information.
+    Read the genes of a GFF file, keyed by the sequence they sit on.
+
+    Columns are read by position, as the GFF specification fixes them, rather
+    than by looking for a field whose value happens to be 'gene'. Only a line
+    that begins with '#' is a comment, so a '#' inside an attribute no longer
+    discards the feature. Sequences are keyed by their own names, cleaned the
+    same way the FASTA readers clean them, so annotations are matched to
+    contigs by name rather than by the order regions happen to appear in.
 
     Args:
-        gff_file (str): The path to the GFF file.
+        gff_file: The path to the GFF file.
 
     Returns:
-        Dict[int, List[List[Union[int, str]]]]: A dictionary where keys are region numbers and
-                                                 values are lists of lists containing gene information.
-                                                 Each inner list contains the start position, end position,
-                                                 and type of the gene.
+        Gene intervals per sequence as (start, end, strand), 0-based and
+        inclusive, sorted by start.
 
     Raises:
-        FileNotFoundError: If the GFF file is not found.
-        PermissionError: If the permission to read the GFF file is denied.
+        OSError: If the file cannot be read.
     """
+    logging.info(f"Reading genes from {gff_file}")
+    genes: Dict[str, List[Tuple[int, int, str]]] = {}
+    unreadable = 0
 
-    logging.info(f"Starting to parse GFF file: {gff_file}")
-    genes: Dict[int, List[List[Union[int, str]]]] = {}
+    with open(gff_file) as gff:
+        for line_number, line in enumerate(gff, 1):
+            if line.startswith("#"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) <= GFF_STRAND:
+                continue
+            if fields[GFF_TYPE] not in GENE_FEATURES:
+                continue
 
-    try:
-        with open(gff_file) as gff:
-            current_region: int = 0
-            for line_number, line in enumerate(gff, 1):
-                line = line.strip()
-                if "#" in line:
-                    logging.debug(f"Ignoring comment line at line {line_number}.")
-                    continue
+            try:
+                start = int(fields[GFF_START]) - 1
+                end = int(fields[GFF_END]) - 1
+            except ValueError:
+                unreadable += 1
+                logging.error(f"{gff_file}: line {line_number} has no readable start and end")
+                continue
 
-                gene = line.split("\t")
-                if "region" in gene:
-                    current_region += 1
-                    genes[current_region] = []
-                    logging.debug(f"Found region header at line {line_number}, total regions now {current_region}.")
-                elif "gene" in gene:
-                    index = gene.index("gene")
-                    genes[current_region].append([int(gene[index + 1]) - 1, int(gene[index + 2]) - 1, gene[index + 4]])
+            if end < start:
+                unreadable += 1
+                logging.error(f"{gff_file}: line {line_number} ends before it starts")
+                continue
 
-        logging.info(f"Successfully parsed {len(genes)} regions from {gff_file}.")
-        return genes
+            sequence = clean_name(fields[GFF_SEQID])
+            strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
+            genes.setdefault(sequence, []).append((start, end, strand))
 
-    except FileNotFoundError:
-        logging.error(f"File {gff_file} not found.")
-        return {}
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {gff_file}")
-        return {}
+    for sequence in genes:
+        genes[sequence].sort(key=itemgetter(0))
 
-def trf_parser(trf_file_path: str) -> Dict[int, List[Tuple[int, int]]]:
+    if unreadable:
+        logging.warning(f"Skipped {unreadable} unreadable features in {gff_file}")
+    logging.info(
+        f"Read {sum(len(found) for found in genes.values())} genes over "
+        f"{len(genes)} sequences from {gff_file}")
+    return genes
+
+
+def trf_parser(trf_file_path: str) -> Dict[str, List[Tuple[int, int]]]:
     """
-    Parses a TRF (Tandem Repeats Finder) file and returns intervals for each chromosome.
+    Read the tandem repeats of a Tandem Repeats Finder -ngs file.
 
     Args:
-    trf_file_path: The file path of the TRF output.
+        trf_file_path: The path to the TRF output.
 
     Returns:
-    A dictionary where keys are chromosome numbers and values are lists of intervals.
-    Each interval is represented as a tuple (start, end).
+        Repeat intervals per sequence as (start, end), 0-based and inclusive,
+        sorted by start. TRF reports them 1-based, as a GFF does.
+
+    Raises:
+        OSError: If the file cannot be read.
     """
-    intervals_by_chromosome = {}
-    chromosome_number = 0
+    logging.info(f"Reading tandem repeats from {trf_file_path}")
+    intervals: Dict[str, List[Tuple[int, int]]] = {}
+    sequence: Optional[str] = None
+    orphaned = 0
 
     with open(trf_file_path) as trf_file:
         for line in trf_file:
-            if "@" in line:
-                chromosome_number += 1
-                intervals_by_chromosome[chromosome_number] = []
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("@"):
+                sequence = clean_name(line[1:].split()[0]) if line[1:].split() else None
+                if sequence:
+                    intervals.setdefault(sequence, [])
                 continue
 
-            interval_data = line.strip("\n").split(" ")
-
+            fields = line.split()
             try:
-                start, end = map(int, interval_data[:2])
-                intervals_by_chromosome[chromosome_number].append((start, end))
-            except ValueError:
+                start, end = int(fields[0]) - 1, int(fields[1]) - 1
+            except (IndexError, ValueError):
                 continue
+            if sequence is None:
+                orphaned += 1
+                continue
+            intervals[sequence].append((start, end) if start <= end else (end, start))
 
-    for chromosome in intervals_by_chromosome:
-        intervals_by_chromosome[chromosome] = sorted(intervals_by_chromosome[chromosome], key=itemgetter(0))
+    for name in intervals:
+        intervals[name].sort(key=itemgetter(0))
 
-    return intervals_by_chromosome
+    if orphaned:
+        logging.warning(
+            f"{trf_file_path}: {orphaned} repeats appear before any sequence header and were "
+            "left out")
+    logging.info(
+        f"Read {sum(len(found) for found in intervals.values())} repeats over "
+        f"{len(intervals)} sequences from {trf_file_path}")
+    return intervals
 
 
 def score_file_writer(scores: Sequence[ScoredSnp], output_file_path: str) -> None:

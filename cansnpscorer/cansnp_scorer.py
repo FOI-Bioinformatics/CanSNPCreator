@@ -27,9 +27,14 @@ def score_weights(settings):
 
 def main():
     # Create the top-level parser
-    parser = argparse.ArgumentParser(description='CanSNP Scorer')
+    parser = argparse.ArgumentParser(
+        prog="CanSNPCreator",
+        description="Extract, evaluate and export canonical SNPs from a whole genome alignment.")
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}',
                                 help="Show the current version of the script.")
+    parser.add_argument('--log-level', default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        help="How much to report while running. Default: INFO.")
     subparsers = parser.add_subparsers(dest='command', help='Sub-command help')
 
     # Create the parser for the "extract" command
@@ -86,7 +91,8 @@ def main():
     args = parser.parse_args()
 
     # Initialize logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=getattr(logging, args.log_level),
+                        format='%(asctime)s - %(levelname)s - %(message)s')
 
     if args.command == 'extract':
         logging.info("Starting canSNP extraction")

@@ -16,6 +16,7 @@ from cansnpscorer.helpers.file_utils import (
 )
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import AlignmentMap, ReferenceError
+from cansnpscorer.validate import check_alignment_against_reference, check_groups, report
 
 
 def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output=None) -> int:
@@ -34,21 +35,27 @@ def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output
     try:
         hierarchy = read_hc_file(hcfile)
         clusters = HCParser(groupfile, data_format=recognize_group_file_format(groupfile)).isolates
-        isolates = hierarchy.isolates(clusters)
         alignment = read_alignment(fastafile)
         reference = reference_parser(referencefile)
-        # The alignment's reference row carries the aligner's gaps, so the
-        # column of a SNP is not its position in the reference genome.
-        mapping = AlignmentMap(next(iter(alignment.values())), reference)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 
-    snps = snp_extractor(alignment)
+    # Report everything inconsistent between the files before doing any work.
+    problems, warnings = check_alignment_against_reference(alignment, reference)
+    found = check_groups(alignment, clusters, hierarchy, next(iter(alignment)))
+    problems, warnings = problems + found[0], warnings + found[1]
+    if not report(problems, warnings):
+        return 2
 
     try:
+        isolates = hierarchy.isolates(clusters)
+        # The alignment's reference row carries the aligner's gaps, so the
+        # column of a SNP is not its position in the reference genome.
+        mapping = AlignmentMap(next(iter(alignment.values())), reference)
+        snps = snp_extractor(alignment)
         cansnps = canSNP_extractor(alignment, isolates, snps)
-    except ValueError as error:
+    except (ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 

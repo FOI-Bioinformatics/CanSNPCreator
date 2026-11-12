@@ -19,34 +19,54 @@ from cansnpscorer.helpers.file_utils import (
 from cansnpscorer.helpers.scoring_methods import contexts_for, score_snp
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
+from cansnpscorer.validate import check_annotations, report
 
 NUCLEOTIDES = frozenset("ACGT")
 
 
-def annotations_by_contig(annotations: Dict[int, Sequence], reference: Reference,
+def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference,
                           description: str) -> Dict[str, Sequence]:
-    """Key annotations read in file order by the contig they belong to.
+    """Attach annotations to the contigs of the reference.
 
-    GFF and TRF files are read region by region, in the order they appear, so
-    they describe the contigs of the reference in that same order.
+    Annotations are matched to contigs by name. When the names have nothing in
+    common, which happens when a GFF uses accessions and the reference FASTA
+    uses something else, they are matched by file order instead, and that is
+    only safe if both files describe the same contigs in the same order.
 
     Raises:
-        ValueError: If the file does not describe the same number of contigs as
-            the reference, in which case every annotation after the first
-            difference would be attached to the wrong contig.
+        ValueError: If the names do not match and the two files do not even
+            describe the same number of contigs, in which case every
+            annotation after the first difference would land on the wrong one.
     """
     if not annotations:
-        logging.warning(f"The {description} file describes no contigs")
+        logging.warning(f"The {description} file describes no sequences")
         return {}
+
+    shared = set(annotations) & set(reference.names)
+    if shared:
+        unmatched = sorted(set(annotations) - set(reference.names))
+        if unmatched:
+            logging.warning(
+                f"The {description} file describes sequences that the reference does not hold, "
+                f"and they were left out: {', '.join(unmatched[:5])}")
+        missing = sorted(set(reference.names) - set(annotations))
+        if missing:
+            logging.warning(
+                f"These contigs have no {description} annotation: {', '.join(missing[:5])}")
+        return {name: annotations.get(name, []) for name in reference.names}
 
     if len(annotations) != len(reference):
         raise ValueError(
-            f"the {description} file describes {len(annotations)} contigs but the reference "
-            f"has {len(reference)} ({', '.join(reference.names)}); they must match, in order")
+            f"the {description} file describes {len(annotations)} sequences "
+            f"({', '.join(sorted(annotations)[:5])}) but the reference has {len(reference)} "
+            f"({', '.join(reference.names)}), and their names have nothing in common")
 
+    logging.warning(
+        f"No {description} sequence name matches a contig of the reference, so they are "
+        f"matched by file order: {', '.join(f'{a}={b}' for a, b in zip(sorted(annotations), reference.names))}")
     return {
-        contig.name: annotations[region]
-        for contig, region in zip(reference, sorted(annotations))
+        contig.name: annotations[name]
+        for contig, name in zip(reference, sorted(annotations))
     }
 
 
@@ -125,11 +145,21 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
     try:
         snps = snp_file_parser(snp_file)
         reference = reference_parser(reference_file)
-        genes = annotations_by_contig(gff_parser(gff_file), reference, "GFF")
-        repeats = annotations_by_contig(trf_parser(trf_file), reference, "TRF")
+        genes = annotations_by_contig(gff_parser(gff_file), reference, "gene")
+        repeats = annotations_by_contig(trf_parser(trf_file), reference, "repeat")
         hierarchy = read_hc_file(hcfile)
-        located = locate_snps(snps, reference)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
+        logging.error(error)
+        return 1
+
+    problems, warnings = check_annotations(genes, reference, "gene")
+    found = check_annotations(repeats, reference, "repeat")
+    if not report(problems + found[0], warnings + found[1], "annotations"):
+        return 2
+
+    try:
+        located = locate_snps(snps, reference)
+    except (ValueError, ReferenceError) as error:
         logging.error(error)
         return 1
 
