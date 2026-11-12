@@ -70,6 +70,21 @@ def test_extract_then_evaluate(monkeypatch, dataset, tmp_path, which):
         assert record.passed
 
 
+def test_each_snp_records_the_nearest_variation_among_the_placed_genomes(monkeypatch, dataset,
+                                                                          tmp_path):
+    snp_file = str(tmp_path / "snps.vcf")
+    assert extract(monkeypatch, dataset, snp_file) == 0
+    header, _records = vcf_lines(snp_file)
+    assert any(line.startswith("##INFO=<ID=NEAREST,") for line in header)
+    # The planted sites lie 100 columns apart, the backbone is the same in
+    # every genome, and the root's site does not vary among the placed
+    # genomes, so each canSNP's nearest variation is 100 bases away; B.2 sits
+    # at the start of c2, whose nearest is the incongruent site at 800.
+    nearest = {record.node: record.info["NEAREST"] for record in vcf_records(snp_file)
+               if record.node}
+    assert nearest == dict.fromkeys(PLANTED, "100")
+
+
 def test_the_snps_are_written_as_vcf(monkeypatch, dataset, tmp_path):
     snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0

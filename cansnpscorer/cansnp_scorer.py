@@ -29,6 +29,13 @@ def at_least(minimum: int):
     return parse
 
 
+def count_or_all(text: str):
+    """An argparse type for a positive whole number, or 'all' for None."""
+    if text.lower() == "all":
+        return None
+    return at_least(1)(text)
+
+
 def between(low: int, high: int):
     """An argparse type for a whole number from low to high."""
     def parse(text: str) -> int:
@@ -189,12 +196,22 @@ def main():
                           help="How near a gene still raises the score, in bases. Default: 0.")
     evaluate.add_argument("--gc-goal", type=fraction, default=0.5,
                           help="The GC content that scores highest. Default: 0.5.")
+    evaluate.add_argument("--gc-tolerance", type=fraction, default=0.1,
+                          help="A GC content within this of --gc-goal scores as the goal "
+                               "itself. Default: 0.1.")
+    evaluate.add_argument("--flank", type=at_least(1), default=50,
+                          help="How many bases on either side of a canSNP must be free of "
+                               "variation among the scheme's genomes, and of a contig end, for "
+                               "the full neighbour term. Default: 50.")
     evaluate.add_argument("--cutoff", type=at_least(0), default=500,
                           help=f"Only pass canSNPs scoring above this. The highest reachable "
                                f"total is {MAXIMUM_SCORE} with the default weights, and the "
                                f"default of 500 in practice requires the SNP to fall in a gene.")
     evaluate.add_argument("--top-n", type=at_least(1), default=None,
                           help="Only pass the best this many canSNPs of each node.")
+    evaluate.add_argument("--min-spacing", type=at_least(0), default=1000,
+                          help="With --top-n, the fewest bases between two canSNPs passed for "
+                               "the same node, so that they do not share a locus. Default: 1000.")
     evaluate.add_argument("--score-weight", action="append", metavar="TERM=FACTOR",
                           help=f"Weight one score term before the terms are summed. Terms: "
                                f"{', '.join(TERMS)}. Repeatable. Default: "
@@ -228,6 +245,14 @@ def main():
     export.add_argument("--alignment", default=None, metavar="FASTA",
                         help="The alignment the canSNPs were found in, which tells the genomes "
                              "that were aligned from those placed through them.")
+    export.add_argument("--snps-per-node", type=count_or_all, default=1, metavar="N|all",
+                        help="How many canSNPs of each node to keep, best first. The SNP file "
+                             "keeps the best, the one CanSNPer2 calls; with more than one, all of "
+                             "them go to <organism>_canSNPs.txt, ranked within the node. "
+                             "Default: 1.")
+    export.add_argument("--min-spacing", type=at_least(0), default=1000,
+                        help="The fewest bases between two canSNPs kept for the same node. "
+                             "Default: 1000.")
     export.add_argument("--prune", action="store_true",
                         help="Leave out nodes that have no canSNP, instead of refusing to write "
                              "a scheme. Their children then hang from the nearest node that has "
@@ -384,14 +409,16 @@ def run(args, parser, evaluate) -> int:
             hierarchy=args.hierarchy, output=args.output, tandem_limit=args.tandem_limit,
             gene_limit=args.gene_limit, gc_goal=args.gc_goal, cutoff=args.cutoff,
             top_n=args.top_n, weights=weights, masks=args.masks,
-            masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases)
+            masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
+            flank=args.flank, gc_tolerance=args.gc_tolerance, spacing=args.min_spacing)
     if args.command == "export":
         return cansnp_export.main(
             scores=args.scores, hierarchy=args.hierarchy, reference=args.reference,
             outdir=args.outdir, organism=args.organism, genome=args.genome, strain=args.strain,
             citation=args.citation, genbank_id=args.genbank_id, refseq_id=args.refseq_id,
             assembly_name=args.assembly_name, prune=args.prune, genome_map=args.genome_map,
-            alignment=args.alignment)
+            alignment=args.alignment, snps_per_node=args.snps_per_node,
+            spacing=args.min_spacing)
     if args.command == "audit":
         return cansnp_audit.main(
             scheme_dir=args.scheme_dir, organism=args.organism, reference=args.reference,

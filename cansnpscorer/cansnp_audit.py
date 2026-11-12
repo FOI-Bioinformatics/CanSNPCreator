@@ -110,24 +110,24 @@ def check_alleles(scheme: Scheme) -> List[Finding]:
     findings: List[Finding] = []
     positions: Dict[Tuple[str, int], List[str]] = {}
 
-    for snp in scheme.snps:
+    for snp in scheme.checked_snps:
         alleles = {"derived": snp.derived, "ancestral": snp.ancestral}
         for label, base in alleles.items():
             if base not in BASES:
                 findings.append(problem(
-                    MODIFY, "allele", snp.node,
+                    MODIFY, "allele", snp.node, snp.tag(
                     f"the {label} base is '{base}', not one of A, C, G and T. CanSNPer2 compares "
                     f"an aligned base against both columns, so a sample on this branch is placed "
-                    f"above it without a warning"))
+                    f"above it without a warning")))
         if snp.derived in BASES and snp.derived == snp.ancestral:
             findings.append(problem(
-                MODIFY, "allele", snp.node,
+                MODIFY, "allele", snp.node, snp.tag(
                 f"the derived and ancestral base are both '{snp.derived}', so the branch cannot "
-                f"be told apart from its parent"))
+                f"be told apart from its parent")))
         if snp.position < 1:
             findings.append(problem(
-                MODIFY, "position", snp.node,
-                f"the position is {snp.position}; positions are 1-based and positive"))
+                MODIFY, "position", snp.node, snp.tag(
+                f"the position is {snp.position}; positions are 1-based and positive")))
 
         positions.setdefault((snp.genome, snp.position), []).append(snp.node)
 
@@ -168,7 +168,7 @@ def check_references(scheme: Scheme) -> List[Finding]:
                 MODIFY, "assembly-name", node,
                 "the assembly name is empty, and the download needs it to name the file"))
 
-    for snp in scheme.snps:
+    for snp in scheme.checked_snps:
         if snp.genome not in known:
             findings.append(problem(
                 MODIFY, "unknown-genome", snp.node,
@@ -209,14 +209,14 @@ def check_against_reference(scheme: Scheme, reference: Reference,
     mismatched: List[str] = []
     derived_in_reference: List[str] = []
 
-    for snp in scheme.snps:
+    for snp in scheme.checked_snps:
         if snp.genome != genome or snp.position < 1:
             continue
         if snp.position > reference.length:
             findings.append(problem(
-                MODIFY, "position", snp.node,
+                MODIFY, "position", snp.node, snp.tag(
                 f"the position {snp.position} is past the end of the reference genome, which "
-                f"holds {reference.length} bases"))
+                f"holds {reference.length} bases")))
             continue
         contig, local = reference.locate(snp.position - 1)
         base = contig.base(local).upper()
@@ -226,10 +226,10 @@ def check_against_reference(scheme: Scheme, reference: Reference,
         elif base != snp.ancestral.upper():
             mismatched.append(snp.node)
             findings.append(problem(
-                CHECK, "reference-base", snp.node,
+                CHECK, "reference-base", snp.node, snp.tag(
                 f"the reference carries '{base}' at {contig.name}:{local + 1} (position "
                 f"{snp.position} of the concatenated genome), which is neither the derived "
-                f"'{snp.derived}' nor the ancestral '{snp.ancestral}' base"))
+                f"'{snp.derived}' nor the ancestral '{snp.ancestral}' base")))
 
     if checked and len(mismatched) > checked / 2:
         findings.append(problem(
@@ -246,7 +246,7 @@ def check_against_reference(scheme: Scheme, reference: Reference,
             f"{', '.join(sorted(derived_in_reference)[:5])}. That is expected of a reference "
             f"chosen from within the scheme, and worth confirming otherwise"))
 
-    logging.info(f"Checked the reference base at {checked} of {len(scheme.snps)} SNPs")
+    logging.info(f"Checked the reference base at {checked} of {len(scheme.checked_snps)} SNPs")
     return findings
 
 
@@ -298,7 +298,7 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> List[Finding]:
     findings: List[Finding] = []
 
     by_genome: Dict[str, List[Tuple[int, str]]] = {}
-    for snp in scheme.snps:
+    for snp in scheme.checked_snps:
         by_genome.setdefault(snp.genome, []).append((snp.position, snp.node))
 
     for genome, entries in sorted(by_genome.items()):
@@ -401,7 +401,7 @@ def check_masks(scheme: Scheme, reference: Reference,
     so they are placed on their contig first.
     """
     findings: List[Finding] = []
-    for snp in scheme.snps:
+    for snp in scheme.checked_snps:
         if genome is not None and snp.genome != genome:
             continue
         if not 1 <= snp.position <= reference.length:
@@ -410,10 +410,10 @@ def check_masks(scheme: Scheme, reference: Reference,
         for start, end in masks.get(contig.name, []):
             if start <= local <= end:
                 findings.append(recommendation(
-                    MODIFY, "masked", snp.node,
+                    MODIFY, "masked", snp.node, snp.tag(
                     f"the SNP at {contig.name}:{local + 1} lies in a masked region "
                     f"({contig.name}:{start + 1}-{end + 1}), such as one recombination brought "
-                    f"in; a SNP outside it would mark the branch more reliably"))
+                    f"in; a SNP outside it would mark the branch more reliably")))
                 break
     return findings
 

@@ -63,6 +63,9 @@ class SnpContext:
     """CDS intervals on this contig as (start, end, strand, phase), sorted by start."""
     repeats: Sequence[Sequence[int]] = field(default_factory=list)
     """Tandem repeat intervals on this contig as (start, end), sorted by start."""
+    nearest: Optional[int] = None
+    """Distance to the nearest variation among the scheme's genomes, as extract
+    measured it over every column where they differ; None when not known."""
 
     @property
     def derived(self) -> Optional[str]:
@@ -83,22 +86,30 @@ class SnpContext:
         return self.position + 1
 
 
-def neighbour_score(context: SnpContext, minimum_distance: int = 25) -> float:
-    """Distance to the closest neighbouring SNP or contig end, normalized to
-    minimum_distance.
+def neighbour_score(context: SnpContext, flank: int = 50) -> float:
+    """How clean the flanks of the SNP are, from 0 to 1 over ``flank`` bases.
 
-    A contig end counts as a neighbour on purpose: an assay needs flanking
-    sequence on both sides of its SNP, which a SNP near the end of a contig of
-    a draft assembly does not have.
+    The distance is to the nearest variation among the scheme's genomes when
+    extract measured it, which counts every column where they differ, and
+    otherwise to the nearest SNP in the SNP file. A contig end counts as well,
+    on purpose: an assay needs flanking sequence on both sides of its SNP,
+    which a SNP near the end of a contig of a draft assembly does not have.
     """
-    left = context.previous if context.previous is not None else 0
+    # Distances are differences of position, so a neighbouring site is 1 away,
+    # and so is the first position past either end of the contig.
+    if context.nearest is not None:
+        to_ends = min(context.position + 1, context.contig.length - context.position)
+        return min(context.nearest, to_ends, flank) / float(flank)
+    left = context.previous if context.previous is not None else -1
     right = context.following if context.following is not None else context.contig.length
-    return neighbour_distance(context.position, left, right, minimum_distance)
+    return neighbour_distance(context.position, left, right, flank)
 
 
-def gc_score(context: SnpContext, goal: float, distance: int = 50) -> float:
-    """How close the GC content around the SNP is to the goal."""
-    return gc_content(context.position, context.contig.sequence, goal, distance)
+def gc_score(context: SnpContext, goal: float, distance: int = 50,
+             tolerance: float = 0.1) -> float:
+    """How close the GC content around the SNP is to the goal; full marks
+    within ``tolerance`` of it, as a primer is designed in a range of GC."""
+    return gc_content(context.position, context.contig.sequence, goal, distance, tolerance)
 
 
 def repeat_score(context: SnpContext, limit: int) -> float:
@@ -209,7 +220,8 @@ class ScoredSnp:
 
 
 def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
-              gc_goal: float = 0.5, weights: Optional[Dict[str, float]] = None) -> ScoredSnp:
+              gc_goal: float = 0.5, weights: Optional[Dict[str, float]] = None,
+              flank: int = 50, gc_tolerance: float = 0.1) -> ScoredSnp:
     """Score one SNP.
 
     Every term is a percentage rounded to a whole number, and the total is
@@ -218,8 +230,8 @@ def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
     weights = DEFAULT_WEIGHTS if weights is None else weights
 
     raw = {
-        "neighbour_score": neighbour_score(context),
-        "gc_score": gc_score(context, gc_goal),
+        "neighbour_score": neighbour_score(context, flank),
+        "gc_score": gc_score(context, gc_goal, tolerance=gc_tolerance),
         "tandem_score": repeat_score(context, tandem_limit),
         "gene_score": gene_score(context, gene_limit),
         "mutation_score": mutation_score(context),
@@ -256,12 +268,14 @@ def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
     ordered = sorted(snps, key=lambda snp: (snp[0].start, snp[1]))
 
     positions: Dict[str, List[int]] = {}
-    for contig, position, _node, _alleles in ordered:
-        positions.setdefault(contig.name, []).append(position)
+    for snp in ordered:
+        positions.setdefault(snp[0].name, []).append(snp[1])
 
     contexts: List[SnpContext] = []
     seen: Dict[str, int] = {}
-    for contig, position, node, alleles in ordered:
+    for snp in ordered:
+        contig, position, node, alleles = snp[:4]
+        nearest = snp[4] if len(snp) > 4 else None
         index = seen.get(contig.name, 0)
         seen[contig.name] = index + 1
         on_contig = positions[contig.name]
@@ -276,6 +290,7 @@ def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
                 genes=sorted(genes.get(contig.name, []), key=lambda interval: interval[0]),
                 repeats=sorted(repeats.get(contig.name, []), key=lambda interval: interval[0]),
                 cds=sorted((cds or {}).get(contig.name, []), key=lambda interval: interval[0]),
+                nearest=nearest,
             )
         )
     return contexts

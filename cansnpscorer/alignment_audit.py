@@ -130,8 +130,9 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
     failed: Set[str] = set()
     untested: List[str] = []
     canonical = 0
+    not_canonical = 0
 
-    for snp in scheme.snps:
+    for snp in scheme.checked_snps:
         if genome is not None and snp.genome != genome:
             continue
         if snp.node not in placement.below or snp.position < 1:
@@ -140,16 +141,17 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
             continue  # reported by the reference check
         inside = placement.below[snp.node]
         if not inside:
-            untested.append(snp.node)
+            if snp.rank == 1:
+                untested.append(snp.node)
             continue
 
         column = mapping.to_column(snp.position - 1)
         if column is None:
             findings.append(recommendation(
-                CHECK, "not-aligned", snp.node,
+                CHECK, "not-aligned", snp.node, snp.tag(
                 f"no column of the alignment covers position {snp.position} "
                 f"({_where(mapping.reference, snp.position - 1)}), so the SNP cannot be checked "
-                f"in these genomes"))
+                f"in these genomes")))
             continue
 
         outside = [name for name in placement.genomes if name not in inside]
@@ -158,10 +160,10 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
             # A SNP all of them carry separates nothing in this alignment, and
             # its polarity cannot be told without a genome outside the node.
             findings.append(recommendation(
-                CHECK, "no-outgroup", snp.node,
+                CHECK, "no-outgroup", snp.node, snp.tag(
                 f"every genome of the alignment sits below this node, so nothing tests whether "
                 f"its SNP at {snp.position} marks it, nor which base is ancestral. Add an "
-                f"outgroup genome to the alignment, placed at no node"))
+                f"outgroup genome to the alignment, placed at no node")))
             continue
 
         within = _bases_at(alignment, column, sorted(inside))
@@ -170,47 +172,56 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
         where = f"at {snp.position} ({_where(mapping.reference, snp.position - 1)})"
 
         called_inside = {base for base in within if base != "missing"}
+        bad = False
         not_derived = [name for base, names in within.items()
                        if base not in (derived, "missing") for name in names]
         derived_outside = beyond.get(derived, [])
         missing = within.get("missing", []) + beyond.get("missing", [])
 
         if called_inside == {ancestral} and derived_outside:
-            failed.add(snp.node)
+            bad = True
             findings.append(problem(
-                MODIFY, "polarity", snp.node,
+                MODIFY, "polarity", snp.node, snp.tag(
                 f"the isolates below the node carry '{ancestral}' {where}, which the scheme gives "
                 f"as the ancestral base, and {len(derived_outside)} genomes outside it carry the "
-                f"derived '{derived}'. The two columns appear swapped"))
+                f"derived '{derived}'. The two columns appear swapped")))
+            not_canonical += 1
+            if snp.rank == 1:
+                failed.add(snp.node)
             continue
 
         if not_derived:
-            failed.add(snp.node)
+            bad = True
             findings.append(problem(
-                MODIFY, "not-canonical", snp.node,
+                MODIFY, "not-canonical", snp.node, snp.tag(
                 f"{len(not_derived)} of {len(inside)} isolates below the node do not carry the "
                 f"derived '{derived}' {where}: {_names(not_derived)}. CanSNPer2 would place "
-                f"them above this node"))
+                f"them above this node")))
 
         if derived_outside:
-            failed.add(snp.node)
+            bad = True
             placed = Counter(placement.node_of.get(name, "no node") for name in derived_outside)
             nodes = ", ".join(f"{node} ({count})" for node, count in placed.most_common(SHOWN))
             findings.append(problem(
-                MODIFY, "homoplasy", snp.node,
+                MODIFY, "homoplasy", snp.node, snp.tag(
                 f"{len(derived_outside)} genomes outside the node carry the derived "
                 f"'{derived}' {where}: {_names(derived_outside)}; they are placed at {nodes}. "
-                f"The SNP does not mark this branch alone"))
+                f"The SNP does not mark this branch alone")))
 
         if missing:
             findings.append(recommendation(
-                CHECK, "missing-data", snp.node,
+                CHECK, "missing-data", snp.node, snp.tag(
                 f"{len(missing)} genomes have no base {where}: {_names(missing)}. The SNP cannot "
                 f"be called in them, which is how an accessory or poorly aligned region shows "
-                f"itself"))
+                f"itself")))
 
-        if snp.node not in failed:
+        if not bad:
             canonical += 1
+            continue
+        not_canonical += 1
+        if snp.rank == 1:
+            # Only the SNP CanSNPer2 calls is offered a replacement.
+            failed.add(snp.node)
 
     if untested:
         findings.append(recommendation(
@@ -219,7 +230,7 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
             f"not checked"))
 
     logging.info(
-        f"{canonical} SNPs of the scheme are canonical in these genomes, and {len(failed)} "
+        f"{canonical} SNPs of the scheme are canonical in these genomes, and {not_canonical} "
         f"are not")
     return findings, failed
 

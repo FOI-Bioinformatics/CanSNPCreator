@@ -148,6 +148,26 @@ def test_failing_scores_are_marked_and_kept():
     assert [entry.filters for entry in scores] == [[], ["NotTop"], []]
 
 
+def test_the_best_of_a_node_are_taken_apart_from_each_other():
+    # 300 and 290 lie 10 bases apart, so with a spacing of 100 the second best
+    # gives way to the third, which lies far from both.
+    scores = [make_score(1000, "A", 300), make_score(1010, "A", 290),
+              make_score(5000, "A", 280), make_score(1005, "B", 250)]
+    apply_filters(scores, 50, top=2, spacing=100)
+    assert [entry.filters for entry in scores] == [[], ["NotTop"], [], []]
+    # Without spacing the two best are taken, however close.
+    for entry in scores:
+        entry.filters.clear()
+    apply_filters(scores, 50, top=2)
+    assert [entry.filters for entry in scores] == [[], [], ["NotTop"], []]
+
+
+def test_ties_go_to_the_earlier_position_as_export_breaks_them():
+    scores = [make_score(3, "A", 300), make_score(1, "A", 300)]
+    apply_filters(scores, 50, top=1)
+    assert [entry.filters for entry in scores] == [["NotTop"], []]
+
+
 def test_summarize_scores_counts_snps_per_node():
     scores = [make_score(1, "A", 300), make_score(2, "A", 300), make_score(3, "B", 300)]
     assert summarize_scores(["A", "B", "C"], scores) == {"A": 2, "B": 1}

@@ -142,7 +142,7 @@ def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
                 f"{contig.name}:{snp.position} is {base} in the reference but the SNP reports "
                 f"{'/'.join(alleles)}")
             continue
-        located.append((contig, local_position, snp.node or "None", alleles))
+        located.append((contig, local_position, snp.node or "None", alleles, snp.nearest))
     if problems:
         raise ValueError(
             f"{len(problems)} of {len(snps)} SNPs do not fit the reference genome: "
@@ -198,7 +198,8 @@ def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
 def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
          weights: Optional[Dict[str, float]] = None, masks=None,
-         masks_concatenated=False, contig_aliases=None) -> int:
+         masks_concatenated=False, contig_aliases=None, flank=50, gc_tolerance=0.1,
+         spacing=1000) -> int:
     """Score the canSNPs extract found. Returns a process exit status."""
     weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
     try:
@@ -229,6 +230,10 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         logging.error(error)
         return 2
 
+    if not any(snp.nearest is not None for snp in parsed):
+        logging.warning(
+            "The SNPs carry no INFO/NEAREST, so the flanks are judged by the other SNPs of the "
+            "file alone; extract records the variation among all the scheme's genomes")
     if not cds:
         logging.warning(
             "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
@@ -238,7 +243,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     # ones, which are the candidate assay targets.
     contexts = contexts_for(located, gene_intervals, repeat_intervals, cds)
     scores = [
-        score_snp(context, tandem_limit, gene_limit, gc_goal, weights)
+        score_snp(context, tandem_limit, gene_limit, gc_goal, weights, flank, gc_tolerance)
         for context in contexts
         if context.node != "None"
     ]
@@ -249,11 +254,12 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
             score.filters.append("Masked")
     if masked:
         logging.info(f"{sum('Masked' in s.filters for s in scores)} canSNPs lie in masked regions")
-    apply_filters(scores, cutoff, top_n)
+    apply_filters(scores, cutoff, top_n, spacing)
     passing = [score for score in scores if score.passed]
     logging.info(
         f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs; {len(passing)} pass the "
-        f"cutoff of {cutoff}" + (f" and the best {top_n} per node" if top_n else ""))
+        f"cutoff of {cutoff}" + (f" and the best {top_n} per node, at least {spacing} bases "
+                                 f"apart" if top_n else ""))
 
     if tree is not None:
         summarize_scores(tree.nodes, passing)

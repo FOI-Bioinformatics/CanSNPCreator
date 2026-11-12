@@ -1,4 +1,3 @@
-import heapq
 import logging
 from bisect import bisect_right
 from collections import Counter, defaultdict
@@ -33,7 +32,8 @@ def neighbour_distance(snp: int, left: int, right: int, min_dist: int = 25) -> f
     return max_dist / float(min_dist)
 
 #Calculate gc content
-def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> float:
+def gc_content(snp: int, reference: str, goal: float, distance: int = 50,
+               tolerance: float = 0.0) -> float:
     """
     Calculate the GC content around a given SNP and normalize it relative to a goal GC content.
 
@@ -42,6 +42,8 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> flo
         reference (str): The reference genome sequence.
         goal (float): The target GC content.
         distance (int, optional): The distance to look on either side of the SNP. Defaults to 50.
+        tolerance (float, optional): A deviation from the goal up to this counts as none,
+            as primers are designed within a range of GC content. Defaults to 0.
 
     Returns:
         float: Normalized deviation from the target GC content.
@@ -61,7 +63,8 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> flo
 
     # Normalized deviation from the target, clamped so that a sequence far from
     # a low goal cannot contribute a negative score.
-    normalized_deviation = 1 - (abs(observed - goal) / goal)
+    deviation = max(abs(observed - goal) - tolerance, 0.0)
+    normalized_deviation = 1 - (deviation / goal)
 
     return max(normalized_deviation, 0.0)
 
@@ -188,6 +191,52 @@ def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, 
     logging.info(f"Extraction of {len(snps)} SNPs complete")
     return snps
 
+def variable_columns(fasta: Dict[str, str], genomes: Sequence[str]) -> List[int]:
+    """
+    The columns where at least two of these genomes carry different bases.
+
+    Unlike snp_extractor this keeps columns where a third base occurs or where
+    other genomes have no base, since any of them spoils the flank of an assay
+    as much as a canonical SNP does. A gap is not counted as a difference,
+    because in an alignment it cannot be told apart from missing sequence.
+
+    Args:
+        fasta: The aligned sequences, keyed by name.
+        genomes: The genomes to compare, such as those placed in the scheme.
+    """
+    from operator import itemgetter
+
+    names = list(fasta)
+    indexes = [names.index(genome) for genome in genomes if genome in fasta]
+    if len(indexes) < 2:
+        return []
+    pick = itemgetter(*indexes)
+    nucleotides = frozenset("ACGT")
+    found: List[int] = []
+    for index, column in enumerate(zip(*fasta.values())):
+        # Most columns are the same in every genome; set() on the whole column
+        # rules them out before the chosen genomes are looked at.
+        if len(set(column)) < 2:
+            continue
+        if len(set(pick(column)) & nucleotides) >= 2:
+            found.append(index)
+    return found
+
+
+def nearest_distances(positions: Sequence[Tuple[str, int]],
+                      variable: Dict[str, List[int]]) -> List[Optional[int]]:
+    """For each (contig, 0-based position), the distance to the nearest other
+    variable position on the same contig, or None when there is none."""
+    distances: List[Optional[int]] = []
+    for contig, position in positions:
+        found = variable.get(contig, [])
+        index = bisect_right(found, position)
+        candidates = [abs(found[i] - position) for i in (index - 2, index - 1, index)
+                      if 0 <= i < len(found) and found[i] != position]
+        distances.append(min(candidates) if candidates else None)
+    return distances
+
+
 @dataclass
 class CanSnp:
     """One variable column of the alignment, and the node it marks, if any.
@@ -312,18 +361,56 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
     return cansnps
 
 
-def apply_filters(scores, cutoff, top=None):
+def ranking(score):
+    """The order SNPs of a node are taken in: best total first, then by contig
+    and position, so that the same scores always give the same choice."""
+    return (-score.total, score.contig, score.position)
+
+
+def select_per_node(scores, top=None, spacing=0):
+    """The best ``top`` SNPs of each node, at least ``spacing`` bases apart.
+
+    The SNPs of a node are taken in order of :func:`ranking`, passing over any
+    that lie within ``spacing`` bases of one already taken, so that those
+    chosen for a node do not share a locus that one deletion or recombination
+    event could remove. With ``top`` None every SNP so spaced is taken.
+
+    Returns:
+        For each node, the chosen SNPs, best first.
+    """
+    by_node = defaultdict(list)
+    for score in scores:
+        by_node[score.node].append(score)
+    chosen = {}
+    for node, node_scores in by_node.items():
+        picked = []
+        for score in sorted(node_scores, key=ranking):
+            if top is not None and len(picked) >= top:
+                break
+            if any(other.contig == score.contig
+                   and abs(other.position - score.position) < spacing for other in picked):
+                continue
+            picked.append(score)
+        chosen[node] = picked
+    return chosen
+
+
+def apply_filters(scores, cutoff, top=None, spacing=0):
     """
     Mark the scores that fail the cutoff, or are not among the best of their node.
 
     Nothing is dropped: a score at or below the cutoff gains the FILTER code
     LowScore, and one that passes it but is not among the ``top`` best of its
-    node gains NotTop, so that the output still shows what was considered.
+    node gains NotTop, so that the output still shows what was considered. The
+    best are taken in order of score, passing over any within ``spacing`` bases
+    of one already taken for the node, so that the SNPs chosen for a node do not
+    share a locus that a single deletion or recombination event could remove.
 
     Args:
         scores: Scored SNPs, each with a total, a node and a list of filters.
         cutoff: A score must be above this to pass.
         top: How many of the best scores of each node pass. All of them if None.
+        spacing: The fewest bases between two SNPs taken for the same node.
 
     Returns:
         The same scores, in the order given.
@@ -333,16 +420,11 @@ def apply_filters(scores, cutoff, top=None):
             score.filters.append("LowScore")
 
     if top is not None:
-        by_node = defaultdict(list)
-        for position, score in enumerate(scores):
-            if not score.filters:  # neither LowScore nor Masked
-                # A min-heap, so the totals are negated to pop the best first; the
-                # position breaks ties without comparing the scores themselves.
-                heapq.heappush(by_node[score.node], (-score.total, position, score))
-        for node_scores in by_node.values():
-            for _ in range(min(len(node_scores), top)):
-                heapq.heappop(node_scores)
-            for _total, _position, score in node_scores:
+        candidates = [score for score in scores if not score.filters]  # not LowScore, Masked
+        chosen = {id(score) for picked in select_per_node(candidates, top, spacing).values()
+                  for score in picked}
+        for score in candidates:
+            if id(score) not in chosen:
                 score.filters.append("NotTop")
 
     return scores

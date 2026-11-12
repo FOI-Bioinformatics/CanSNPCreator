@@ -96,12 +96,16 @@ both as VCF 4.3:
 - `INFO/NODE` is the node whose genomes carry the derived allele. A SNP that
   marks no node has neither key; `extract` keeps it, because it still counts as
   a neighbour when the others are scored.
+- `INFO/NEAREST` is the distance, in bases, to the nearest other column where
+  the genomes placed in the scheme differ, capped at 1000. It counts every such
+  column, also those the strict core leaves out (a third base, or a genome
+  without a base), and leaves the outgroup out.
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
   `GENE`, `MUTATION`), and records the weights in a `##CanSNPCreatorWeights`
   line.
 - A canSNP that fails is kept, with a `FILTER` code: `LowScore` (not above
-  `--cutoff`), `NotTop` (not among the `--top-n` best of its node) or `Masked`
-  (in a region given with `--masks`).
+  `--cutoff`), `NotTop` (not among the `--top-n` best of its node that lie
+  `--min-spacing` apart) or `Masked` (in a region given with `--masks`).
 - `##contig` lines give each contig's ID and length. A VCF read against
   another reference is refused, and so is one whose `REF` disagrees with the
   reference anywhere.
@@ -152,8 +156,8 @@ Five terms, each 0 to 100 before weighting:
 
 | Term | Meaning |
 | ---- | ------- |
-| `neighbour_score` | distance to the closest neighbouring SNP; a nearby SNP interferes with an assay |
-| `gc_score` | how close the surrounding GC content is to `--gc-goal` |
+| `neighbour_score` | distance to the nearest variation among the scheme's genomes (`INFO/NEAREST`), or to a contig end, over `--flank` bases (default 50); variation under a primer or probe interferes with an assay |
+| `gc_score` | how close the GC content of the 100 bases around the SNP is to `--gc-goal`; full marks within `--gc-tolerance` (default 0.1) of it |
 | `tandem_score` | distance to the closest tandem repeat |
 | `gene_score` | whether the SNP lies in a gene or CDS, where its context is better defined |
 | `mutation_score` | in the frame of the CDS it lies in: 100 if synonymous, 50 if it changes the amino acid, 0 if a stop codon is gained or lost or if it lies outside every CDS |
@@ -164,6 +168,17 @@ practice requires the SNP to lie in a gene. The run reports the nodes left
 without a passing canSNP, and those with fewer than the three CanSNPer2 needs
 on a path to call a node.
 
+A SNP file without `INFO/NEAREST`, from an earlier version, is scored by the
+distance to the other SNPs of the file, which only sees the strict core. In a
+set of 91 *Brucella* genomes that missed variation within 25 bases of more
+than half of the canSNPs.
+
+`--top-n` passes the best N canSNPs of each node. They are taken in order of
+score, passing over any within `--min-spacing` bases (default 1000) of one
+already taken, so that the canSNPs of a node do not share a locus that one
+deletion or recombination event could remove. Equal scores are taken in order
+of contig and position.
+
 ### Export
 
 `export` takes the highest scoring passing canSNP of each node and writes
@@ -173,6 +188,20 @@ genome, since its SNP file has no contig column. That repository's rules are
 checked first, so the result passes its `validate.py` unchanged. A node with no
 canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
 children to the nearest node that has one.
+
+CanSNPer2 calls one SNP per node, so the SNP file always holds the best of
+each. `--snps-per-node N` (or `all`) keeps up to N canSNPs of each node, chosen
+as `evaluate --top-n` chooses them, at least `--min-spacing` bases apart, and
+writes them all to `<organism>_canSNPs.txt`:
+
+```
+node	rank	genome	position	derived_base	ancestral_base	score
+```
+
+ranked within each node, with rank 1 the SNP of the SNP file. Positions count
+over the concatenated genome, as in the SNP file. CanSNPer2-data's
+`validate.py` checks that rank 1 agrees with the SNP file, and `audit` checks
+every rank against the reference and the genomes.
 
 With `--genome-map` and `--alignment` it also writes `<organism>_genomes.txt`,
 the genomes the scheme was made from: each by its versioned assembly
@@ -250,6 +279,11 @@ modified.
 | masked | `--reference`, `--masks` | a SNP in a masked region, such as a recombinant one |
 | better SNPs | `--reference`, `--scores` | a node where a higher scoring passing canSNP is available, or one the scores do not cover |
 | genomes | `--reference`, `--alignment`, and `--genome-map`, `--tree` or the scheme's own genomes file | the checks below |
+
+When the scheme has an `<organism>_canSNPs.txt`, every rank in it is checked
+by the reference base, masked, spacing and genome checks, and a finding about
+a rank other than 1 says which rank it is about. Only a failing rank 1, the SNP
+CanSNPer2 calls, is offered a replacement.
 
 The genome checks are the only ones that test what defines a canSNP. For each
 SNP of the scheme the audit reports genomes below the node without the derived

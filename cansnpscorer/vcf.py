@@ -101,6 +101,14 @@ NODE = Info("NODE", "1", "String",
             "not AA, and that no other genome carries")
 
 
+#: Distances are reported up to this many bases; beyond it a flank counts as clean.
+NEAREST_CAP = 1000
+NEAREST = Info("NEAREST", "1", "Integer",
+               f"Distance in bases to the nearest other column where two genomes placed in the "
+               f"scheme carry different bases, a third allele or a partly missing column "
+               f"included, up to {NEAREST_CAP}")
+
+
 @dataclass
 class Record:
     """One SNP."""
@@ -384,6 +392,13 @@ class Snp:
     node: Optional[str]
     derived: str
     ancestral: str
+    nearest: Optional[int] = None
+    """Distance to the nearest variation among the scheme's genomes, when known."""
+
+
+def nearest_of(record: Record) -> Optional[int]:
+    value = record.info.get("NEAREST")
+    return int(value) if value not in (None, "") else None
 
 
 def read_snps(path: str, reference: Reference) -> List[Snp]:
@@ -402,9 +417,10 @@ def read_snps(path: str, reference: Reference) -> List[Snp]:
                     f"{path}: {record.chrom}:{record.pos} gives the ancestral allele "
                     f"{record.ancestral}, which is neither REF nor ALT")
             snps.append(Snp(record.chrom, record.pos, record.node, record.derived,
-                            record.ancestral))
+                            record.ancestral, nearest_of(record)))
         else:
-            snps.append(Snp(record.chrom, record.pos, None, record.alt, record.ref))
+            snps.append(Snp(record.chrom, record.pos, None, record.alt, record.ref,
+                            nearest_of(record)))
     if not snps:
         raise VcfError(f"{path}: holds no SNPs")
     return snps

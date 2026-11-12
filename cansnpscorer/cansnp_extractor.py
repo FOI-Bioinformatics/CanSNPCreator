@@ -3,10 +3,15 @@
 import logging
 import os
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
 from cansnpscorer import vcf
-from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
+from cansnpscorer.helpers.data_utils import (
+    canSNP_extractor,
+    nearest_distances,
+    snp_extractor,
+    variable_columns,
+)
 from cansnpscorer.helpers.file_utils import (
     read_alignment,
     read_genome_map,
@@ -62,6 +67,11 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         # column of a SNP is not its position in the genome genome.
         mapping = AlignmentMap(next(iter(aligned.values())), genome)
         snps = snp_extractor(aligned)
+        # The flank of an assay is spoiled by any difference among the genomes
+        # it will type, not only by canonical SNPs, so every column where the
+        # scheme's genomes differ is found, and the outgroup's are left out.
+        placed = sorted({name for names in clusters.values() for name in names})
+        flank_columns = variable_columns(aligned, placed)
         cansnps = canSNP_extractor(aligned, isolates, snps)
     except (ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
@@ -88,7 +98,23 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         logging.warning(
             f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
 
-    header = vcf.header_lines(genome, reference, "extract", [vcf.NODE, vcf.ANCESTRAL])
+    variable: Dict[str, List[int]] = {}
+    for column in flank_columns:
+        placed_at = mapping.locate(column)
+        if placed_at is not None:
+            variable.setdefault(placed_at[0].name, []).append(placed_at[1] - 1)
+    for found in variable.values():
+        found.sort()
+    distances = nearest_distances([(record.chrom, record.pos - 1) for record in records],
+                                  variable)
+    for record, distance in zip(records, distances):
+        record.info["NEAREST"] = str(min(distance, vcf.NEAREST_CAP)) if distance is not None \
+            else str(vcf.NEAREST_CAP)
+    logging.info(f"{len(flank_columns)} columns differ among the {len(placed)} genomes of the "
+                 f"scheme, which gives each SNP the distance to its nearest variation")
+
+    header = vcf.header_lines(genome, reference, "extract",
+                              [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST])
     written = vcf.write(output, header, records)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)

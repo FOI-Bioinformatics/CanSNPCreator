@@ -25,6 +25,9 @@ TREE_SUFFIX = "_tree.txt"
 SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
 GENOMES_SUFFIX = "_genomes.txt"
+SNP_SET_SUFFIX = "_canSNPs.txt"
+SNP_SET_COLUMNS = ("node", "rank", "genome", "position", "derived_base", "ancestral_base",
+                   "score")
 
 SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
                "derived_base", "ancestral_base")
@@ -49,10 +52,17 @@ class SchemeSnp:
     derived: str
     ancestral: str
     line: int = 0
+    rank: int = 1
+    """Its rank among the canSNPs of its node; the SNP file holds rank 1."""
 
     @property
     def where(self) -> str:
         return f"{self.genome}:{self.position}"
+
+    def tag(self, text: str) -> str:
+        """A finding's text, saying which canSNP of the node it is about when
+        it is not the one the SNP file gives."""
+        return text if self.rank == 1 else f"the canSNP of rank {self.rank}: {text}"
 
 
 @dataclass(frozen=True)
@@ -79,6 +89,9 @@ class Scheme:
     genomes: List[Tuple[str, str, str]] = field(default_factory=list)
     """The genomes the scheme was made from, as (accession, node, role), when
     the scheme lists them in its optional genomes file."""
+    snp_set: List[SchemeSnp] = field(default_factory=list)
+    """Every canSNP of each node, ranked, when the scheme lists more than one
+    in its optional canSNP set; rank 1 is the SNP of the SNP file."""
     # Nodes placed under more than one parent, as (node, parents). The tree
     # reader of CanSNPer2 does not refuse these; it creates a second node with
     # the same name and attaches the SNP to one of them.
@@ -103,6 +116,12 @@ class Scheme:
         for snp in self.snps:
             by_node.setdefault(snp.node, []).append(snp)
         return by_node
+
+    @property
+    def checked_snps(self) -> List[SchemeSnp]:
+        """The SNPs to check against a genome or an alignment: those of the SNP
+        file, and every further rank of the canSNP set."""
+        return self.snps + [snp for snp in self.snp_set if snp.rank > 1]
 
     @property
     def references_by_genome(self) -> Dict[str, SchemeReference]:
@@ -281,9 +300,51 @@ def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
                 continue
             genomes.append((genome, node, role))
 
+    snp_set: List[SchemeSnp] = []
+    snp_set_path = os.path.join(directory, organism + SNP_SET_SUFFIX)
+    if os.path.isfile(snp_set_path):
+        snp_set = read_snp_set(snp_set_path, snps, problems)
+
     logging.info(
         f"Read {len(paths)} tree lines, {len(snps)} SNPs and {len(references)} reference genomes"
-        + (f", and {len(genomes)} genomes the scheme was made from" if genomes else ""))
+        + (f", {len(genomes)} genomes the scheme was made from" if genomes else "")
+        + (f", and a set of {len(snp_set)} ranked canSNPs" if snp_set else ""))
 
     return Scheme(organism=organism, paths=paths, snps=snps, references=references,
-                  hierarchy=hierarchy, genomes=genomes, conflicts=conflicts, problems=problems)
+                  hierarchy=hierarchy, genomes=genomes, snp_set=snp_set, conflicts=conflicts,
+                  problems=problems)
+
+
+def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: List[str]) -> List[SchemeSnp]:
+    """Read the optional ranked canSNPs of each node.
+
+    Rank 1 of a node must be the SNP the SNP file gives it, since that is the
+    one CanSNPer2 calls; a disagreement is a problem of the scheme.
+    """
+    name = os.path.basename(path)
+    snp_set: List[SchemeSnp] = []
+    for number, fields in _rows(path, SNP_SET_COLUMNS, problems):
+        node, rank, genome, position, derived, ancestral, _score = (f.strip() for f in fields)
+        try:
+            rank_value, position_value = int(rank), int(position)
+        except ValueError:
+            problems.append(f"{name} line {number} gives the rank '{rank}' and position "
+                            f"'{position}', which are not both whole numbers")
+            continue
+        snp_set.append(SchemeSnp(node=node, strain="", reference="", genome=genome,
+                                 position=position_value, derived=derived,
+                                 ancestral=ancestral, line=number, rank=rank_value))
+
+    called = {snp.node: (snp.genome, snp.position, snp.derived, snp.ancestral) for snp in snps}
+    first = {snp.node: (snp.genome, snp.position, snp.derived, snp.ancestral)
+             for snp in snp_set if snp.rank == 1}
+    for node in sorted(set(called) & set(first)):
+        if called[node] != first[node]:
+            problems.append(f"{name} gives node '{node}' a rank 1 that is not the SNP the SNP "
+                            f"file gives it")
+    for node in sorted(set(called) - set(first)):
+        problems.append(f"{name} has no canSNP of rank 1 for node '{node}'")
+    for node in sorted(set(first) - set(called)):
+        problems.append(f"{name} ranks canSNPs for node '{node}', which the SNP file does "
+                        f"not hold")
+    return snp_set

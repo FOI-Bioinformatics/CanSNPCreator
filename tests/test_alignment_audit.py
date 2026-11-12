@@ -6,7 +6,18 @@ alignment, the group file or the scheme in one way and asserts what the audit
 says about it.
 """
 
-from conftest import CLUSTERS, PLANTED, SNPS, cli_run, edit, vcf_records, write_fasta
+import os
+
+from conftest import (
+    CLUSTERS,
+    INCONGRUENT,
+    PLANTED,
+    SNPS,
+    cli_run,
+    edit,
+    vcf_records,
+    write_fasta,
+)
 
 from cansnpscorer.cansnp_audit import PROBLEM, audit_scheme
 from cansnpscorer.cansnp_audit import main as audit_main
@@ -145,6 +156,55 @@ def test_a_site_no_genome_has_a_base_at_is_reported(written, dataset, tmp_path):
     missing = of(audit(written[0], dataset, alignment_path=path), "missing-data")
     assert [finding.node for finding in missing] == ["B.1"]
     assert "s4" in missing[0].detail
+
+
+# -- more than one canSNP per node -------------------------------------------
+
+
+def write_snp_set(outdir, extra_rows):
+    """A canSNP set whose rank 1 is the SNP file, with these further rows."""
+    with open(os.path.join(outdir, SNPS)) as handle:
+        rows = [line.rstrip("\n").split("\t") for line in handle][1:]
+    lines = ["node\trank\tgenome\tposition\tderived_base\tancestral_base\tscore"]
+    lines += [f"{row[0]}\t1\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}\t500" for row in rows]
+    lines += extra_rows
+    path = os.path.join(outdir, SNPS.replace("_snp.txt", "_canSNPs.txt"))
+    with open(path, "w") as handle:
+        handle.write("\n".join(lines) + "\n")
+    return rows[0][3]
+
+
+def test_every_ranked_canSNP_is_checked_in_the_genomes(written, dataset):
+    outdir = written[0]
+    column, ancestral, derived, _isolates = INCONGRUENT
+    genome = write_snp_set(outdir, [])
+    write_snp_set(outdir, [f"A.1\t2\t{genome}\t{column + 1}\t{derived}\t{ancestral}\t400"])
+    scheme = read_scheme(outdir)
+    assert scheme.problems == []
+    assert [snp.rank for snp in scheme.checked_snps if snp.node == "A.1"] == [1, 2]
+
+    findings = audit(outdir, dataset)
+    # s1b, below A.1, lacks the derived base, and s3, outside it, carries it.
+    for category in ("not-canonical", "homoplasy"):
+        found = of(findings, category, PROBLEM)
+        assert [finding.node for finding in found] == ["A.1"]
+        assert found[0].detail.startswith("the canSNP of rank 2: ")
+    # The SNP CanSNPer2 calls is sound, so no replacement is offered for it.
+    assert of(findings, "replacement") == []
+
+
+def test_a_rank_one_that_is_not_the_snp_file_is_a_problem(written, dataset):
+    outdir = written[0]
+    genome = write_snp_set(outdir, [])
+    path = os.path.join(outdir, SNPS.replace("_snp.txt", "_canSNPs.txt"))
+    with open(path) as handle:
+        text = handle.read()
+    column, ancestral, derived = PLANTED["B.1"]
+    text = text.replace(f"B.1\t1\t{genome}\t{column + 1}\t", f"B.1\t1\t{genome}\t{column + 2}\t")
+    with open(path, "w") as handle:
+        handle.write(text)
+    problems = read_scheme(outdir).problems
+    assert any("node 'B.1' a rank 1 that is not the SNP" in problem for problem in problems)
 
 
 # -- extending the scheme ----------------------------------------------------

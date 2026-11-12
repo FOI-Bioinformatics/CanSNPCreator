@@ -209,7 +209,7 @@ def test_snps_are_checked_against_the_reference_base(dataset, parsed_snps):
     reference = reference_parser(dataset.reference)
     located = locate_snps(parsed_snps, reference)
     assert len(located) == len(parsed_snps)
-    for contig, local_position, _node, alleles in located:
+    for contig, local_position, _node, alleles, _nearest in located:
         assert contig.base(local_position) in alleles
 
 
@@ -513,3 +513,33 @@ def test_gzipped_fasta_and_gff3_are_read(tmp_path):
         handle.write("##gff-version 3\nNZ_A.1\tx\tCDS\t1\t3\t.\t+\t0\tID=a\n")
     assert read_fasta(str(fasta)) == [("NZ_A.1", "ACGT")]
     assert read_gff3(str(gff)).cds == {"NZ_A.1": [(0, 2, "+", 0)]}
+
+
+# -- the variation around a SNP ----------------------------------------------
+
+
+def test_variation_is_counted_among_the_chosen_genomes_only():
+    from cansnpscorer.helpers.data_utils import variable_columns
+
+    alignment = {
+        "out": "AAAAAAAA",
+        "x": "ACAAAA-A",
+        "y": "AAGAAAAN",
+        "z": "AAAATAAA",
+    }
+    # Column 1 and 2 differ among x, y and z, a third base included; column 4
+    # differs in one genome; column 6 only by a gap and 7 by an N, which are
+    # no evidence of a different base.
+    assert variable_columns(alignment, ["x", "y", "z"]) == [1, 2, 4]
+    # A genome left out, as the outgroup is, does not count: without z,
+    # column 4 no longer differs.
+    assert variable_columns(alignment, ["out", "x", "y"]) == [1, 2]
+    assert variable_columns(alignment, ["x"]) == []
+
+
+def test_the_nearest_variation_is_sought_on_the_same_contig():
+    from cansnpscorer.helpers.data_utils import nearest_distances
+
+    variable = {"c1": [10, 15, 40], "c2": [3]}
+    assert nearest_distances([("c1", 15), ("c1", 12), ("c1", 100), ("c2", 3), ("c3", 5)],
+                             variable) == [5, 2, 60, None, None]

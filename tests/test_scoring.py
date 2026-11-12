@@ -66,7 +66,22 @@ def test_neighbours_are_taken_from_the_same_contig_only():
 def test_a_snp_at_the_end_of_a_contig_has_no_flanking_sequence():
     reference = Reference.from_records([("c1", "ACGT" * 100)])
     at_end = contexts_for([(reference.contig("c1"), 399, "A.1", ("A", "G"))], {}, {})[0]
-    assert neighbour_score(at_end) == pytest.approx(1 / 25)
+    assert neighbour_score(at_end) == pytest.approx(1 / 50)
+    assert neighbour_score(at_end, flank=25) == pytest.approx(1 / 25)
+
+
+def test_the_flank_is_judged_by_all_variation_when_extract_measured_it():
+    reference = Reference.from_records([("c1", "ACGT" * 100)])
+    snps = [(reference.contig("c1"), 200, "A.1", ("A", "G"), 10)]
+    measured = contexts_for(snps, {}, {})[0]
+    # Alone in the SNP file, but extract saw variation 10 bases away.
+    assert measured.previous is None and measured.following is None
+    assert neighbour_score(measured) == pytest.approx(10 / 50)
+    # A contig end nearer than the variation still counts.
+    near_end = contexts_for([(reference.contig("c1"), 2, "A.1", ("A", "G"), 40)], {}, {})[0]
+    assert neighbour_score(near_end) == pytest.approx(3 / 50)
+    far = contexts_for([(reference.contig("c1"), 200, "A.1", ("A", "G"), 1000)], {}, {})[0]
+    assert neighbour_score(far) == pytest.approx(1.0)
 
 
 def test_intervals_are_sorted_before_they_are_searched():
@@ -87,9 +102,18 @@ def test_gc_content_near_a_contig_start_is_measured_on_a_clamped_window():
     # reference[snp - 50:snp + 50] wrapped on a negative start, which gave an
     # empty window and a ZeroDivisionError at the very beginning of a contig.
     at_start = context(sequence="GC" * 200, position=0)
-    assert gc_score(at_start, 0.5) == pytest.approx(0.0)
+    assert gc_score(at_start, 0.5, tolerance=0) == pytest.approx(0.0)
     balanced = context(sequence="AGCT" * 100, position=2)
     assert gc_score(balanced, 0.5) == pytest.approx(1.0)
+
+
+def test_gc_content_within_the_tolerance_scores_as_the_goal():
+    # 60% GC around the SNP: full marks within 0.1 of a goal of 0.5, and
+    # beyond the band the term falls off as before from its edge.
+    sixty = context(sequence="GGGCCCAAAT" * 40, position=200)
+    assert gc_score(sixty, 0.5, tolerance=0.1) == pytest.approx(1.0)
+    assert gc_score(sixty, 0.5, tolerance=0.0) == pytest.approx(0.8)
+    assert gc_score(sixty, 0.5, tolerance=0.05) == pytest.approx(0.9)
 
 
 def test_a_low_gc_goal_cannot_produce_a_negative_term():

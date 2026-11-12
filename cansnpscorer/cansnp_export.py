@@ -15,6 +15,11 @@ what this writes can be added to that repository without hand editing:
   semicolons before splitting
 - accessions are well formed, because CanSNPer2-download builds NCBI paths out
   of their digits
+
+A scheme may also carry more than one canSNP per node. CanSNPer2 calls one SNP
+per node, so the SNP file keeps the best of each, and the full set goes to an
+optional <organism>_canSNPs.txt, ranked within each node, whose rank 1 is the
+SNP of the SNP file.
 """
 
 import logging
@@ -23,6 +28,7 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from cansnpscorer import vcf
+from cansnpscorer.helpers.data_utils import ranking, select_per_node
 from cansnpscorer.helpers.file_utils import (
     fasta_ids,
     read_genome_map,
@@ -44,6 +50,9 @@ TREE_SUFFIX = "_tree.txt"
 SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
 GENOMES_SUFFIX = "_genomes.txt"
+SNP_SET_SUFFIX = "_canSNPs.txt"
+SNP_SET_COLUMNS = ("node", "rank", "genome", "position", "derived_base", "ancestral_base",
+                   "score")
 GENOME_COLUMNS = ("genome", "node", "role")
 ACCESSION = re.compile(r"GC[AF]_\d{9}\.\d+")
 
@@ -59,9 +68,6 @@ def best_per_node(scores: Sequence[ScoredSnp]) -> Dict[str, ScoredSnp]:
     canSNPs that passed evaluate's filters. Ties are broken by contig and
     position, so that the same input always exports the same scheme.
     """
-    def ranking(score: ScoredSnp):
-        return (-score.total, score.contig, score.position)
-
     best: Dict[str, ScoredSnp] = {}
     for score in scores:
         if score.node not in best or ranking(score) < ranking(best[score.node]):
@@ -229,6 +235,28 @@ def write_genomes(outdir: str, organism: str, rows: Sequence[Tuple[str, str, str
     return path
 
 
+def write_snp_set(outdir: str, organism: str, paths: Sequence[Sequence[str]],
+                  chosen: Dict[str, Sequence[ScoredSnp]], reference: Reference,
+                  genome: str) -> str:
+    """Write every chosen canSNP of each kept node, ranked within the node.
+
+    Positions are over the concatenated genome, as in the SNP file, and rank 1
+    of each node is the SNP the SNP file carries for it.
+    """
+    path = os.path.join(outdir, organism + SNP_SET_SUFFIX)
+    with open(path, "w", newline="\n") as handle:
+        handle.write("\t".join(SNP_SET_COLUMNS) + "\n")
+        for tree_path in paths:
+            node = tree_path[-1]
+            for rank, score in enumerate(chosen[node], start=1):
+                position = reference.contig(score.contig).start + score.position
+                handle.write("\t".join([
+                    node, str(rank), genome, str(position), score.derived, score.ancestral,
+                    str(score.total),
+                ]) + "\n")
+    return path
+
+
 def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
                  best: Dict[str, ScoredSnp], reference: Reference, genome: str, strain: str,
                  citation: str, genbank_id: str, refseq_id: str,
@@ -269,8 +297,14 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
 
 def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
          genome=None, strain=None, citation=None, genbank_id=None, refseq_id=None,
-         assembly_name=None, prune=False, genome_map=None, alignment=None) -> int:
-    """Write a scored scheme as CanSNPer2-data source files. Returns an exit status."""
+         assembly_name=None, prune=False, genome_map=None, alignment=None,
+         snps_per_node=1, spacing=1000) -> int:
+    """Write a scored scheme as CanSNPer2-data source files. Returns an exit status.
+
+    ``snps_per_node`` is how many canSNPs of each node to keep, at least
+    ``spacing`` bases apart, or None for all of them. With more than one the
+    full set is written to <organism>_canSNPs.txt.
+    """
     if bool(genome_map) != bool(alignment):
         logging.error("the genomes file needs both --genome-map and --alignment: where each "
                       "genome sits, and which genomes were aligned")
@@ -285,7 +319,8 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
         logging.error(error)
         return 1
 
-    best = best_per_node(scored)
+    chosen = select_per_node(scored, snps_per_node, spacing)
+    best = {node: picked[0] for node, picked in chosen.items() if picked}
     problems, warnings = check_scheme(tree, best, sequence)
     problems += check_metadata(genome, strain, citation, genbank_id, refseq_id,
                                assembly_name, organism)
@@ -315,6 +350,17 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     paths = paths_for(tree, kept)
     written = write_scheme(outdir, organism, paths, best, sequence, genome, strain,
                            citation, genbank_id, refseq_id, assembly_name)
+    if snps_per_node != 1:
+        written.append(write_snp_set(outdir, organism, paths, chosen, sequence, genome))
+        counts = sorted(len(chosen[path[-1]]) for path in paths)
+        short = [path[-1] for path in paths
+                 if snps_per_node is not None and len(chosen[path[-1]]) < snps_per_node]
+        logging.info(
+            f"The canSNP set holds {sum(counts)} canSNPs, {counts[0]} to {counts[-1]} per node")
+        if short:
+            logging.warning(
+                f"{len(short)} nodes have fewer than {snps_per_node} canSNPs that passed and lie "
+                f"{spacing} bases apart: {', '.join(short[:5])}")
     if clusters is not None:
         rows, notes = genome_rows(tree, kept, clusters, aligned)
         for note in notes:

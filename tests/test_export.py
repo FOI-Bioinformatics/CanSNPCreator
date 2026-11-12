@@ -16,7 +16,7 @@ from conftest import PLANTED, vcf_rewrite
 from cansnpscorer.cansnp_export import best_per_node
 from cansnpscorer.cansnp_export import main as export_main
 from cansnpscorer.cansnp_scorer import main as cli
-from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp
+from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, TERMS, ScoredSnp
 
 METADATA = dict(
     organism="testus_organismus",
@@ -227,6 +227,114 @@ def test_the_exported_scheme_passes_the_cansnper2_data_validator(dataset, scheme
                                capture_output=True, text=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "All 1 schemes valid" in completed.stdout
+
+
+# -- more than one canSNP per node -------------------------------------------
+
+
+@pytest.fixture
+def several(dataset, scheme, tmp_path):
+    """A score file with, for each planted node, two more canSNPs: one 5 bases
+    from the planted one and scoring just below it, one 20 bases away and
+    scoring lower still."""
+    from cansnpscorer import vcf
+    from cansnpscorer.helpers.file_utils import reference_parser
+
+    scores, outdir = scheme
+    reference = reference_parser(dataset.reference)
+    planted = vcf.read_scores(scores, reference)
+    extra = []
+    for original in planted:
+        contig = reference.contig(original.contig)
+        for offset, drop in ((5, 1), (20, 2)):
+            position = original.position + offset
+            base = contig.base(position - 1)
+            derived = "A" if base != "A" else "C"
+            extra.append(ScoredSnp(contig=original.contig, position=position, node=original.node,
+                                   total=original.total - drop, terms=dict(original.terms),
+                                   derived=derived, ancestral=base))
+    path = str(tmp_path / "several.vcf")
+    vcf.write_scores(path, planted + extra, reference, dataset.reference, 0, None,
+                     DEFAULT_WEIGHTS)
+    return path, outdir
+
+
+def snp_set(outdir):
+    rows = [line.split("\t") for line in
+            read(os.path.join(outdir, "testus_organismus_canSNPs.txt")).splitlines()]
+    assert rows[0] == ["node", "rank", "genome", "position", "derived_base", "ancestral_base",
+                       "score"]
+    return rows[1:]
+
+
+def test_one_snp_per_node_writes_no_snp_set(dataset, several):
+    scores, outdir = several
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
+    assert not os.path.exists(os.path.join(outdir, "testus_organismus_canSNPs.txt"))
+
+
+def test_the_snp_set_ranks_each_node_and_keeps_the_snp_file_as_rank_one(dataset, several):
+    scores, outdir = several
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
+                       snps_per_node=None, spacing=0) == 0
+    rows = snp_set(outdir)
+    assert len(rows) == 3 * len(PLANTED)
+    snp = [line.split("\t") for line in
+           read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]]
+    first = {row[0]: (row[3], row[4], row[5]) for row in rows if row[1] == "1"}
+    assert first == {row[0]: (row[4], row[5], row[6]) for row in snp}
+    for node in PLANTED:
+        ranked = [row for row in rows if row[0] == node]
+        assert [row[1] for row in ranked] == ["1", "2", "3"]
+        assert [int(row[6]) for row in ranked] == sorted((int(row[6]) for row in ranked),
+                                                         reverse=True)
+
+
+def test_spacing_passes_over_a_canSNP_beside_one_already_kept(dataset, several):
+    scores, outdir = several
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
+                       snps_per_node=2, spacing=10) == 0
+    rows = snp_set(outdir)
+    for node in PLANTED:
+        positions = [int(row[3]) for row in rows if row[0] == node]
+        # The one 5 bases away gives way to the one 20 bases away.
+        assert len(positions) == 2 and positions[1] - positions[0] == 20
+
+
+def test_the_snp_set_is_chosen_from_the_command_line(dataset, several):
+    scores, outdir = several
+    metadata = [f"--{key.replace('_', '-')}={value}" for key, value in METADATA.items()]
+    assert cli_run("export", "--scores", scores, "--hierarchy", dataset.hierarchy,
+                   "--reference", dataset.reference, "--outdir", outdir, *metadata,
+                   "--snps-per-node", "all", "--min-spacing", "0") == 0
+    assert len(snp_set(outdir)) == 3 * len(PLANTED)
+
+
+@pytest.mark.skipif(not os.path.exists(CANSNPER2_DATA),
+                    reason="CanSNPer2-data is not checked out beside this repository")
+def test_the_snp_set_passes_the_cansnper2_data_validator(dataset, several, tmp_path):
+    scores, outdir = several
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
+                       snps_per_node=None, spacing=0) == 0
+    checkout = tmp_path / "checkout"
+    (checkout / "source").mkdir(parents=True)
+    shutil.copy(CANSNPER2_DATA, checkout / "validate.py")
+    (checkout / "schemes.toml").write_text("")
+    for name in os.listdir(outdir):
+        shutil.copy(os.path.join(outdir, name), checkout / "source" / name)
+    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
+                               capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    # A rank 1 that differs from the SNP file is refused, so the file is read.
+    snp_set_path = checkout / "source" / "testus_organismus_canSNPs.txt"
+    lines = snp_set_path.read_text().splitlines()
+    lines[1], lines[2] = lines[2].replace("\t2\t", "\t1\t", 1), lines[1].replace("\t1\t", "\t2\t", 1)
+    snp_set_path.write_text("\n".join(lines) + "\n")
+    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
+                               capture_output=True, text=True)
+    assert completed.returncode == 1
+    assert "is not the SNP" in completed.stdout
 
 
 # -- the genomes the scheme was made from ------------------------------------
