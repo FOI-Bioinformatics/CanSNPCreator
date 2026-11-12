@@ -20,10 +20,15 @@ what this writes can be added to that repository without hand editing:
 import logging
 import os
 import re
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from cansnpscorer import vcf
-from cansnpscorer.helpers.file_utils import read_hierarchy, reference_parser
+from cansnpscorer.helpers.file_utils import (
+    fasta_ids,
+    read_genome_map,
+    read_hierarchy,
+    reference_parser,
+)
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
@@ -36,6 +41,9 @@ BASES = frozenset("ACGT")
 TREE_SUFFIX = "_tree.txt"
 SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
+GENOMES_SUFFIX = "_genomes.txt"
+GENOME_COLUMNS = ("genome", "node", "role")
+ACCESSION = re.compile(r"GC[AF]_\d{9}\.\d+")
 
 SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
                "derived_base", "ancestral_base")
@@ -144,6 +152,73 @@ def paths_for(hierarchy: Hierarchy, kept: Sequence[str]) -> List[List[str]]:
     return paths
 
 
+def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: Dict[str, List[str]],
+                aligned: Sequence[str]) -> Tuple[List[Tuple[str, str, str]], List[str]]:
+    """The rows of the genomes file, and warnings about genomes left out.
+
+    A genome placed at a node the scheme left out moves to the nearest node
+    above it that was kept, as that node's children do. A genome whose
+    sequence is in the alignment is a representative; one placed only through
+    the genome map is a member; an aligned genome placed at no node is the
+    outgroup. Each is written as the assembly accession its name holds.
+    """
+    from cansnpscorer.helpers.names import resolve_names
+
+    keeping = set(kept)
+
+    def kept_at(node: str) -> Optional[str]:
+        while node is not None and node not in keeping:
+            node = hierarchy.parents.get(node)
+        return node
+
+    placed = {genome: node for node, genomes in clusters.items() for genome in genomes}
+    matched, _unmatched, _ambiguous = resolve_names(list(placed), aligned)
+    aligned_placed = set(matched.values())
+
+    rows: List[Tuple[str, str, str]] = []
+    warnings: List[str] = []
+    no_accession: List[str] = []
+    seen: Dict[str, str] = {}
+
+    def add(name: str, node: str, role: str) -> None:
+        found = ACCESSION.search(name)
+        if found is None:
+            no_accession.append(name)
+            return
+        accession = found.group(0)
+        assembly = accession[4:].split(".")[0]
+        if assembly in seen:
+            return
+        seen[assembly] = accession
+        rows.append((accession, node, role))
+
+    for genome, node in placed.items():
+        if node not in hierarchy:
+            continue
+        add(genome, kept_at(node) or hierarchy.root,
+            "representative" if genome in matched else "member")
+    for record in aligned:
+        if record not in aligned_placed:
+            add(record, "", "outgroup")
+
+    if no_accession:
+        warnings.append(
+            f"{len(no_accession)} genomes hold no assembly accession in their names and were "
+            f"left out of the genomes file: {', '.join(sorted(no_accession)[:5])}")
+    order = {"representative": 0, "member": 1, "outgroup": 2}
+    rows.sort(key=lambda row: (order[row[2]], row[1], row[0]))
+    return rows, warnings
+
+
+def write_genomes(outdir: str, organism: str, rows: Sequence[Tuple[str, str, str]]) -> str:
+    path = os.path.join(outdir, organism + GENOMES_SUFFIX)
+    with open(path, "w", newline="\n") as handle:
+        handle.write("\t".join(GENOME_COLUMNS) + "\n")
+        for row in rows:
+            handle.write("\t".join(row) + "\n")
+    return path
+
+
 def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
                  best: Dict[str, ScoredSnp], reference: Reference, genome: str, strain: str,
                  citation: str, genbank_id: str, refseq_id: str,
@@ -184,9 +259,15 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
 
 def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
          genome=None, strain=None, citation=None, genbank_id=None, refseq_id=None,
-         assembly_name=None, prune=False) -> int:
+         assembly_name=None, prune=False, genome_map=None, alignment=None) -> int:
     """Write a scored scheme as CanSNPer2-data source files. Returns an exit status."""
+    if bool(genome_map) != bool(alignment):
+        logging.error("the genomes file needs both --genome-map and --alignment: where each "
+                      "genome sits, and which genomes were aligned")
+        return 1
     try:
+        clusters = read_genome_map(genome_map) if genome_map else None
+        aligned = fasta_ids(alignment) if alignment else None
         tree = read_hierarchy(hierarchy)
         sequence = reference_parser(reference)
         scored = [score for score in vcf.read_scores(scores, sequence) if score.passed]
@@ -224,6 +305,15 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     paths = paths_for(tree, kept)
     written = write_scheme(outdir, organism, paths, best, sequence, genome, strain,
                            citation, genbank_id, refseq_id, assembly_name)
+    if clusters is not None:
+        rows, notes = genome_rows(tree, kept, clusters, aligned)
+        for note in notes:
+            logging.warning(note)
+        written.append(write_genomes(outdir, organism, rows))
+        counts = {role: sum(1 for row in rows if row[2] == role)
+                  for role in ("representative", "member", "outgroup")}
+        logging.info("The genomes file lists " + ", ".join(
+            f"{count} {role}s" for role, count in counts.items()))
 
     logging.info(f"Wrote a scheme of {len(kept)} nodes: {', '.join(written)}")
     logging.info(

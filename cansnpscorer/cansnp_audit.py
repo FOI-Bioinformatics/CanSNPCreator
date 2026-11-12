@@ -498,10 +498,11 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     if alignment and not reference:
         logging.error("--alignment needs --reference, the genome the alignment is against")
         return 1
-    if bool(alignment) != bool(genome_map or tree) or (genome_map and tree):
+    if (genome_map or tree) and not alignment or (genome_map and tree):
         logging.error(
             "checking the scheme against the genomes needs --alignment, and either "
-            "--genome-map or --tree to say where the genomes sit in the scheme")
+            "--genome-map or --tree to say where the genomes sit in the scheme, or the "
+            "scheme's own genomes file")
         return 1
     if members and not tree:
         logging.error("--members applies to the leaves of --tree")
@@ -524,6 +525,33 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
             aligned = read_alignment(alignment)
             if genome_map:
                 clusters = read_genome_map(genome_map)
+            elif not tree:
+                # The scheme lists the genomes it was made from; an outgroup
+                # sits at no node and counts as outside every node.
+                if not scheme.genomes:
+                    logging.error(
+                        f"the scheme lists no genomes ({scheme.organism}_genomes.txt), so "
+                        f"--genome-map or --tree must say where the genomes sit")
+                    return 1
+                # Members are used where the alignment holds them, as one made
+                # with RepGenR2's --all-genomes does, and passed over quietly
+                # where it does not: they were never aligned.
+                from cansnpscorer.helpers.names import resolve_names
+
+                clusters = {}
+                listed = [entry for entry in scheme.genomes if entry[2] != "outgroup"]
+                matched, _unmatched, _ambiguous = resolve_names(
+                    [genome for genome, _node, _role in listed], list(aligned))
+                skipped = 0
+                for genome, node, role in listed:
+                    if role == "member" and genome not in matched:
+                        skipped += 1
+                        continue
+                    clusters.setdefault(node, []).append(genome)
+                logging.info(
+                    f"Placed {sum(len(found) for found in clusters.values())} genomes as the "
+                    f"scheme's genomes file lists them"
+                    + (f"; {skipped} members are not in the alignment" if skipped else ""))
             else:
                 genome_tree = read_genome_tree(tree)
                 folded = read_members(members, genome_tree) if members else None

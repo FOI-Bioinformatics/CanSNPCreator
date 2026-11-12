@@ -24,10 +24,13 @@ from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 TREE_SUFFIX = "_tree.txt"
 SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
+GENOMES_SUFFIX = "_genomes.txt"
 
 SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
                "derived_base", "ancestral_base")
 REFERENCE_COLUMNS = ("genome", "strain", "genbank_id", "refseq_id", "assembly_name")
+GENOME_COLUMNS = ("genome", "node", "role")
+GENOME_ROLES = ("representative", "member", "outgroup")
 
 
 class SchemeError(ValueError):
@@ -73,6 +76,9 @@ class Scheme:
     snps: List[SchemeSnp] = field(default_factory=list)
     references: List[SchemeReference] = field(default_factory=list)
     hierarchy: Optional[Hierarchy] = None
+    genomes: List[Tuple[str, str, str]] = field(default_factory=list)
+    """The genomes the scheme was made from, as (accession, node, role), when
+    the scheme lists them in its optional genomes file."""
     # Nodes placed under more than one parent, as (node, parents). The tree
     # reader of CanSNPer2 does not refuse these; it creates a second node with
     # the same name and attaches the SNP to one of them.
@@ -259,8 +265,20 @@ def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
     for number, fields in _rows(references_path, REFERENCE_COLUMNS, problems):
         references.append(SchemeReference(*[field.strip() for field in fields], line=number))
 
+    genomes: List[Tuple[str, str, str]] = []
+    genomes_path = os.path.join(directory, organism + GENOMES_SUFFIX)
+    if os.path.isfile(genomes_path):
+        for number, fields in _rows(genomes_path, GENOME_COLUMNS, problems):
+            genome, node, role = (field.strip() for field in fields)
+            if role not in GENOME_ROLES:
+                problems.append(f"{os.path.basename(genomes_path)} line {number} gives the "
+                                f"role '{role}'")
+                continue
+            genomes.append((genome, node, role))
+
     logging.info(
-        f"Read {len(paths)} tree lines, {len(snps)} SNPs and {len(references)} reference genomes")
+        f"Read {len(paths)} tree lines, {len(snps)} SNPs and {len(references)} reference genomes"
+        + (f", and {len(genomes)} genomes the scheme was made from" if genomes else ""))
 
     return Scheme(organism=organism, paths=paths, snps=snps, references=references,
-                  hierarchy=hierarchy, conflicts=conflicts, problems=problems)
+                  hierarchy=hierarchy, genomes=genomes, conflicts=conflicts, problems=problems)

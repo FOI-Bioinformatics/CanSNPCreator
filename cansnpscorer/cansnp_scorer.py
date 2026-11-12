@@ -175,6 +175,13 @@ def main():
     export.add_argument("--refseq-id", required=True, help="As in GCF_000007125.1.")
     export.add_argument("--assembly-name", required=True, help="As in ASM712v1.")
     export.add_argument("--outdir", default=".", help="Where to write the files.")
+    export.add_argument("--genome-map", default=None, metavar="TSV",
+                        help="Where each genome sits, as extract used it. With --alignment, "
+                             "the genomes the scheme was made from are written to "
+                             "<organism>_genomes.txt, by assembly accession and role.")
+    export.add_argument("--alignment", default=None, metavar="FASTA",
+                        help="The alignment the canSNPs were found in, which tells the genomes "
+                             "that were aligned from those placed through them.")
     export.add_argument("--prune", action="store_true",
                         help="Leave out nodes that have no canSNP, instead of refusing to write "
                              "a scheme. Their children then hang from the nearest node that has "
@@ -210,7 +217,8 @@ def main():
                        help="Report two canSNPs closer than this many bases. Default: 50.")
     add_alignment(audit, required=False)
     add_genome_map(audit, required=False,
-                   purpose="With --alignment, each SNP is checked in every genome.")
+                   purpose="With --alignment, each SNP is checked in every genome. Without it "
+                           "or --tree, the scheme's own genomes file is used.")
     audit.add_argument("--tree", default=None,
                        help="Instead of --genome-map: a genome tree whose leaves are the "
                             "alignment's genomes, which places them on the scheme by the tree, "
@@ -323,7 +331,8 @@ def main():
             scores=args.scores, hierarchy=args.hierarchy, reference=args.reference,
             outdir=args.outdir, organism=args.organism, genome=args.genome, strain=args.strain,
             citation=args.citation, genbank_id=args.genbank_id, refseq_id=args.refseq_id,
-            assembly_name=args.assembly_name, prune=args.prune)
+            assembly_name=args.assembly_name, prune=args.prune, genome_map=args.genome_map,
+            alignment=args.alignment)
     if args.command == "audit":
         return cansnp_audit.main(
             scheme_dir=args.scheme_dir, organism=args.organism, reference=args.reference,

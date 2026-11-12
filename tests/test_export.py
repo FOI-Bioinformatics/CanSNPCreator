@@ -227,3 +227,102 @@ def test_the_exported_scheme_passes_the_cansnper2_data_validator(dataset, scheme
                                capture_output=True, text=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "All 1 schemes valid" in completed.stdout
+
+
+# -- the genomes the scheme was made from ------------------------------------
+
+
+def test_genome_rows_give_each_genome_its_accession_node_and_role():
+    from cansnpscorer.cansnp_export import genome_rows
+    from cansnpscorer.hierarchy import Hierarchy
+
+    tree = Hierarchy.from_child_parent([("A", "root"), ("A.1", "A"), ("B", "root")])
+    clusters = {
+        "A.1": ["Fam_Gen_sp_GCF_000000001.1", "GCA_000000002.1"],
+        "B": ["Fam_Gen_sp_GCF_000000003.1", "in-house-7"],
+    }
+    aligned = ["Fam_Gen_sp_GCF_000000001.1", "Fam_Gen_sp_GCF_000000003.1",
+               "Fam_Out_grp_GCF_000000009.1"]
+    # A.1 was left out of the scheme, so its genomes move to A.
+    rows, warnings = genome_rows(tree, ["root", "A", "B"], clusters, aligned)
+    assert rows == [
+        ("GCF_000000001.1", "A", "representative"),
+        ("GCF_000000003.1", "B", "representative"),
+        ("GCA_000000002.1", "A", "member"),
+        ("GCF_000000009.1", "", "outgroup"),
+    ]
+    assert "in-house-7" in warnings[0]
+
+
+def accessioned(dataset, tmp_path):
+    """The planted dataset with RepGenR2-style genome names."""
+    from conftest import CLUSTERS, GENOMES, write_fasta
+
+    from cansnpscorer.helpers.file_utils import read_alignment
+
+    names = {genome: f"Fam_Gen_sp_GCF_00000000{index}.1" for index, genome
+             in enumerate(GENOMES, 1)}
+    alignment = read_alignment(dataset.alignment)
+    aligned = str(tmp_path / "aligned.fasta")
+    write_fasta(aligned, [(names[name], sequence) for name, sequence in alignment.items()])
+    genome_map = tmp_path / "genome_map.tsv"
+    genome_map.write_text("".join(f"{names[genome]}\t{node}\n" for node, genomes
+                                  in CLUSTERS.items() for genome in genomes)
+                          + "GCA_000000099.1\tA.1\n")  # a member, not aligned
+    return aligned, str(genome_map)
+
+
+def test_the_genomes_file_is_written_validated_and_audited(dataset, tmp_path):
+    aligned, genome_map = accessioned(dataset, tmp_path)
+    snps, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "scores.vcf")
+    outdir = str(tmp_path / "scheme")
+    assert cli_run("extract", "--alignment", aligned, "--reference", dataset.reference,
+                   "--hierarchy", dataset.hierarchy, "--genome-map", genome_map,
+                   "-o", snps) == 0
+    assert cli_run("evaluate", "--snps", snps, "--reference", dataset.reference,
+                   "--genes", dataset.gff, "--repeats", dataset.repeats,
+                   "-o", scores, "--cutoff", "0") == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir,
+                       genome_map=genome_map, alignment=aligned, **METADATA) == 0
+
+    lines = read(os.path.join(outdir, "testus_organismus_genomes.txt")).splitlines()
+    assert lines[0] == "genome\tnode\trole"
+    rows = [line.split("\t") for line in lines[1:]]
+    assert ["GCF_000000002.1", "A.1", "representative"] in rows
+    assert ["GCA_000000099.1", "A.1", "member"] in rows
+    assert ["GCF_000000001.1", "", "outgroup"] in rows, "the reference is placed at no node"
+
+    # audit uses the scheme's own genomes file when given only the alignment
+    report = tmp_path / "findings.tsv"
+    from cansnpscorer.cansnp_audit import main as audit_main
+    assert audit_main(outdir, reference=dataset.reference, alignment=aligned,
+                      output=str(report)) == 0
+    assert "not-canonical" not in report.read_text()
+    assert "single-site" in report.read_text(), "the genome checks ran"
+
+
+@pytest.mark.skipif(not os.path.exists(CANSNPER2_DATA),
+                    reason="CanSNPer2-data is not checked out beside this repository")
+def test_the_genomes_file_passes_the_cansnper2_data_validator(dataset, tmp_path):
+    aligned, genome_map = accessioned(dataset, tmp_path)
+    snps, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "scores.vcf")
+    outdir = str(tmp_path / "scheme")
+    assert cli_run("extract", "--alignment", aligned, "--reference", dataset.reference,
+                   "--hierarchy", dataset.hierarchy, "--genome-map", genome_map,
+                   "-o", snps) == 0
+    assert cli_run("evaluate", "--snps", snps, "--reference", dataset.reference,
+                   "--genes", dataset.gff, "--repeats", dataset.repeats,
+                   "-o", scores, "--cutoff", "0") == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir,
+                       genome_map=genome_map, alignment=aligned, **METADATA) == 0
+
+    checkout = tmp_path / "checkout"
+    (checkout / "source").mkdir(parents=True)
+    shutil.copy(CANSNPER2_DATA, checkout / "validate.py")
+    (checkout / "schemes.toml").write_text("")
+    for name in os.listdir(outdir):
+        shutil.copy(os.path.join(outdir, name), checkout / "source" / name)
+    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
+                               capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "All 1 schemes valid" in completed.stdout

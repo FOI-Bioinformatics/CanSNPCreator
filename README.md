@@ -164,6 +164,15 @@ checked first, so the result passes its `validate.py` unchanged. A node with no
 canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
 children to the nearest node that has one.
 
+With `--genome-map` and `--alignment` it also writes `<organism>_genomes.txt`,
+the genomes the scheme was made from: each by its versioned assembly
+accession, the node it sits at, and its role, `representative` (its sequence
+was in the alignment), `member` (placed through a representative, as
+dereplication folds it in) or `outgroup` (aligned, at no node). A genome whose
+name holds no accession is left out with a warning. CanSNPer2 does not read
+the file; CanSNPer2-data's `validate.py` checks it, and `audit` uses it, so
+that a published scheme carries what is needed to check it again.
+
 ## Starting from a genome tree
 
 A genome tree, such as RepGenR2's `tree/tree.nwk`, has a node for every split
@@ -230,7 +239,7 @@ modified.
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
 | masked | `--reference`, `--masks` | a SNP in a masked region, such as a recombinant one |
 | better SNPs | `--reference`, `--scores` | a node where a higher scoring passing canSNP is available, or one the scores do not cover |
-| genomes | `--reference`, `--alignment`, and `--genome-map` or `--tree` | the checks below |
+| genomes | `--reference`, `--alignment`, and `--genome-map`, `--tree` or the scheme's own genomes file | the checks below |
 
 The genome checks are the only ones that test what defines a canSNP. For each
 SNP of the scheme the audit reports genomes below the node without the derived

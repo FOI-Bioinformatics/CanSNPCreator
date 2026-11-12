@@ -164,6 +164,18 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     return records
 
 
+def fasta_ids(path: str) -> List[str]:
+    """The record IDs of a FASTA file, in order, without keeping the sequences."""
+    ids: List[str] = []
+    with open_text(path) as handle:
+        for line in handle:
+            if line.startswith(">"):
+                words = line[1:].split()
+                if words:
+                    ids.append(words[0])
+    return ids
+
+
 def read_alignment(alignment_file: str) -> Dict[str, str]:
     """
     Read a whole genome alignment, with the reference genome as its first record.
