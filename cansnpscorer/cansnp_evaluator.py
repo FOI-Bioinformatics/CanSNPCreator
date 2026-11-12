@@ -8,16 +8,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from cansnpscorer.helpers.data_utils import filter_scores_by_cutoff, summarize_scores
 from cansnpscorer.helpers.file_utils import (
-    extract_yaml_data,
+    ParsedSnp,
     gff_parser,
-    read_yaml_file,
+    read_hc_file,
     reference_parser,
     score_file_writer,
     snp_file_parser,
     trf_parser,
 )
 from cansnpscorer.helpers.scoring_methods import contexts_for, score_snp
-from cansnpscorer.model import Contig, Reference
+from cansnpscorer.hierarchy import HierarchyError
+from cansnpscorer.model import Contig, Reference, ReferenceError
 
 NUCLEOTIDES = frozenset("ACGT")
 
@@ -49,7 +50,7 @@ def annotations_by_contig(annotations: Dict[int, Sequence], reference: Reference
     }
 
 
-def locate_snps(snps: Sequence[Sequence], reference: Reference,
+def locate_snps(snps: Sequence[ParsedSnp], reference: Reference,
                 examples: int = 3) -> List[Tuple[Contig, int, str, Sequence[str]]]:
     """Place each SNP on a contig and check it against the reference base.
 
@@ -61,17 +62,28 @@ def locate_snps(snps: Sequence[Sequence], reference: Reference,
         ValueError: If any SNP falls outside the reference or disagrees with it.
     """
     located: List[Tuple[Contig, int, str, Sequence[str]]] = []
-    outside: List[int] = []
+    outside: List[str] = []
     disagreeing: List[str] = []
     unknown = 0
 
     for snp in snps:
-        position, node, alleles = snp[0], snp[1], tuple(snp[2:])
-        if not 0 <= position < reference.length:
-            outside.append(position)
-            continue
+        node, alleles = snp.node, tuple(snp.alleles)
 
-        contig, local_position = reference.locate(position)
+        if snp.contig is not None:
+            try:
+                contig = reference.contig(snp.contig)
+            except ReferenceError as error:
+                raise ValueError(str(error)) from None
+            local_position = snp.position - 1
+            if not 0 <= local_position < contig.length:
+                outside.append(f"{snp.contig}:{snp.position}")
+                continue
+        else:
+            if not 0 <= snp.global_position < reference.length:
+                outside.append(str(snp.global_position + 1))
+                continue
+            contig, local_position = reference.locate(snp.global_position)
+
         base = contig.base(local_position)
         if base not in NUCLEOTIDES:
             unknown += 1
@@ -83,8 +95,8 @@ def locate_snps(snps: Sequence[Sequence], reference: Reference,
 
     if outside:
         raise ValueError(
-            f"{len(outside)} SNPs fall outside the reference of {reference.length} bases, "
-            f"the first at position {outside[0] + 1}")
+            f"{len(outside)} SNPs fall outside the reference of {reference.length} bases "
+            f"over {len(reference)} contigs, the first at {outside[0]}")
     if disagreeing:
         raise ValueError(
             f"{len(disagreeing)} of {len(snps)} SNPs disagree with the reference genome: "
@@ -115,17 +127,9 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
         reference = reference_parser(reference_file)
         genes = annotations_by_contig(gff_parser(gff_file), reference, "GFF")
         repeats = annotations_by_contig(trf_parser(trf_file), reference, "TRF")
-    except (OSError, ValueError) as error:
-        logging.error(error)
-        return 1
-
-    if not snps:
-        logging.error(f"{snp_file} holds no SNPs")
-        return 1
-
-    try:
+        hierarchy = read_hc_file(hcfile)
         located = locate_snps(snps, reference)
-    except ValueError as error:
+    except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 
@@ -143,8 +147,7 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
     filtered = filter_scores_by_cutoff(scores, cutoff_value, top_n_snp)
     logging.info(f"{len(filtered)} canSNPs passed the cutoff of {cutoff_value}")
 
-    nodes = extract_yaml_data(read_yaml_file(hcfile))
-    summarize_scores(nodes, filtered)
+    summarize_scores(hierarchy.nodes, filtered)
 
     back_up_existing(output_file)
     score_file_writer(filtered, output_file)

@@ -1,6 +1,9 @@
+"""Extraction of canSNPs from a whole genome alignment."""
+
 import logging
 import os
 from datetime import datetime
+from typing import List
 
 from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
 from cansnpscorer.helpers.file_utils import (
@@ -9,47 +12,71 @@ from cansnpscorer.helpers.file_utils import (
     read_alignment,
     read_hc_file,
     recognize_group_file_format,
-    recognize_hc_file_format,
+    reference_parser,
 )
+from cansnpscorer.hierarchy import HierarchyError
+from cansnpscorer.model import AlignmentMap, ReferenceError
 
 
-def main(groupfile=None, hcfile=None, fastafile=None, output=None) -> int:
+def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output=None) -> int:
     """Extract canSNPs from an alignment. Returns a process exit status."""
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logging.info(f"Parameters: groupfile={groupfile}, hcfile={hcfile}, fastafile={fastafile}, output={output}")
+    logging.info(
+        f"Parameters: groupfile={groupfile}, hcfile={hcfile}, fastafile={fastafile}, "
+        f"referencefile={referencefile}, output={output}")
 
-    missing = [path for path in (groupfile, hcfile, fastafile) if not os.path.isfile(path)]
+    missing = [path for path in (groupfile, hcfile, fastafile, referencefile)
+               if not os.path.isfile(path)]
     if missing:
         logging.error(f"These input files do not exist: {', '.join(missing)}")
         return 1
 
-    # Check the format of the hc file
-    hc_format = recognize_hc_file_format(hcfile)
-
-    tree_data = read_hc_file(hcfile, hc_format)
-
-    # Parse hierarchical data from file
-    group_format = recognize_group_file_format(groupfile)
-
-    hc_parser_obj = HCParser(groupfile, data_format=group_format)
-    hc_data = hc_parser_obj.reader(tree_data)
-
-
-    # Parse the alignment, which must hold the reference as its first record
     try:
+        hierarchy = read_hc_file(hcfile)
+        clusters = HCParser(groupfile, data_format=recognize_group_file_format(groupfile)).isolates
+        isolates = hierarchy.isolates(clusters)
         alignment = read_alignment(fastafile)
-    except (OSError, ValueError) as error:
+        reference = reference_parser(referencefile)
+        # The alignment's reference row carries the aligner's gaps, so the
+        # column of a SNP is not its position in the reference genome.
+        mapping = AlignmentMap(next(iter(alignment.values())), reference)
+    except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 
-    # Extract SNPs
     snps = snp_extractor(alignment)
 
-    # ExtractCanSNPs
-    cansnps = canSNP_extractor(alignment, hc_data, snps)
+    try:
+        cansnps = canSNP_extractor(alignment, isolates, snps)
+    except ValueError as error:
+        logging.error(error)
+        return 1
 
-    # Write canSNPs to the output file
-    cansnp_file_writer(cansnps, output)
+    rows: List[List] = []
+    gapped = 0
+    for cansnp in cansnps:
+        placed = mapping.locate(cansnp.column)
+        if placed is None:
+            # The reference is gapped in this column, so the SNP has no
+            # position in the reference genome and no assay can target it.
+            gapped += 1
+            continue
+        contig, position = placed
+        bases = (cansnp.derived, cansnp.ancestral) if cansnp.is_canonical else cansnp.bases
+        rows.append([contig.name, position, cansnp.node or "None", *bases])
+
+    if gapped:
+        logging.warning(
+            f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
+
+    cansnp_file_writer(rows, output)
+
+    found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
+    without = sorted(set(hierarchy.nodes) - {cansnp.node for cansnp in cansnps if cansnp.node})
+    if without:
+        logging.warning(
+            f"{len(without)} of {len(hierarchy)} nodes have no canSNP: {', '.join(without)}")
+    logging.info(f"Wrote {len(rows)} SNPs, of which {found} are canonical")
 
     logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     return 0

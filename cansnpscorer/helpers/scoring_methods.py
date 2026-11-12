@@ -58,6 +58,15 @@ class SnpContext:
     """Tandem repeat intervals on this contig as (start, end), sorted by start."""
 
     @property
+    def derived(self) -> Optional[str]:
+        """The base carried below the node, when the polarity is known."""
+        return self.alleles[0] if self.alleles else None
+
+    @property
+    def ancestral(self) -> Optional[str]:
+        return self.alleles[1] if len(self.alleles) > 1 else None
+
+    @property
     def global_position(self) -> int:
         return self.contig.start + self.position
 
@@ -137,8 +146,9 @@ class ScoredSnp:
     """One scored SNP, addressed by contig and 1-based position."""
 
     HEADER = (
-        "Contig", "Position", "Group", "Score", "NeighborDistanceScore", "GCContentScore",
-        "TandemRepeatProximityScore", "GeneProximityScore", "MutationTypeScore",
+        "Contig", "Position", "Group", "Derived", "Ancestral", "Score",
+        "NeighborDistanceScore", "GCContentScore", "TandemRepeatProximityScore",
+        "GeneProximityScore", "MutationTypeScore",
     )
 
     contig: str
@@ -146,12 +156,13 @@ class ScoredSnp:
     node: str
     total: int
     terms: Dict[str, int]
-    alleles: Sequence[str] = ()
+    derived: Optional[str] = None
+    ancestral: Optional[str] = None
 
     def row(self) -> List:
         """The record as it is written to the score file, following HEADER."""
-        return [self.contig, self.position, self.node, self.total,
-                *(self.terms[term] for term in TERMS)]
+        return [self.contig, self.position, self.node, self.derived or "", self.ancestral or "",
+                self.total, *(self.terms[term] for term in TERMS)]
 
 
 def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
@@ -179,7 +190,8 @@ def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
         node=context.node,
         total=sum(terms.values()),
         terms=terms,
-        alleles=tuple(context.alleles),
+        derived=context.derived,
+        ancestral=context.ancestral,
     )
 
 

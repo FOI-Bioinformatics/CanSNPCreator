@@ -1,6 +1,7 @@
 import heapq
 import logging
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
@@ -214,72 +215,115 @@ def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, 
     logging.info(f"Extraction of {len(snps)} SNPs complete")
     return snps
 
-def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]], snps: List[Dict[str, Union[int, Dict[str, int]]]]) -> List[List[Union[str, int]]]:
+@dataclass
+class CanSnp:
+    """One variable column of the alignment, and the node it marks, if any.
+
+    ``derived`` is the base carried by every isolate below the node and by no
+    other genome, which is what makes the SNP canonical; ``ancestral`` is the
+    other base. They are only known for a canonical SNP, so both are None when
+    ``node`` is.
     """
-    Extract Canonical Single Nucleotide Polymorphisms (canSNPs) from genomic alignments.
+
+    column: int
+    bases: Tuple[str, ...]
+    node: Optional[str] = None
+    derived: Optional[str] = None
+    ancestral: Optional[str] = None
+    also_matched: Tuple[str, ...] = ()
+    """Further nodes separated by the same column, which makes it ambiguous."""
+
+    @property
+    def is_canonical(self) -> bool:
+        return self.node is not None
+
+
+def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
+                     snps: List[Dict[str, Union[int, Dict[str, int]]]]) -> List[CanSnp]:
+    """
+    Find which of the SNPs separate exactly the isolates below one node.
+
+    A SNP is canonical for a node when every isolate below that node carries
+    the same base and no genome outside it does. The base they carry is the
+    derived one, so the polarity of the SNP follows from the node it marks.
 
     Args:
-        alignment (Dict[str, str]): A dictionary where keys are sequence names and values are genomic sequences.
-        groups (Dict[str, List[str]]): A dictionary defining the groups of sequences.
-        snps (List[Dict[str, Union[int, Dict[str, int]]]]): A list of dictionaries, each containing 'index' and 'variants',
-                                                             representing the SNPs extracted from the genomic alignments.
+        alignment: The aligned sequences, keyed by name.
+        groups: The isolates below each node, which for an internal node means
+            the isolates of every leaf beneath it.
+        snps: The variable columns, as snp_extractor reports them.
 
     Returns:
-        List[List[Union[str, int]]]: A list containing the canonical SNPs. Each element is a list containing the SNP index,
-                                     the group it belongs to, and the variants present at that position.
+        One record per SNP, in the order given, canonical or not.
 
-    Example:
-        Return value might look like:
-        [
-            ['5', 'Group1', 'A', 'T'],
-            ['9', 'Group2', 'G', 'C'],
-            ...
-        ]
-
+    Raises:
+        ValueError: If a group names an isolate that the alignment does not hold,
+            which would otherwise be a KeyError part way through the run.
     """
-    logging.info("Starting canSNP extraction...")
-    total_snps = len(snps)
-    cansnps = []
+    logging.info(f"Looking for canSNPs among {len(snps)} SNPs over {len(groups)} nodes")
 
-    canSNP_count = 0  # Counter for the number of canSNPs
-    last_logged_percent = -1  # Initialize to an impossible value
+    wanted = {clean_name(isolate) for isolates in groups.values() for isolate in isolates}
+    missing = sorted(wanted - set(alignment))
+    if missing:
+        raise ValueError(
+            f"the group file names {len(missing)} isolates that the alignment does not hold: "
+            f"{', '.join(missing[:5])}")
 
-    for i, snp in enumerate(snps):
-        variant = snp['index']
-        frequencies = snp['variants']
-        cansnp = "None"
+    # Nodes with no isolates cannot be marked by any SNP. They are reported
+    # once here rather than silently never matching.
+    empty = sorted(node for node, isolates in groups.items() if not isolates)
+    if empty:
+        logging.warning(
+            f"{len(empty)} nodes have no isolates, so no canSNP can mark them: "
+            f"{', '.join(empty[:5])}")
 
-        for group in groups:
-            nucleotide = ""
-            frequency = 1
+    members = {
+        node: [clean_name(isolate) for isolate in isolates]
+        for node, isolates in groups.items() if isolates
+    }
 
-            for index, isolate in enumerate(groups[group]):
-                current = alignment[clean_name(isolate)][variant]
+    cansnps: List[CanSnp] = []
+    canonical = 0
+    ambiguous = 0
 
-                if index == 0:
-                    nucleotide = current
-                else:
-                    if nucleotide == current:
-                        frequency += 1
-                    else:
-                        break
-            else:
-                if frequency == frequencies.get(nucleotide, 0):
-                    cansnp = group
+    for snp in snps:
+        column = snp['index']
+        counts = snp['variants']
+        bases = tuple(counts)
 
-        cansnps.append([str(variant), cansnp] + list(frequencies.keys()))
+        matches: List[Tuple[str, str]] = []
+        for node, isolates in members.items():
+            shared = alignment[isolates[0]][column]
+            if any(alignment[isolate][column] != shared for isolate in isolates[1:]):
+                continue
+            if counts.get(shared, 0) == len(isolates):
+                matches.append((node, shared))
 
-        # Increment canSNP counter if cansnp is not "None"
-        if cansnp != "None":
-            canSNP_count += 1
+        if not matches:
+            cansnps.append(CanSnp(column=column, bases=bases))
+            continue
 
-        # Log progress every 10%
-        current_percent = int(((i + 1) / total_snps) * 100)
-        if current_percent >= last_logged_percent + 10:
-            logging.info(f"Writing progress: {current_percent}%")
-            last_logged_percent = current_percent  # Update the last logged percentage only when it changes
+        node, derived = matches[0]
+        other = [base for base in bases if base != derived]
+        cansnps.append(
+            CanSnp(
+                column=column,
+                bases=bases,
+                node=node,
+                derived=derived,
+                ancestral=other[0] if other else None,
+                also_matched=tuple(name for name, _base in matches[1:]),
+            )
+        )
+        canonical += 1
+        if len(matches) > 1:
+            ambiguous += 1
 
-    logging.info(f"CanSNP extraction complete. Total canSNPs extracted: {canSNP_count}")
+    if ambiguous:
+        logging.warning(
+            f"{ambiguous} canSNPs separate more than one node, because those nodes hold the "
+            "same isolates; each is reported against the first of them")
+    logging.info(f"Found {canonical} canSNPs")
 
     return cansnps
 

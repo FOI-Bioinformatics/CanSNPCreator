@@ -4,8 +4,8 @@ import json
 import logging
 import os.path
 import re
-import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from io import StringIO
 from operator import itemgetter
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 from ruamel.yaml import YAML
 
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
+from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 
 
@@ -44,78 +45,65 @@ def read_yaml_file(file: str) -> Union[Dict, None]:
     return None
 
 
-def read_hc_file(file_path: str, file_format: str) -> Optional[Dict]:
+def read_hc_file(file_path: str, file_format: Optional[str] = None) -> Hierarchy:
     """
-    Read and load data from a hierarchical clustering file which may be in YAML or repgenr format.
+    Read the hierarchy of a scheme, whichever of the supported shapes it is in.
 
     Parameters:
-        file_path (str): Path to the hierarchical clustering file.
-        file_format (str): The format of the file ('yaml' or 'repgenr_group').
+        file_path: Path to the hierarchy file.
+        file_format: One of 'yaml', 'json', 'newick' or 'repgenr'. Recognized
+            from the file itself when not given.
 
     Returns:
-        Optional[Dict]: Dictionary containing the loaded data, or None if an error occurs.
+        The hierarchy as a rooted tree.
+
+    Raises:
+        HierarchyError: If the format is not supported, or the file does not
+            describe a single rooted tree.
+        OSError: If the file cannot be read.
     """
+    if file_format is None:
+        file_format = recognize_hc_file_format(file_path)
+
+    logging.info(f"Reading the {file_format} hierarchy in {file_path}")
 
     if file_format == 'yaml':
-        logging.info(f"Attempting to read YAML data from {file_path}")
-        try:
-            yaml = YAML(typ='safe')
-            with open(file_path) as file:
-                yaml_data = next(yaml.load_all(file))
-            logging.info(f"Successfully read YAML data from {file_path}")
-            return yaml_data
-        except FileNotFoundError:
-            logging.error(f"File {file_path} not found")
-        except PermissionError:
-            logging.error(f"Permission denied: Cannot read {file_path}")
-        except Exception as e:
-            logging.error(f"Failed to read YAML data from {file_path}. Exception: {e}")
+        yaml = YAML(typ='safe')
+        with open(file_path) as handle:
+            documents = list(yaml.load_all(handle))
+        if not documents or documents[0] is None:
+            raise HierarchyError(f"{file_path}: holds no YAML document")
+        hierarchy = Hierarchy.from_nested(documents[0])
+
+    elif file_format == 'json':
+        with open(file_path) as handle:
+            hierarchy = Hierarchy.from_json(handle.read())
+
+    elif file_format == 'newick':
+        with open(file_path) as handle:
+            hierarchy = Hierarchy.from_newick(handle.read())
 
     elif file_format == 'repgenr':
-        logging.info(f"Attempting to read repgenr HC data from {file_path}")
-        try:
-            with open(file_path) as file:
-                reader = csv.DictReader(file, delimiter='\t')
-                hc_data = {row['child']: row['parent'] for row in reader}
-            logging.info(f"Successfully read repgenr HC data from {file_path}")
-            return hc_data
-        except FileNotFoundError:
-            logging.error(f"File {file_path} not found")
-        except PermissionError:
-            logging.error(f"Permission denied: Cannot read {file_path}")
-        except Exception as e:
-            logging.error(f"Failed to read repgenr HC data from {file_path}. Exception: {e}")
+        with open(file_path) as handle:
+            reader = csv.DictReader(handle, delimiter='\t')
+            if not reader.fieldnames or not {'child', 'parent'} <= set(reader.fieldnames):
+                raise HierarchyError(
+                    f"{file_path}: a repgenr hierarchy needs 'child' and 'parent' columns, "
+                    f"found {reader.fieldnames}")
+            pairs = [(row['child'], row['parent']) for row in reader if row.get('child')]
+        if not pairs:
+            raise HierarchyError(f"{file_path}: holds no hierarchy rows")
+        hierarchy = Hierarchy.from_child_parent(pairs)
 
     else:
-        logging.error(f"Unrecognized file format '{file_format}' provided for file: {file_path}")
-        return None
+        raise HierarchyError(
+            f"{file_path}: unsupported hierarchy format '{file_format}'; "
+            f"use YAML, JSON, Newick or the repgenr child and parent table")
 
-def extract_yaml_data(data, data_set=None):
-    """
-    Recursively extract all keys and values from a nested structure (dict or list)
-    and store them in a set. The set is then sorted and returned as a list.
-
-    Args:
-    - data (Union[dict, list]): The input data structure.
-    - data_set (set, optional): Set to store the keys and values. Defaults to an empty set.
-
-    Returns:
-    - list: A sorted list containing all unique keys and values from the data.
-    """
-    if data_set is None:
-        data_set = set()
-
-    if isinstance(data, dict):
-        for key, value in data.items():
-            data_set.add(key)
-            extract_yaml_data(value, data_set)
-    elif isinstance(data, list):
-        for item in data:
-            extract_yaml_data(item, data_set)
-    else:
-        data_set.add(data)
-
-    return sorted(data_set)
+    logging.info(
+        f"Read a hierarchy of {len(hierarchy)} nodes rooted at '{hierarchy.root}', "
+        f"with {len(hierarchy.leaves)} leaves")
+    return hierarchy
 
 
 def clean_name(name: str) -> str:
@@ -261,19 +249,22 @@ def read_alignment(alignment_file: str) -> Dict[str, str]:
 
 class HCParser:
     """
-    A class to handle hierarchical clustering data from CSV and YAML files.
+    The isolates of each cluster, read from a group file.
+
+    A group file names the leaves of the scheme and the isolates in each of
+    them. How those leaves nest is the hierarchy's business, and combining the
+    two is ``Hierarchy.isolates``.
     """
 
     def __init__(self, group_data: str, data_format: str = 'csv') -> None:
         """
-        Initialize the HCParser object.
+        Read a group file.
 
         Args:
-            group_data (str): The path to the file containing group and strain information.
-            data_format (str): The format of the group data ('csv' or 'repgenr_group').
+            group_data: The path to the file naming the clusters and their isolates.
+            data_format: 'csv' or 'repgenr_group'.
         """
-        logging.info(f"Initializing HCParser with data file: {group_data}")
-        self.dictionary: Dict[str, List[str]] = {}
+        logging.info(f"Reading the {data_format} group file {group_data}")
         self.group_label = "Group"
         self.strain_label = "Strain"
         self.isolates: Dict[str, List[str]] = {}
@@ -282,142 +273,155 @@ class HCParser:
         elif data_format == 'repgenr_group':
             self._repgenr_group_handler(group_data)
         else:
-            raise ValueError(f"Unknown data format: {data_format}")
+            raise ValueError(
+                f"unknown group file format '{data_format}'; use 'csv' or 'repgenr_group'")
+        logging.info(
+            f"Read {sum(len(names) for names in self.isolates.values())} isolates in "
+            f"{len(self.isolates)} clusters")
 
     def _repgenr_group_handler(self, repgenr_group_data_file: str) -> None:
         """
-        Process the repgenr_group data file and populate the 'isolates' dictionary.
-
-        Args:
-            repgenr_group_data_file (str): The path to the repgenr_group data file.
+        Read a repgenr group file, in which each row places one isolate in the
+        cluster of its representative.
         """
-        logging.info(f"Processing repgenr_group data file: {repgenr_group_data_file}")
         with open(repgenr_group_data_file) as file:
             reader = csv.DictReader(file, delimiter='\t')
+            required = {'representative', 'contained', 'is_self'}
+            if not reader.fieldnames or not required <= set(reader.fieldnames):
+                raise ValueError(
+                    f"{repgenr_group_data_file}: a repgenr group file needs the columns "
+                    f"{', '.join(sorted(required))}, found {reader.fieldnames}")
             for row in reader:
-                representative = row['representative'].replace('.fasta', '')
-                contained = row['contained'].replace('.fasta', '')
-                is_self = row['is_self'] == 'True'
-                if is_self:
-                    # If the row indicates that the strain is representative of itself, create a new group
-                    self.isolates[representative] = [contained]
-                else:
-                    # Otherwise, add the strain to the group of its representative
-                    self.isolates.setdefault(representative, []).append(contained)
-
+                # The representative names a cluster, which must read exactly as
+                # the hierarchy names it; the contained value names a genome,
+                # which must match the cleaned names of the alignment.
+                representative = row['representative'].strip()
+                contained = clean_name(row['contained'].replace('.fasta', ''))
+                self.isolates.setdefault(representative, [])
+                if contained not in self.isolates[representative]:
+                    self.isolates[representative].append(contained)
 
     def _group_handler(self, csv_file: str) -> None:
         """
-        Process the CSV file and populate the 'isolates' dictionary.
-
-        Args:
-            csv_file (str): The path to the CSV file.
+        Read a group file with Strain and Group columns, in either order.
         """
-        logging.info(f"Processing CSV file: {csv_file}")
         with open(csv_file) as csvfile:
             reader = csv.reader(csvfile)
             for index, row in enumerate(reader):
+                if not row:
+                    continue
                 if index == 0:
-                    if self.group_label in row and self.strain_label in row:
-                        self.group_index = row.index(self.group_label)
-                        self.strain_index = row.index(self.strain_label)
-                    else:
-                        logging.error("Group or Strain column not found in csv file. Exiting...")
-                        sys.exit(1)
-                else:
-                    group = row[self.group_index]
-                    strain = clean_name(row[self.strain_index])
-                    self.isolates.setdefault(group, []).append(strain)
-
-    def _dictionary_reader(self, yaml_data: Dict[str, Union[str, Dict]]) -> List[str]:
-        """
-        Recursively read YAML data and populate the 'dictionary'.
-
-        Args:
-            yaml_data (Dict): Dictionary containing YAML data.
-
-        Returns:
-            List[str]: A list of isolates.
-        """
-        isolates: List[str] = []
-        name = list(yaml_data.keys())[0]
-        items = list(yaml_data.values())[0]
-        for group in items:
-            if isinstance(group, dict):
-                isolates += self._dictionary_reader(group)
-            else:
-                group_isolate = self.isolates.get(group, [])
-                isolates += group_isolate
-                self.dictionary[group] = group_isolate
-
-        self.dictionary[name] = isolates
-        return isolates
-
-    def reader(self, lista: List[Union[str, Dict]]) -> Dict[str, List[str]]:
-        """
-        Read a list containing either strings or dictionaries and populate the 'dictionary'.
-
-        Args:
-            lista (List): The list containing either strings or dictionaries.
-
-        Returns:
-            Dict: The populated dictionary.
-        """
-        logging.info("Reading list to populate dictionary.")
-        for item in lista:
-            if isinstance(item, dict):
-                self._dictionary_reader(item)
-            else:
-                self.dictionary[item] = self.isolates.get(item, [])
-
-        return self.dictionary
+                    if self.group_label not in row or self.strain_label not in row:
+                        raise ValueError(
+                            f"{csv_file}: needs '{self.strain_label}' and '{self.group_label}' "
+                            f"columns, found {row}")
+                    self.group_index = row.index(self.group_label)
+                    self.strain_index = row.index(self.strain_label)
+                    continue
+                if len(row) <= max(self.group_index, self.strain_index):
+                    raise ValueError(
+                        f"{csv_file}: row {index + 1} has {len(row)} fields, too few to hold "
+                        f"both a strain and a group")
+                group = row[self.group_index].strip()
+                strain = clean_name(row[self.strain_index])
+                if not group or not strain:
+                    raise ValueError(
+                        f"{csv_file}: row {index + 1} leaves the strain or the group empty")
+                self.isolates.setdefault(group, []).append(strain)
 
 
-def snp_file_parser(snpfile: str) -> List[List[Union[int, str]]]:
+#: The columns of the SNP file the extractor writes.
+SNP_HEADER = ("contig", "position", "node", "derived_base", "ancestral_base")
+
+
+@dataclass
+class ParsedSnp:
+    """One row of a SNP file.
+
+    A SNP from the current format is addressed by contig and 1-based position.
+    One from the older format carries a position in the concatenated genome
+    instead, counted from zero, and no polarity.
     """
-    Parse a SNP file.
+
+    node: str
+    alleles: Tuple[str, ...]
+    contig: Optional[str] = None
+    position: Optional[int] = None
+    global_position: Optional[int] = None
+
+    @property
+    def derived(self) -> Optional[str]:
+        return self.alleles[0] if self.contig is not None and self.alleles else None
+
+    @property
+    def ancestral(self) -> Optional[str]:
+        return self.alleles[1] if self.contig is not None and len(self.alleles) > 1 else None
+
+
+def snp_file_parser(snpfile: str) -> List[ParsedSnp]:
+    """
+    Read a SNP file written by the extract subcommand.
+
+    Both the current tab separated format, which names the contig and gives a
+    1-based position, and the older space separated format, which gives a
+    position in the concatenated genome counted from zero, are accepted. The
+    older format is reported once as what it is, since its positions cannot be
+    checked against a contig and carry no polarity.
 
     Args:
-    snpfile (str): The path to the SNP file.
+        snpfile: The path to the SNP file.
 
     Returns:
-    List[List[Union[int, str]]]: A list of lists, where each inner list represents a line in the SNP file
-                                 and contains an integer representing the SNP position and a string for the variant.
+        The SNPs in file order.
 
     Raises:
-    FileNotFoundError: If the SNP file is not found.
-    PermissionError: If the permission to read the SNP file is denied.
+        ValueError: If the file holds no readable rows.
+        OSError: If the file cannot be read.
     """
+    logging.info(f"Reading SNPs from {snpfile}")
 
-    logging.info(f"Starting to parse SNP file: {snpfile}")
-    snps: List[List[Union[int, str]]] = []  # Explicitly mention the type for better readability
+    snps: List[ParsedSnp] = []
+    legacy = 0
+    unreadable = 0
 
-    try:
-        with open(snpfile) as snp_file:
-            for line_number, line in enumerate(snp_file, 1):  # Added line_number for better logging
-                line = line.strip()
-                if not line:
-                    logging.debug(f"Ignoring empty line at line {line_number}.")
-                    continue
-                if line.startswith("#"):
-                    logging.debug(f"Ignoring comment line at line {line_number}.")
-                    continue
+    with open(snpfile) as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
 
-                variants = line.split(" ")
-                try:
-                    variants[0] = int(variants[0])
-                    snps.append(variants)
-                except ValueError:
-                    logging.error(f"ValueError: Could not convert SNP {line} to an integer at line {line_number}. Ignoring SNP.")
+            if line.split("\t")[0:1] == [SNP_HEADER[0]]:
+                continue
 
-        logging.info(f"Successfully parsed {len(snps)} SNPs from {snpfile}.")
-        return snps
-    except FileNotFoundError:
-        logging.error(f"File {snpfile} not found.")
-        return []
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {snpfile}")
-        return []
+            fields = line.split("\t") if "\t" in line else line.split(" ")
+            fields = [field for field in fields if field]
+
+            try:
+                if "\t" in line:
+                    contig, position, node, *bases = fields
+                    snps.append(ParsedSnp(node=node, alleles=tuple(bases), contig=contig,
+                                          position=int(position)))
+                else:
+                    position, node, *bases = fields
+                    legacy += 1
+                    snps.append(ParsedSnp(node=node, alleles=tuple(bases),
+                                          global_position=int(position)))
+            except ValueError:
+                unreadable += 1
+                logging.error(f"{snpfile}: cannot read line {line_number}: {line}")
+
+    if unreadable:
+        logging.warning(f"Skipped {unreadable} unreadable rows in {snpfile}")
+    if legacy:
+        logging.warning(
+            f"{legacy} rows of {snpfile} are in the older format, which counts positions over "
+            "the whole genome from zero and records no derived or ancestral base. Re-run "
+            "extract to get positions by contig.")
+    if not snps:
+        raise ValueError(f"{snpfile}: holds no readable SNP rows")
+
+    logging.info(f"Read {len(snps)} SNPs from {snpfile}")
+    return snps
 
 def reference_parser(reference: str) -> Reference:
     """
@@ -562,35 +566,20 @@ def check_files_exist(files: List[str]) -> bool:
     logging.info("All specified files exist.")
     return True
 
-def cansnp_file_writer(cansnp_data: List[List[Union[str, int]]], output_filepath: str) -> None:
+def cansnp_file_writer(rows: Sequence[Sequence[Union[str, int]]], output_filepath: str) -> None:
     """
-    Write Canonical SNPs (canSNPs) data to an output file.
+    Write the extracted SNPs as a tab separated file with a header.
 
     Args:
-    cansnp_data: List of canSNP data, each represented as a list of strings or integers.
-    output_filepath: Path to the output file where the canSNP data will be saved.
-
-    Returns:
-    None
+        rows: One row per SNP, following SNP_HEADER.
+        output_filepath: Where to write the file.
     """
-    try:
-        logging.info(f"Starting to write canSNP data to {output_filepath}...")
+    logging.info(f"Writing {len(rows)} SNPs to {output_filepath}")
 
-        with open(output_filepath, 'w') as out_file:
-            for i, cansnp_entry in enumerate(cansnp_data):
-                formatted_entry = " ".join(map(str, cansnp_entry))
-                out_file.write(f"{formatted_entry}\n")
-
-                # Log progress every 10% if the data size is large enough
-                if len(cansnp_data) > 10000:
-                    current_percent = int(((i + 1) / len(cansnp_data)) * 100)
-                    if current_percent % 10 == 0:
-                        logging.info(f"Writing canSNP data progress: {current_percent}%")
-
-        logging.info(f"Successfully wrote {len(cansnp_data)} canSNP entries to {output_filepath}.")
-
-    except Exception as e:
-        logging.error(f"Failed to write canSNP data to {output_filepath}. Error: {str(e)}")
+    with open(output_filepath, 'w') as out_file:
+        out_file.write("\t".join(SNP_HEADER) + "\n")
+        for row in rows:
+            out_file.write("\t".join("" if field is None else str(field) for field in row) + "\n")
 
 def recognize_group_file_format(file_path: str) -> str:
     """
@@ -602,66 +591,63 @@ def recognize_group_file_format(file_path: str) -> str:
     Returns:
         str: The recognized file format ('csv' or 'repgenr_group').
     """
-    logging.basicConfig(level=logging.INFO)
-    try:
-        with open(file_path) as file:
-            lines: List[str] = [file.readline().strip() for _ in range(5)]  # Read the first 5 lines
-            header: str = lines[0]  # Typically the header should be the first line
+    with open(file_path) as file:
+        lines = [line.strip() for line in file.readlines()[:5]]
 
-            # Define headers for the formats
-            csv_header: str = 'Strain,Group'
-            repgenr_group_header: str = 'representative\tcontained\tis_self'
+    for line in lines:
+        if {'Strain', 'Group'} <= set(field.strip() for field in line.split(',')):
+            logging.info(f"{file_path} is a Strain and Group table")
+            return 'csv'
+        if {'representative', 'contained', 'is_self'} <= set(line.split('\t')):
+            logging.info(f"{file_path} is a repgenr group file")
+            return 'repgenr_group'
 
-            # Check if any of the first five lines starts with the expected headers
-            if any(line.startswith(csv_header) for line in lines):
-                logging.info(f"The file at '{file_path}' is recognized as CSV format.")
-                return 'csv'
-            elif any(line.startswith(repgenr_group_header) for line in lines):
-                logging.info(f"The file at '{file_path}' is recognized as repgenr_group format.")
-                return 'repgenr_group'
-            else:
-                raise ValueError(f"Unknown file format for file: {file_path}")
+    raise ValueError(
+        f"{file_path}: cannot tell which group file format this is; it needs either "
+        f"'Strain' and 'Group' columns separated by commas, or the repgenr columns "
+        f"'representative', 'contained' and 'is_self' separated by tabs")
 
-    except FileNotFoundError:
-        logging.error(f"The file at '{file_path}' was not found.")
-        raise
-    except Exception as e:
-        logging.error(f"An error occurred while trying to read the file: {e}")
-        raise
+def recognize_hc_file_format(file_path: str) -> str:
+    """
+    Recognize which of the supported hierarchy formats a file is in.
 
-def recognize_hc_file_format(file_path: str) -> Union[str, None]:
-    logging.info(f"Attempting to recognize the format of file: {file_path}")
+    The checks are ordered so that a format is only guessed once the more
+    specific ones have been ruled out: a repgenr table is recognized by its
+    columns, and a Newick string by its structure rather than by a stray
+    semicolon.
 
-    with open(file_path) as f:
-        first_line = f.readline().strip()  # Read the first line which should be the header
+    Returns:
+        'repgenr', 'json', 'newick' or 'yaml'.
 
-    # Check if the file is empty or only contains whitespace
-    if not first_line:
-        logging.warning("The file appears to be empty or only contains whitespace.")
-        return None
+    Raises:
+        HierarchyError: If the file is empty or matches none of them.
+    """
+    logging.info(f"Recognizing the format of {file_path}")
 
-    # Check if it's a Newick format
-    if ";" in first_line:
-        logging.info(f"The file {file_path} appears to be in Newick format.")
-        return "newick"
+    with open(file_path) as handle:
+        lines = [line.strip() for line in handle.readlines()[:20]]
 
-    # Check if it's a JSON format
-    if first_line.startswith("{") or first_line.startswith("["):
-        logging.info(f"The file {file_path} appears to be in JSON format.")
-        return "json"
+    content = [line for line in lines if line and not line.startswith("#")]
+    if not content:
+        raise HierarchyError(f"{file_path}: is empty, or holds only comments")
+    first_line = content[0]
 
-    # Check if it's a YAML format
-    if ":" in first_line and not first_line.startswith("#"):
-        logging.info(f"The file {file_path} appears to be in YAML format.")
-        return "yaml"
+    if "\t" in first_line and "child" in first_line and "parent" in first_line:
+        recognized = "repgenr"
+    elif first_line.startswith(("{", "[")):
+        recognized = "json"
+    elif ";" in "".join(content) and "(" in "".join(content):
+        recognized = "newick"
+    elif ":" in first_line or first_line.startswith("- "):
+        recognized = "yaml"
+    else:
+        raise HierarchyError(
+            f"{file_path}: cannot tell which hierarchy format this is from its first line "
+            f"'{first_line}'; supported are YAML, JSON, Newick and the repgenr child and "
+            f"parent table")
 
-    # Check if it's the repgenr HC format
-    if "child" in first_line and "parent" in first_line and "\t" in first_line:
-        logging.info(f"The file {file_path} appears to be in repgenr HC format.")
-        return "repgenr"
-
-    logging.warning(f"Unable to determine the format of the file {file_path}.")
-    return "unknown"
+    logging.info(f"{file_path} is in {recognized} format")
+    return recognized
 
 
 def convert_data(data: str, input_format: str, output_format: str) -> str:

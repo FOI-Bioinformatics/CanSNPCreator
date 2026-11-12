@@ -227,23 +227,40 @@ def dataset(tmp_path) -> Dataset:
 
 
 @pytest.fixture
-def cansnps(dataset):
-    """The extractor's output for the dataset: [position, node, base, base]."""
-    from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
-    from cansnpscorer.helpers.file_utils import HCParser, fasta_parser, read_hc_file
+def isolates_by_node(dataset):
+    """The isolates below each node of the dataset's hierarchy."""
+    from cansnpscorer.helpers.file_utils import HCParser, read_hc_file
 
-    alignment = fasta_parser(dataset.alignment, "dict")
-    snps = snp_extractor(alignment)
-    tree = read_hc_file(dataset.hc_yaml, "yaml")
-    groups = HCParser(dataset.groups_csv, data_format="csv").reader(tree)
-    return [
-        [int(position), node, *bases]
-        for position, node, *bases in canSNP_extractor(alignment, groups, snps)
-    ]
+    hierarchy = read_hc_file(dataset.hc_yaml)
+    return hierarchy.isolates(HCParser(dataset.groups_csv, data_format="csv").isolates)
 
 
 @pytest.fixture
-def scored(dataset, cansnps):
+def cansnps(dataset, isolates_by_node):
+    """The canSNPs of the dataset, keyed by alignment column."""
+    from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
+    from cansnpscorer.helpers.file_utils import read_alignment
+
+    alignment = read_alignment(dataset.alignment)
+    return canSNP_extractor(alignment, isolates_by_node, snp_extractor(alignment))
+
+
+@pytest.fixture
+def parsed_snps(dataset, cansnps):
+    """The canSNPs as the SNP file records them, by contig and 1-based position."""
+    from cansnpscorer.helpers.file_utils import ParsedSnp
+
+    parsed = []
+    for cansnp in cansnps:
+        contig, position = dataset.contig_of(cansnp.column)
+        bases = (cansnp.derived, cansnp.ancestral) if cansnp.is_canonical else cansnp.bases
+        parsed.append(ParsedSnp(node=cansnp.node or "None", alleles=tuple(bases),
+                                contig=contig, position=position))
+    return parsed
+
+
+@pytest.fixture
+def scored(dataset, parsed_snps):
     """The scored canSNPs of the dataset, as the evaluator computes them."""
     from cansnpscorer.cansnp_evaluator import annotations_by_contig, locate_snps
     from cansnpscorer.helpers.file_utils import gff_parser, reference_parser, trf_parser
@@ -252,5 +269,5 @@ def scored(dataset, cansnps):
     reference = reference_parser(dataset.reference)
     genes = annotations_by_contig(gff_parser(dataset.gff), reference, "GFF")
     repeats = annotations_by_contig(trf_parser(dataset.trf), reference, "TRF")
-    contexts = contexts_for(locate_snps(cansnps, reference), genes, repeats)
+    contexts = contexts_for(locate_snps(parsed_snps, reference), genes, repeats)
     return [score_snp(context) for context in contexts if context.node != "None"]

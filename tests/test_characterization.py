@@ -9,7 +9,6 @@ import pytest
 from conftest import CLUSTERS, GENOMES, INCONGRUENT, PLANTED, node_isolates
 
 from cansnpscorer.helpers.data_utils import (
-    canSNP_extractor,
     codon_comparer,
     codon_complement,
     filter_scores_by_cutoff,
@@ -24,7 +23,6 @@ from cansnpscorer.helpers.file_utils import (
     clean_name,
     fasta_parser,
     gff_parser,
-    read_hc_file,
     recognize_group_file_format,
     recognize_hc_file_format,
     score_file_writer,
@@ -89,25 +87,27 @@ def test_snp_extractor_finds_the_biallelic_columns(dataset):
     assert found == expected, "the tri-allelic and gapped columns must be left out"
 
 
-def test_cansnp_extractor_assigns_every_planted_node(dataset):
-    alignment = fasta_parser(dataset.alignment, "dict")
-    snps = snp_extractor(alignment)
-    tree = read_hc_file(dataset.hc_yaml, "yaml")
-    groups = HCParser(dataset.groups_csv, data_format="csv").reader(tree)
-
-    cansnps = canSNP_extractor(alignment, groups, snps)
-    assigned = {int(position): node for position, node, *_ in cansnps}
-
+def test_cansnp_extractor_assigns_every_planted_node(cansnps):
+    assigned = {cansnp.column: cansnp.node for cansnp in cansnps}
     for node, (column, _ancestral, _derived) in PLANTED.items():
         assert assigned[column] == node
-    assert assigned[INCONGRUENT[0]] == "None", "a SNP crossing two branches is not canonical"
+    assert assigned[INCONGRUENT[0]] is None, "a SNP crossing two branches is not canonical"
 
 
-def test_hierarchy_from_yaml_gives_internal_nodes_their_isolates(dataset):
-    tree = read_hc_file(dataset.hc_yaml, "yaml")
-    groups = HCParser(dataset.groups_csv, data_format="csv").reader(tree)
+def test_cansnp_extractor_records_the_polarity(cansnps):
+    # The base shared below the node is the derived one, which the extractor
+    # used to throw away by reporting the two bases in an arbitrary order.
+    planted = {column: (ancestral, derived) for column, ancestral, derived in PLANTED.values()}
+    for cansnp in cansnps:
+        if cansnp.column not in planted:
+            continue
+        ancestral, derived = planted[cansnp.column]
+        assert (cansnp.derived, cansnp.ancestral) == (derived, ancestral), cansnp.node
+
+
+def test_hierarchy_gives_internal_nodes_their_isolates(isolates_by_node):
     for node in ["root", "A", "B", "A.1", "A.2", "B.1", "B.2"]:
-        assert sorted(groups[node]) == sorted(node_isolates(node)), node
+        assert sorted(isolates_by_node[node]) == sorted(node_isolates(node)), node
 
 
 # -- scoring -----------------------------------------------------------------
@@ -182,14 +182,29 @@ def test_score_file_writer_columns(tmp_path, scored):
     score_file_writer(scored, output)
     lines = open(output).read().splitlines()
     assert lines[0] == (
-        "Contig,Position,Group,Score,NeighborDistanceScore,GCContentScore,"
+        "Contig,Position,Group,Derived,Ancestral,Score,NeighborDistanceScore,GCContentScore,"
         "TandemRepeatProximityScore,GeneProximityScore,MutationTypeScore"
     )
     assert len(lines) == len(scored) + 1
 
 
-def test_snp_file_parser_round_trips_the_extract_output(tmp_path):
+def test_snp_file_parser_reads_the_extract_output(tmp_path):
     path = str(tmp_path / "snps.txt")
     with open(path, "w") as handle:
-        handle.write("# a comment\n\n100 A.1 G C\n200 None T A\n")
-    assert snp_file_parser(path) == [[100, "A.1", "G", "C"], [200, "None", "T", "A"]]
+        handle.write("contig\tposition\tnode\tderived_base\tancestral_base\n"
+                     "# a comment\n\nc1\t100\tA.1\tG\tC\nc2\t200\tNone\tT\tA\n")
+    first, second = snp_file_parser(path)
+    assert (first.contig, first.position, first.node) == ("c1", 100, "A.1")
+    assert (first.derived, first.ancestral) == ("G", "C")
+    assert (second.contig, second.position, second.node) == ("c2", 200, "None")
+
+
+def test_snp_file_parser_still_reads_the_older_format(tmp_path):
+    # Positions over the whole genome counted from zero, and no polarity.
+    path = str(tmp_path / "old.txt")
+    with open(path, "w") as handle:
+        handle.write("100 A.1 G C\n200 None T A\n")
+    first, second = snp_file_parser(path)
+    assert (first.contig, first.global_position, first.node) == (None, 100, "A.1")
+    assert first.derived is None, "the older format records no polarity"
+    assert second.global_position == 200

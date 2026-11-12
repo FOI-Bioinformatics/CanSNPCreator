@@ -36,7 +36,12 @@ def main():
     parser_extract = subparsers.add_parser('extract', help='Extract canSNPs')
     parser_extract.add_argument("--groupfile", required=True, help="Path to the input group file containing genome data.")
     parser_extract.add_argument("--hcfile", required=True, help="Path to the input Hierarchical Clustering (HC) file.")
-    parser_extract.add_argument("--fastafile", required=True, help="Path to the input FASTA file containing sequence alignments.")
+    parser_extract.add_argument("--fastafile", required=True, help="Path to the input FASTA file containing sequence alignments. Its first record must be the reference genome.")
+    parser_extract.add_argument("--reference-file", required=True,
+                                help="Path to the reference genome in FASTA format, one record "
+                                     "per contig, in the order the alignment concatenates them. "
+                                     "It gives the contig names and boundaries that positions "
+                                     "are reported against.")
     parser_extract.add_argument("-o", "--output", required=True, help="Path to the output file where extracted SNPs and canSNPs will be saved.")
     parser_extract.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
@@ -85,7 +90,8 @@ def main():
 
     if args.command == 'extract':
         logging.info("Starting canSNP extraction")
-        return cansnp_extractor.main(args.groupfile, args.hcfile, args.fastafile, args.output)
+        return cansnp_extractor.main(args.groupfile, args.hcfile, args.fastafile,
+                                     args.reference_file, args.output)
     elif args.command == 'evaluate':
         logging.info("Starting canSNP evaluation")
         try:
