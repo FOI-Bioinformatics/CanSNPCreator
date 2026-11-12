@@ -5,6 +5,9 @@ scores them for how well they suit a typing assay, and writes the result as the
 source files of a [CanSNPer2](https://github.com/FOI-Bioinformatics/CanSNPer2)
 scheme.
 
+It also audits a scheme that already exists, reporting where it cannot be typed
+with and what would improve it.
+
 A canSNP is a substitution carried by every isolate below one node of a
 hierarchy and by no other genome, so it marks that branch. Given an alignment,
 a hierarchy and the clusters of isolates at its leaves, CanSNPCreator finds
@@ -135,13 +138,45 @@ A node with no canSNP refuses the scheme, because every node of a CanSNPer2
 scheme carries one. `--prune` leaves those nodes out instead, re-parenting
 their children to the nearest node that has one.
 
+### Audit an existing scheme
+
+```sh
+CanSNPCreator audit \
+    --scheme-dir path/to/CanSNPer2-data/source \
+    --organism francisella_tularensis \
+    --reference-file SCHUS4.2.fasta \
+    --output findings.tsv
+```
+
+Reads a published scheme back in and reports whether it should be extended or
+modified. CanSNPer2-data's own `validate.py` answers whether a scheme is well
+formed; this answers whether it can be typed with. The checks are:
+
+| Check | What it reports |
+| ----- | --------------- |
+| tree | a node under two parents, a node with no SNP, a node with two, a SNP naming a node the tree does not hold |
+| alleles | a base outside A, C, G and T, which can never be called derived; a derived base equal to the ancestral one; two nodes at one position |
+| references | a genome name with an underscore, a malformed accession, a SNP on a genome the references file does not hold |
+| callability | nodes with fewer than `--min-required-hits` SNPs on the path from the root, which CanSNPer2 cannot call |
+| spacing | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
+| reference base | with `--reference-file`, a position whose reference base is neither allele, and, when most of them are, a scheme whose coordinates were taken against another version of the assembly |
+| better SNPs | with `--score-file` and `--reference-file`, a node where a higher scoring candidate is available, or one the score file does not cover |
+
+Each finding is a problem, which makes part of the scheme wrong or impossible
+to type, or a recommendation, which leaves it usable. Each also carries the
+action it asks for: `modify` an existing SNP, `extend` the scheme with SNPs it
+does not have, or `check` something the tool cannot settle itself. A problem
+exits 2, a recommendation exits 0 unless `--strict` is given, which is what to
+use in continuous integration. `--output` writes the findings as a tab
+separated file as well as logging them.
+
 ## Exit status
 
 | Status | Meaning |
 | ------ | ------- |
 | 0 | finished, output written |
 | 1 | a file could not be read, or an input is not usable |
-| 2 | the inputs are inconsistent with one another, or no subcommand was given; nothing was written |
+| 2 | the inputs are inconsistent with one another, the audited scheme holds a problem, or no subcommand was given; nothing was written |
 
 `--log-level DEBUG` reports more, `--log-level WARNING` only what went wrong.
 
@@ -158,6 +193,10 @@ two-contig reference, a node whose clusters hold two isolates each, a SNP
 crossing two branches, a tri-allelic column and a gapped one, and check that
 the planted canSNPs are recovered at the planted coordinates with the planted
 polarity. CI runs them on Python 3.9, 3.11 and 3.13.
+
+Two tests use the CanSNPer2-data repository when it is checked out beside this
+one, and are skipped otherwise: one runs that repository's `validate.py` over
+an exported scheme, the other audits its published schemes.
 
 ## Contributing
 

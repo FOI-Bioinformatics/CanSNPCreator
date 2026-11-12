@@ -4,11 +4,13 @@ import sys
 
 from cansnpscorer import (
     __version__,
+    cansnp_audit,
     cansnp_evaluator,
     cansnp_export,
     cansnp_extractor,
     cansnp_trf,
 )
+from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, TERMS
 
 
@@ -108,6 +110,41 @@ def main():
                                     "node that has one.")
     parser_export.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
 
+    # Create the parser for the "audit" command
+    parser_audit = subparsers.add_parser(
+        'audit', help="Examine an existing CanSNPer2-data scheme and report whether it should "
+                      "be extended or modified.")
+    parser_audit.add_argument("--scheme-dir", required=True,
+                              help="The directory holding a scheme's three source files, as in "
+                                   "the source directory of CanSNPer2-data.")
+    parser_audit.add_argument("--organism", default=None,
+                              help="Which scheme to read, as in francisella_tularensis. It may "
+                                   "be left out when the directory holds one scheme.")
+    parser_audit.add_argument("--reference-file", default=None,
+                              help="The reference genome the scheme is annotated against, in "
+                                   "FASTA format. With it, the base at every position is checked "
+                                   "against the two alleles, which is the direct test for "
+                                   "positions taken against another version of the assembly.")
+    parser_audit.add_argument("--score-file", default=None,
+                              help="A score file from the evaluate subcommand, to report where a "
+                                   "better scoring canSNP is available. Needs --reference-file.")
+    parser_audit.add_argument("--genome", default=None,
+                              help="Which of the scheme's reference genomes the reference file "
+                                   "holds. Needed only when the scheme names more than one.")
+    parser_audit.add_argument("--min-required-hits", type=int, default=MINIMUM_SNPS_PER_NODE,
+                              help=f"The number of SNPs CanSNPer2 requires on the path to a node "
+                                   f"before it calls it. Default: {MINIMUM_SNPS_PER_NODE}, as "
+                                   f"CanSNPer2 itself uses.")
+    parser_audit.add_argument("--proximity", type=int, default=50,
+                              help="Report two canSNPs closer than this many bases, since a "
+                                   "neighbouring SNP falls inside an assay. Default: 50.")
+    parser_audit.add_argument("-o", "--output", default=None,
+                              help="Write the findings to this tab separated file as well.")
+    parser_audit.add_argument("--strict", action="store_true",
+                              help="Exit 2 for a recommendation as well as for a problem, for "
+                                   "use in continuous integration.")
+    parser_audit.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+
     # Create the parser for the "trf" command
     parser_trf = subparsers.add_parser('trf', help='Perform TRF on canSNPs')
     parser_trf.add_argument('--input', required=True, help='Input file for TRF')
@@ -148,6 +185,11 @@ def main():
             args.score_file, args.hcfile, args.reference_file, args.outdir, args.organism,
             args.genome, args.strain, args.reference_label, args.genbank_id, args.refseq_id,
             args.assembly_name, args.prune)
+    elif args.command == 'audit':
+        logging.info("Auditing the scheme")
+        return cansnp_audit.main(
+            args.scheme_dir, args.organism, args.reference_file, args.score_file, args.genome,
+            args.min_required_hits, args.proximity, args.output, args.strict)
     elif args.command == 'trf':
         logging.info("Starting canSNP TRF")
         return cansnp_trf.run_trf(
