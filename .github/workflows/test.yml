@@ -28,8 +28,5 @@ jobs:
       - name: Test
         run: python -m pytest tests -v
 
-      # The legacy modules still carry dead code and undefined names, which the
-      # cleanup phase removes. Drop continue-on-error once that is done.
       - name: Lint
-        continue-on-error: true
         run: python -m ruff check cansnpscorer tests

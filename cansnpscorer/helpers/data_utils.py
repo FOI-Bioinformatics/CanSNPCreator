@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
+from cansnpscorer.helpers.names import clean_name
 
 #: CanSNPer2 calls a node only when at least this many SNPs on its path are
 #: seen, which is its --min_required_hits default.
@@ -148,19 +149,6 @@ def codon_complement(codon: str) -> str:
     """
     translation = {"A": "T", "T": "A", "C": "G", "G": "C"}
     return "".join([translation[nucleotide] for nucleotide in codon])
-
-
-def clean_name(name: str) -> str:
-    """
-    Cleans the input name by removing all non-alphanumeric characters.
-
-    Args:
-        name (str): The original name string that may contain non-alphanumeric characters.
-
-    Returns:
-        str: The cleaned name containing only alphanumeric characters.
-    """
-    return ''.join(filter(str.isalnum, name))
 
 
 def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, int]]]]:
