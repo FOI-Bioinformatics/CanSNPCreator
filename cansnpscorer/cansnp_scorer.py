@@ -106,9 +106,13 @@ def main():
     evaluate.add_argument("--genes", required=True, metavar="GFF3",
                           help="The reference's genes in GFF3; CDS features give the reading "
                                "frame, gene and CDS features say whether a SNP is in a gene.")
-    evaluate.add_argument("--repeats", required=True,
-                          help="The reference's tandem repeats, as the trf subcommand writes "
-                               "them.")
+    evaluate.add_argument("--repeats", required=True, metavar="BED",
+                          help="The reference's tandem repeats, in BED as the trf subcommand "
+                               "writes them, or in GFF3.")
+    evaluate.add_argument("--masks", default=None, metavar="BED",
+                          help="Regions to mask, such as the recombinant regions Gubbins "
+                               "reports, in BED or GFF3. A canSNP in one is kept with "
+                               "FILTER=Masked.")
     add_hierarchy(evaluate, required=False,
                   purpose="With it, the nodes left without a canSNP are reported.")
     evaluate.add_argument("-o", "--output", required=True, help="The scored canSNPs to write.")
@@ -177,6 +181,9 @@ def main():
     audit.add_argument("--genome", default=None,
                        help="Which of the scheme's reference genomes --reference holds, when "
                             "the scheme names more than one.")
+    audit.add_argument("--masks", default=None, metavar="BED",
+                       help="Regions to mask, such as recombinant ones, in BED or GFF3: SNPs "
+                            "of the scheme in them are reported. Needs --reference.")
     audit.add_argument("--min-required-hits", type=int, default=MINIMUM_SNPS_PER_NODE,
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
@@ -260,7 +267,8 @@ def main():
     # trf
     trf = subparsers.add_parser("trf", help="Find the tandem repeats of the reference genome.")
     add_reference(trf)
-    trf.add_argument("-o", "--output", required=True, help="The repeats to write.")
+    trf.add_argument("-o", "--output", required=True, metavar="BED",
+                     help="The repeats to write, as BED.")
     trf.add_argument("--match", type=int, default=2, help="Matching weight. Default: 2.")
     trf.add_argument("--mismatch", type=int, default=7, help="Mismatch penalty. Default: 7.")
     trf.add_argument("--delta", type=int, default=7, help="Indel penalty. Default: 7.")
@@ -289,7 +297,7 @@ def main():
             snps=args.snps, reference=args.reference, genes=args.genes, repeats=args.repeats,
             hierarchy=args.hierarchy, output=args.output, tandem_limit=args.tandem_limit,
             gene_limit=args.gene_limit, gc_goal=args.gc_goal, cutoff=args.cutoff,
-            top_n=args.top_n, weights=weights)
+            top_n=args.top_n, weights=weights, masks=args.masks)
     if args.command == "export":
         return cansnp_export.main(
             scores=args.scores, hierarchy=args.hierarchy, reference=args.reference,
@@ -303,7 +311,7 @@ def main():
             proximity=args.proximity, output=args.output, strict=args.strict,
             alignment=args.alignment, genome_map=args.genome_map,
             min_clade_size=args.min_clade_size, min_clade_snps=args.min_clade_snps,
-            tree=args.tree, members=args.members)
+            tree=args.tree, members=args.members, masks=args.masks)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,

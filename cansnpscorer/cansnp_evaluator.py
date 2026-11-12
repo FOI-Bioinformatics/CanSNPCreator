@@ -3,6 +3,7 @@
 import logging
 import os
 import shutil
+from bisect import bisect_right
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -11,8 +12,8 @@ from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
 from cansnpscorer.helpers.file_utils import (
     read_gff3,
     read_hierarchy,
+    read_intervals,
     reference_parser,
-    trf_parser,
 )
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, contexts_for, score_snp
 from cansnpscorer.hierarchy import HierarchyError
@@ -105,9 +106,15 @@ def back_up_existing(output: str) -> None:
     logging.warning(f"{output} already existed; copied it to {backup_name}")
 
 
+def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
+    """Whether a 0-based position lies in one of these sorted, joined regions."""
+    index = bisect_right(regions, (position, float("inf"))) - 1
+    return index >= 0 and regions[index][0] <= position <= regions[index][1]
+
+
 def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
-         weights: Optional[Dict[str, float]] = None) -> int:
+         weights: Optional[Dict[str, float]] = None, masks=None) -> int:
     """Score the canSNPs extract found. Returns a process exit status."""
     weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
     try:
@@ -116,7 +123,8 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         model = read_gff3(genes)
         gene_intervals = annotations_by_contig(model.genes, genome, "gene")
         cds = annotations_by_contig(model.cds, genome, "CDS") if model.cds else {}
-        repeat_intervals = annotations_by_contig(trf_parser(repeats), genome, "repeat")
+        repeat_intervals = annotations_by_contig(read_intervals(repeats), genome, "repeat")
+        masked = annotations_by_contig(read_intervals(masks), genome, "mask") if masks else {}
         tree = read_hierarchy(hierarchy) if hierarchy else None
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
@@ -146,6 +154,13 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         for context in contexts
         if context.node != "None"
     ]
+    # A canSNP in a masked region, such as a recombinant one, is marked before
+    # the others are ranked, so that it does not take a place among the best.
+    for score in scores:
+        if in_regions(score.position - 1, masked.get(score.contig, [])):
+            score.filters.append("Masked")
+    if masked:
+        logging.info(f"{sum('Masked' in s.filters for s in scores)} canSNPs lie in masked regions")
     apply_filters(scores, cutoff, top_n)
     passing = [score for score in scores if score.passed]
     logging.info(

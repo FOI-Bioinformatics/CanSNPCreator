@@ -43,7 +43,7 @@ def scheme(dataset, tmp_path):
                    "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", snp_file) == 0
     assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.trf,
+                   "--genes", dataset.gff, "--repeats", dataset.repeats,
                    "--hierarchy", dataset.hierarchy, "-o", scores,
                    "--cutoff", "0") == 0
     return scores, str(tmp_path / "scheme")

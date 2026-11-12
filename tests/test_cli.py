@@ -35,7 +35,7 @@ def evaluate(monkeypatch, dataset, snp_file, output, *extra):
         "--snps", snp_file,
         "--reference", dataset.reference,
         "--genes", dataset.gff,
-        "--repeats", dataset.trf,
+        "--repeats", dataset.repeats,
         "--hierarchy", dataset.hierarchy,
         "-o", output,
         "--cutoff", "0",
@@ -200,3 +200,27 @@ def test_weighting_the_gene_term_once_lowers_the_total(monkeypatch, dataset, tmp
     for node, total in totals(plain).items():
         assert total <= totals(doubled)[node]
     assert totals(plain) != totals(doubled)
+
+
+def test_a_canSNP_in_a_masked_region_is_kept_with_a_filter(monkeypatch, dataset, tmp_path):
+    # Mask the region holding A.1's canSNP, as Gubbins would report a
+    # recombinant region.
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
+    column = PLANTED["A.1"][0]
+    masks = tmp_path / "recombination.bed"
+    masks.write_text(f"c1\t{column - 10}\t{column + 10}\n")
+    assert extract(monkeypatch, dataset, snp_file) == 0
+    assert evaluate(monkeypatch, dataset, snp_file, scores, "--masks", str(masks)) == 0
+    filters = {record.node: record.filters for record in vcf_records(scores)}
+    assert filters["A.1"] == ["Masked"]
+    assert all(not found for node, found in filters.items() if node != "A.1")
+
+
+def test_masks_on_another_genome_are_refused(monkeypatch, dataset, tmp_path):
+    snp_file = str(tmp_path / "snps.vcf")
+    masks = tmp_path / "masks.bed"
+    masks.write_text("NC_000001.1\t0\t10\n")
+    assert extract(monkeypatch, dataset, snp_file) == 0
+    assert evaluate(monkeypatch, dataset, snp_file, str(tmp_path / "s.vcf"),
+                    "--masks", str(masks)) == 1

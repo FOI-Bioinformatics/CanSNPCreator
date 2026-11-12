@@ -18,11 +18,7 @@ from cansnpscorer.helpers.data_utils import (
     snp_extractor,
     summarize_scores,
 )
-from cansnpscorer.helpers.file_utils import (
-    read_alignment,
-    read_gff3,
-    trf_parser,
-)
+from cansnpscorer.helpers.file_utils import read_alignment, read_gff3, read_intervals
 from cansnpscorer.helpers.genetic_code import codon_table
 from cansnpscorer.helpers.names import clean_name
 from cansnpscorer.helpers.scoring_methods import MAXIMUM_SCORE, TERMS, ScoredSnp
@@ -48,10 +44,10 @@ def test_gff3_genes_and_cds_are_read_per_sequence_zero_based(dataset):
     assert model.cds["c1"] == [(150, 449, "+", 0), (550, 649, "-", 0)]
 
 
-def test_trf_parser_reports_intervals_per_sequence_zero_based(dataset):
-    # TRF reports 1-based positions, as a GFF does, and both are read into the
-    # same 0-based inclusive intervals; they used to differ by one.
-    assert trf_parser(dataset.trf) == {"c1": [(59, 94)], "c2": [(119, 159)]}
+def test_bed_regions_are_read_per_sequence_zero_based(dataset):
+    # BED is 0-based and half open; the regions are held 0-based and inclusive,
+    # as the GFF3 genes are.
+    assert read_intervals(dataset.repeats) == {"c1": [(59, 94)], "c2": [(119, 159)]}
 
 
 # -- extraction --------------------------------------------------------------

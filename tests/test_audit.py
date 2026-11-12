@@ -294,3 +294,15 @@ def test_a_published_scheme_reads_without_a_problem(organism):
     assert len(scheme.snps) == len(scheme.nodes)
     structural = [finding for finding in audit_scheme(scheme) if finding.severity == PROBLEM]
     assert structural == []
+
+
+def test_a_scheme_snp_in_a_masked_region_is_reported(written, dataset, tmp_path):
+    outdir, _scores = written
+    masks = tmp_path / "masks.bed"
+    masks.write_text("c1\t395\t405\n")  # holds A.1's SNP at c1:401
+    report = tmp_path / "findings.tsv"
+    assert audit_main(outdir, reference=dataset.reference, masks=str(masks),
+                      output=str(report)) == 0
+    masked = [line for line in report.read_text().splitlines() if "\tmasked\t" in line]
+    assert len(masked) == 1 and "\tA.1\t" in masked[0]
+    assert audit_main(outdir, masks=str(masks)) == 1, "masks need the reference"

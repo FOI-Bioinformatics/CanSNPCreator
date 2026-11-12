@@ -331,54 +331,79 @@ def read_gff3(gff_file: str) -> GeneModel:
     return GeneModel(genes=genes, cds=cds)
 
 
-def trf_parser(trf_file_path: str) -> Dict[str, List[Tuple[int, int]]]:
-    """
-    Read the tandem repeats of a Tandem Repeats Finder -ngs file.
+def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Sort intervals and join those that overlap or touch."""
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
-    Args:
-        trf_file_path: The path to the TRF output.
+
+def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
+    """
+    Read regions of the reference from BED or GFF3: tandem repeats, or regions
+    to mask such as the recombinant regions Gubbins reports.
+
+    A file whose first line is a ##gff-version directive is GFF3, and every
+    feature in it is a region, 1-based and inclusive. Anything else is BED:
+    chrom, start and end in the first three tab separated columns, 0-based and
+    half open, with track, browser and '#' lines skipped. Sequences are named
+    exactly as the reference FASTA's IDs name them.
 
     Returns:
-        Repeat intervals per sequence as (start, end), 0-based and inclusive,
-        sorted by start. TRF reports them 1-based, as a GFF does.
+        The regions per sequence as (start, end), 0-based and inclusive,
+        sorted, with overlapping regions joined.
 
     Raises:
+        ValueError: If a line is not a well formed region.
         OSError: If the file cannot be read.
     """
-    logging.info(f"Reading tandem repeats from {trf_file_path}")
-    intervals: Dict[str, List[Tuple[int, int]]] = {}
-    sequence: Optional[str] = None
-    orphaned = 0
+    regions: Dict[str, List[Tuple[int, int]]] = {}
+    with open(path, newline="") as handle:
+        lines = [line.rstrip("\r\n") for line in handle]
+    content = [line for line in lines if line.strip()]
+    is_gff = bool(content) and content[0].startswith("##gff-version")
 
-    with open(trf_file_path) as trf_file:
-        for line in trf_file:
-            line = line.strip()
-            if not line:
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        if is_gff:
+            if line.startswith("##FASTA"):
+                break
+            if line.startswith("#"):
                 continue
-            if line.startswith("@"):
-                sequence = line[1:].split()[0] if line[1:].split() else None
-                if sequence:
-                    intervals.setdefault(sequence, [])
-                continue
-
-            fields = line.split()
+            fields = line.split("\t")
+            if len(fields) != 9:
+                raise ValueError(
+                    f"{path}: line {number} holds {len(fields)} tab separated columns where "
+                    f"GFF3 has 9")
+            sequence, first, last = fields[0], fields[3], fields[4]
             try:
-                start, end = int(fields[0]) - 1, int(fields[1]) - 1
-            except (IndexError, ValueError):
+                start, end = int(first) - 1, int(last) - 1
+            except ValueError:
+                raise ValueError(f"{path}: line {number} has no readable start and end") from None
+        else:
+            if line.startswith(("#", "track", "browser")):
                 continue
-            if sequence is None:
-                orphaned += 1
-                continue
-            intervals[sequence].append((start, end) if start <= end else (end, start))
+            fields = line.split("\t")
+            if len(fields) < 3:
+                raise ValueError(
+                    f"{path}: line {number} holds {len(fields)} tab separated columns where BED "
+                    f"has at least 3")
+            sequence = fields[0]
+            try:
+                start, end = int(fields[1]), int(fields[2]) - 1
+            except ValueError:
+                raise ValueError(f"{path}: line {number} has no readable start and end") from None
+        if start < 0 or end < start:
+            raise ValueError(f"{path}: line {number} has an impossible interval")
+        regions.setdefault(sequence, []).append((start, end))
 
-    for name in intervals:
-        intervals[name].sort(key=itemgetter(0))
-
-    if orphaned:
-        logging.warning(
-            f"{trf_file_path}: {orphaned} repeats appear before any sequence header and were "
-            "left out")
+    merged = {sequence: merge_intervals(found) for sequence, found in regions.items()}
     logging.info(
-        f"Read {sum(len(found) for found in intervals.values())} repeats over "
-        f"{len(intervals)} sequences from {trf_file_path}")
-    return intervals
+        f"Read {sum(len(found) for found in merged.values())} regions over {len(merged)} "
+        f"sequences from {path}, as {'GFF3' if is_gff else 'BED'}")
+    return merged

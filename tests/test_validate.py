@@ -128,28 +128,86 @@ def test_report_says_whether_the_run_may_go_ahead():
 
 def test_a_missing_trf_binary_is_reported(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(cansnp_trf.shutil, "which", lambda name: None)
-    assert cansnp_trf.run_trf("in.fasta", str(tmp_path / "out.trf")) == 1
+    assert cansnp_trf.run_trf("in.fasta", str(tmp_path / "out.bed")) == 1
     assert "is not on the PATH" in caplog.text
 
 
-def test_a_failing_trf_run_is_reported(monkeypatch, tmp_path, caplog):
+NGS = """@c1 Testus organismus c1, complete sequence
+60 95 4 9.0 4 90 0 50 25 25 25 25 1.9 ACGT ACGTACGTACGT
+10 20 2 5.5 2 100 0 22 50 50 0 0 1.0 AC ACACACACACA
+@c2 plasmid
+120 160 8 5.1 8 85 5 40 25 25 25 25 2.0 ACGTACGT ACGTACGTACGT
+"""
+
+
+def fake_trf(monkeypatch, tmp_path, output=NGS, status=0):
+    """A trf on the PATH that prints this output and exits with this status."""
+    import stat
+    import sys
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "trf"
+    script.write_text(f"#!{sys.executable}\nimport sys\n"
+                      f"sys.stdout.write({output!r})\n"
+                      f"sys.stderr.write('trf: cannot read the input' if {status} else '')\n"
+                      f"sys.exit({status})\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}:" + __import__("os").environ["PATH"])
+
+
+def test_trf_output_is_written_as_bed(monkeypatch, tmp_path):
+    fake_trf(monkeypatch, tmp_path)
+    output = tmp_path / "repeats.bed"
+    assert cansnp_trf.run_trf("in.fasta", str(output)) == 0
+    # 0-based and half open, sorted within each sequence, named by the ID alone.
+    assert output.read_text().splitlines() == [
+        "c1\t9\t20\tperiod=2,copies=5.5",
+        "c1\t59\t95\tperiod=4,copies=9.0",
+        "c2\t119\t160\tperiod=8,copies=5.1",
+    ]
+
+
+def test_a_failing_trf_run_writes_nothing(monkeypatch, tmp_path, caplog):
     # A non-zero exit used to be ignored, leaving an empty report that the
     # evaluator then read as a genome with no repeats anywhere.
-    class Completed:
-        returncode = 1
-        stderr = "trf: cannot read the input"
-
-    monkeypatch.setattr(cansnp_trf.shutil, "which", lambda name: "/usr/bin/trf")
-    monkeypatch.setattr(cansnp_trf.subprocess, "run", lambda *a, **k: Completed())
-    assert cansnp_trf.run_trf("in.fasta", str(tmp_path / "out.trf")) == 1
-    assert "must not be used" in caplog.text
+    fake_trf(monkeypatch, tmp_path, output="", status=1)
+    output = tmp_path / "repeats.bed"
+    assert cansnp_trf.run_trf("in.fasta", str(output)) == 1
+    assert "nothing was written" in caplog.text and "cannot read the input" in caplog.text
+    assert not output.exists()
 
 
-def test_a_successful_trf_run_reports_success(monkeypatch, tmp_path):
-    class Completed:
-        returncode = 0
-        stderr = ""
+def test_a_repeat_before_any_sequence_is_refused():
+    import pytest
 
-    monkeypatch.setattr(cansnp_trf.shutil, "which", lambda name: "/usr/bin/trf")
-    monkeypatch.setattr(cansnp_trf.subprocess, "run", lambda *a, **k: Completed())
-    assert cansnp_trf.run_trf("in.fasta", str(tmp_path / "out.trf")) == 0
+    with pytest.raises(ValueError, match="before any sequence"):
+        cansnp_trf.parse_ngs("60 95 4 9.0\n")
+
+
+# -- regions in BED and GFF3 ---------------------------------------------------
+
+
+def test_bed_and_gff3_regions_are_read_alike(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_intervals
+
+    bed = tmp_path / "r.bed"
+    bed.write_text("track name=repeats\n# comment\nc1\t9\t20\tx\nc1\t15\t30\ty\nc2\t0\t5\n")
+    gff = tmp_path / "r.gff"
+    gff.write_text("##gff-version 3\nc1\tGubbins\tCDS\t10\t20\t.\t+\t0\tID=a\n"
+                   "c1\tGubbins\tCDS\t16\t30\t.\t+\t0\tID=b\nc2\tGubbins\tx\t1\t5\t.\t.\t.\t.\n")
+    # Overlapping regions are joined, so a position is in a region or not.
+    expected = {"c1": [(9, 29)], "c2": [(0, 4)]}
+    assert read_intervals(str(bed)) == expected
+    assert read_intervals(str(gff)) == expected
+
+
+def test_a_malformed_region_is_refused(tmp_path):
+    import pytest
+
+    from cansnpscorer.helpers.file_utils import read_intervals
+
+    bed = tmp_path / "r.bed"
+    bed.write_text("c1\t20\t10\n")
+    with pytest.raises(ValueError, match="impossible interval"):
+        read_intervals(str(bed))

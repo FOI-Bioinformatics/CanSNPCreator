@@ -353,7 +353,7 @@ def apply_filters(scores, cutoff, top=None):
     if top is not None:
         by_node = defaultdict(list)
         for position, score in enumerate(scores):
-            if not score.filters:
+            if not score.filters:  # neither LowScore nor Masked
                 # A min-heap, so the totals are negated to pop the best first; the
                 # position breaks ties without comparing the scores themselves.
                 heapq.heappush(by_node[score.node], (-score.total, position, score))

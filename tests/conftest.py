@@ -61,7 +61,7 @@ GENES = [
     ("c1", 551, 650, "-"),
     ("c2", 11, 200, "+"),
 ]
-# Tandem repeats as TRF -ngs reports them: 1-based, local to the contig.
+# Tandem repeats: 1-based and inclusive, local to the contig.
 REPEATS = [("c1", 60, 95), ("c2", 120, 160)]
 
 
@@ -121,7 +121,7 @@ class Dataset:
     hierarchy_newick: str
     genome_map: str
     gff: str
-    trf: str
+    repeats: str
     sequences: Dict[str, str] = field(default_factory=dict)
 
     def planted(self) -> Dict[str, Tuple[int, str, str]]:
@@ -185,13 +185,12 @@ def dataset(tmp_path) -> Dataset:
                     f"{name}\tRefSeq\tCDS\t{gene_start}\t{gene_end}\t.\t{strand}\t0\tID=cds-{gene_start};Parent=gene-{gene_start}\n"
                 )
 
-    trf = os.path.join(directory, "repeats.trf")
-    with open(trf, "w") as handle:
-        for name, _start, _end in CONTIGS:
-            handle.write(f"@{name}\n")
-            for contig, repeat_start, repeat_end in REPEATS:
-                if contig == name:
-                    handle.write(f"{repeat_start} {repeat_end} 4 8.0 4 90 0 50 25 25 25 25 1.9 ACGT ACGTACGT\n")
+    # Tandem repeats as BED, 0-based and half open, as the trf subcommand
+    # writes them.
+    repeats = os.path.join(directory, "repeats.bed")
+    with open(repeats, "w") as handle:
+        for contig, repeat_start, repeat_end in REPEATS:
+            handle.write(f"{contig}\t{repeat_start - 1}\t{repeat_end}\tperiod=4,copies=9.0\n")
 
     dataset = Dataset(
         directory=directory,
@@ -201,7 +200,7 @@ def dataset(tmp_path) -> Dataset:
         hierarchy_newick=hierarchy_newick,
         genome_map=genome_map,
         gff=gff,
-        trf=trf,
+        repeats=repeats,
         sequences=sequences,
     )
     return dataset
@@ -244,14 +243,14 @@ def parsed_snps(dataset, cansnps):
 def scored(dataset, parsed_snps):
     """The scored canSNPs of the dataset, as the evaluator computes them."""
     from cansnpscorer.cansnp_evaluator import annotations_by_contig, locate_snps
-    from cansnpscorer.helpers.file_utils import read_gff3, reference_parser, trf_parser
+    from cansnpscorer.helpers.file_utils import read_gff3, read_intervals, reference_parser
     from cansnpscorer.helpers.scoring_methods import contexts_for, score_snp
 
     reference = reference_parser(dataset.reference)
     model = read_gff3(dataset.gff)
     genes = annotations_by_contig(model.genes, reference, "GFF")
     cds = annotations_by_contig(model.cds, reference, "CDS")
-    repeats = annotations_by_contig(trf_parser(dataset.trf), reference, "TRF")
+    repeats = annotations_by_contig(read_intervals(dataset.repeats), reference, "repeat")
     contexts = contexts_for(locate_snps(parsed_snps, reference), genes, repeats, cds)
     return [score_snp(context) for context in contexts if context.node != "None"]
 
@@ -297,7 +296,7 @@ def written(dataset, tmp_path):
                    "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", snp_file) == 0
     assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.trf,
+                   "--genes", dataset.gff, "--repeats", dataset.repeats,
                    "--hierarchy", dataset.hierarchy, "-o", scores,
                    "--cutoff", "0") == 0
     from cansnpscorer.cansnp_export import main as export_main

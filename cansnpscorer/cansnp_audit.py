@@ -32,6 +32,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cansnpscorer import vcf
 from cansnpscorer.alignment_audit import check_against_alignment
+from cansnpscorer.cansnp_evaluator import annotations_by_contig
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
 from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of this module
     CHECK,
@@ -47,6 +48,7 @@ from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
     read_alignment,
     read_genome_map,
+    read_intervals,
     reference_parser,
 )
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
@@ -374,6 +376,34 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
     return findings
 
 
+def check_masks(scheme: Scheme, reference: Reference,
+                masks: Mapping[str, Sequence[Tuple[int, int]]],
+                genome: Optional[str] = None) -> List[Finding]:
+    """SNPs of the scheme that lie in a masked region, such as a recombinant one.
+
+    A canSNP in a recombinant region may have been brought in by
+    recombination rather than inherited down the branch, so it is the first
+    to replace. Positions in the scheme count over the concatenated genome,
+    so they are placed on their contig first.
+    """
+    findings: List[Finding] = []
+    for snp in scheme.snps:
+        if genome is not None and snp.genome != genome:
+            continue
+        if not 1 <= snp.position <= reference.length:
+            continue
+        contig, local = reference.locate(snp.position - 1)
+        for start, end in masks.get(contig.name, []):
+            if start <= local <= end:
+                findings.append(recommendation(
+                    MODIFY, "masked", snp.node,
+                    f"the SNP at {contig.name}:{local + 1} lies in a masked region "
+                    f"({contig.name}:{start + 1}-{end + 1}), such as one recombination brought "
+                    f"in; a SNP outside it would mark the branch more reliably"))
+                break
+    return findings
+
+
 def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
                  scores: Optional[Sequence[ScoredSnp]] = None,
                  genome: Optional[str] = None,
@@ -381,7 +411,9 @@ def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
                  proximity: int = 50,
                  alignment: Optional[Mapping[str, str]] = None,
                  clusters: Optional[Mapping[str, Sequence[str]]] = None,
-                 min_clade_size: int = 2, min_clade_snps: int = 1) -> List[Finding]:
+                 min_clade_size: int = 2, min_clade_snps: int = 1,
+                 masks: Optional[Mapping[str, Sequence[Tuple[int, int]]]] = None
+                 ) -> List[Finding]:
     """Every check, in one list of findings, problems first.
 
     The checks against the genomes run when an alignment and the clusters
@@ -400,6 +432,8 @@ def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
         findings += check_against_reference(scheme, reference, genome)
         if scores is not None:
             findings += check_against_scores(scheme, scores, reference)
+        if masks:
+            findings += check_masks(scheme, reference, masks, genome)
         if alignment is not None and clusters is not None:
             findings += check_against_alignment(scheme, alignment, reference, clusters, genome,
                                                 min_clade_size, min_clade_snps)
@@ -446,7 +480,7 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
 def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=None,
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
-         min_clade_snps=1, tree=None, members=None) -> int:
+         min_clade_snps=1, tree=None, members=None, masks=None) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
@@ -456,6 +490,9 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         logging.error(
             "--scores needs --reference, because the scores give positions by contig and the "
             "scheme counts them over the concatenated genome")
+        return 1
+    if masks and not reference:
+        logging.error("--masks needs --reference, to place the scheme's positions on contigs")
         return 1
     if alignment and not reference:
         logging.error("--alignment needs --reference, the genome the alignment is against")
@@ -473,6 +510,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         scheme = read_scheme(scheme_dir, organism)
         sequence = reference_parser(reference) if reference else None
         scored = vcf.read_scores(scores, sequence) if scores else None
+        masked = (annotations_by_contig(read_intervals(masks), sequence, "mask")
+                  if masks else None)
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -496,7 +535,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
             return 1
 
     findings = audit_scheme(scheme, sequence, scored, genome, min_required_hits, proximity,
-                            aligned, clusters, min_clade_size, min_clade_snps)
+                            aligned, clusters, min_clade_size, min_clade_snps, masked)
     if placement_findings:
         order = {PROBLEM: 0, RECOMMENDATION: 1}
         findings = sorted(findings + placement_findings,
