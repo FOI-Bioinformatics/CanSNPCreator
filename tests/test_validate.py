@@ -211,3 +211,12 @@ def test_a_malformed_region_is_refused(tmp_path):
     bed.write_text("c1\t20\t10\n")
     with pytest.raises(ValueError, match="impossible interval"):
         read_intervals(str(bed))
+
+
+def test_a_contig_without_repeats_is_not_reported():
+    from cansnpscorer.model import Reference
+    from cansnpscorer.validate import check_annotations
+
+    reference = Reference.from_records([("c1", "A" * 100), ("c2", "A" * 100)])
+    _problems, warnings = check_annotations({"c1": [(10, 20)]}, reference, "repeat")
+    assert warnings == []

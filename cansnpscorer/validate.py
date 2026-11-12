@@ -149,11 +149,14 @@ def check_annotations(annotations: Mapping[str, Sequence[Sequence[int]]], refere
                 f"which is {contig.length} bases long; the first is "
                 f"{outside[0][0] + 1}..{outside[0][1] + 1}")
 
+    # A contig without genes is worth knowing, since its SNPs score nothing for
+    # the gene and mutation terms. A contig without repeats is ordinary, and
+    # its SNPs score the most for the tandem term.
     empty = sorted(name for name in reference.names if not annotations.get(name))
-    if empty and annotations:
+    if empty and annotations and description == "gene":
         warnings.append(
-            f"these contigs have no {description} annotation, so every SNP on them scores zero "
-            f"for it: {', '.join(empty[:5])}")
+            f"these contigs have no gene annotation, so every SNP on them scores zero for the "
+            f"gene and mutation terms: {', '.join(empty[:5])}")
 
     return problems, warnings
 
