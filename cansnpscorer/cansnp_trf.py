@@ -1,5 +1,6 @@
-import subprocess
 import logging
+import subprocess
+
 
 def run_trf(input_file: str, output_file: str, match=2, mismatch=7, delta=7, pm=80, pi=10, minscore=10, max_period=2000):
     """

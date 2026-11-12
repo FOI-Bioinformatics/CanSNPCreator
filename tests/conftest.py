@@ -244,28 +244,13 @@ def cansnps(dataset):
 
 @pytest.fixture
 def scored(dataset, cansnps):
-    """Scores for the canSNPs on the first contig, as the evaluator computes them.
-
-    Limited to the first contig because the offset bookkeeping for later
-    contigs is one of the defects being fixed.
-    """
+    """The scored canSNPs of the dataset, as the evaluator computes them."""
+    from cansnpscorer.cansnp_evaluator import annotations_by_contig, locate_snps
     from cansnpscorer.helpers.file_utils import gff_parser, reference_parser, trf_parser
-    from cansnpscorer.helpers.scoring_methods import ScoringManager
+    from cansnpscorer.helpers.scoring_methods import contexts_for, score_snp
 
     reference = reference_parser(dataset.reference)
-    genes = gff_parser(dataset.gff)
-    repeats = trf_parser(dataset.trf)
-    chromosome_length = reference[1]
-
-    on_first_contig = [snp for snp in cansnps if snp[0] < chromosome_length]
-    scores = []
-    for index, snp in enumerate(on_first_contig):
-        if snp[1] == "None":
-            continue
-        scores.append(
-            ScoringManager(
-                index, on_first_contig, reference, genes, repeats, chromosome_length,
-                0, 1, 50, 0, 0.5, ["gene_score"],
-            )
-        )
-    return scores
+    genes = annotations_by_contig(gff_parser(dataset.gff), reference, "GFF")
+    repeats = annotations_by_contig(trf_parser(dataset.trf), reference, "TRF")
+    contexts = contexts_for(locate_snps(cansnps, reference), genes, repeats)
+    return [score_snp(context) for context in contexts if context.node != "None"]

@@ -1,15 +1,20 @@
 
-import re
-import os.path
-import sys
 import csv
-import logging
-from ruamel.yaml import YAML
-from typing import List, Dict, Union, NoReturn, Tuple, Optional
-from operator import itemgetter
 import json
-from collections import defaultdict
+import logging
+import os.path
+import re
+import sys
+from collections import Counter, defaultdict
 from io import StringIO
+from operator import itemgetter
+from typing import Dict, List, Optional, Sequence, Tuple, Union
+
+from ruamel.yaml import YAML
+
+from cansnpscorer.helpers.scoring_methods import ScoredSnp
+from cansnpscorer.model import Reference
+
 
 def read_yaml_file(file: str) -> Union[Dict, None]:
     """
@@ -26,7 +31,7 @@ def read_yaml_file(file: str) -> Union[Dict, None]:
 
     try:
         yaml = YAML(typ='safe')
-        with open(file, 'r') as yam:
+        with open(file) as yam:
             yaml_data = next(yaml.load_all(yam))
         logging.info(f"Successfully read YAML data from {file}")
         return yaml_data
@@ -55,7 +60,7 @@ def read_hc_file(file_path: str, file_format: str) -> Optional[Dict]:
         logging.info(f"Attempting to read YAML data from {file_path}")
         try:
             yaml = YAML(typ='safe')
-            with open(file_path, 'r') as file:
+            with open(file_path) as file:
                 yaml_data = next(yaml.load_all(file))
             logging.info(f"Successfully read YAML data from {file_path}")
             return yaml_data
@@ -69,7 +74,7 @@ def read_hc_file(file_path: str, file_format: str) -> Optional[Dict]:
     elif file_format == 'repgenr':
         logging.info(f"Attempting to read repgenr HC data from {file_path}")
         try:
-            with open(file_path, 'r') as file:
+            with open(file_path) as file:
                 reader = csv.DictReader(file, delimiter='\t')
                 hc_data = {row['child']: row['parent'] for row in reader}
             logging.info(f"Successfully read repgenr HC data from {file_path}")
@@ -136,75 +141,120 @@ def clean_name(name: str) -> str:
 
 
 
+def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
+    """
+    Read a FASTA file into (name, sequence) pairs, in file order.
+
+    Sequence names are cleaned of non-alphanumeric characters, so that they
+    match the strain names in a group file, and sequences are upper cased, so
+    that soft masked regions are not mistaken for unusable bases.
+
+    Args:
+        fasta_file: Path to the FASTA file.
+
+    Returns:
+        The records in file order.
+
+    Raises:
+        ValueError: If the file holds no records, has sequence before its first
+            header, or names a sequence more than once.
+    """
+    logging.info(f"Reading FASTA records from {fasta_file}")
+
+    records: List[Tuple[str, str]] = []
+    name: Optional[str] = None
+    chunks: List[str] = []
+    masked = 0
+
+    with open(fasta_file) as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if name is not None:
+                    records.append((name, "".join(chunks)))
+                name = clean_name(line[1:].strip())
+                chunks = []
+            else:
+                if name is None:
+                    raise ValueError(
+                        f"{fasta_file}: sequence before the first header, at line {line_number}")
+                masked += sum(1 for base in line if base.islower())
+                chunks.append(line.upper())
+
+    if name is not None:
+        records.append((name, "".join(chunks)))
+
+    if not records:
+        raise ValueError(f"{fasta_file}: holds no FASTA records")
+
+    counts = Counter(record_name for record_name, _ in records)
+    repeated = sorted(record_name for record_name, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"{fasta_file}: names {', '.join(repeated)} more than once; "
+            "names must be unique once cleaned of non-alphanumeric characters")
+
+    if masked:
+        logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
+    logging.info(f"Read {len(records)} records from {fasta_file}")
+    return records
+
+
 def fasta_parser(fasta_file: str, output_format: str = 'list') -> Union[List[str], List[Tuple[str, str]], Dict[str, str]]:
     """
     Parse a FASTA file.
 
     Args:
-    fasta_file: Path to the FASTA file.
-    output_format: Output format ('list', 'dict', 'named_list').
+        fasta_file: Path to the FASTA file.
+        output_format: Output format ('list', 'dict', 'named_list').
 
     Returns:
-    Parsed genomes in the specified output format.
+        Parsed genomes in the requested output format.
     """
+    records = read_fasta(fasta_file)
 
-    logging.info(f"Starting to parse the FASTA file {fasta_file} with output format {output_format}.")
-
-    genomes = [] if output_format != 'dict' else {}
-    processed_entries = 0
-
-    try:
-        with open(fasta_file, 'r') as f:
-            name, genome = "", ""
-            for line in f:
-                if line.startswith(">"):
-                    if name:
-                        genome = genome.replace("\n", "")
-                        if output_format == 'dict':
-                            genomes[name] = genome
-                        elif output_format == 'named_list':
-                            genomes.append((name, genome))
-                        else:
-                            genomes.append(genome)
-                        processed_entries += 1
-
-                    name = clean_name(line[1:].strip())
-                    genome = ""
-                else:
-                    genome += line
-
-            if name:
-                genome = genome.replace("\n", "")
-                if output_format == 'dict':
-                    genomes[name] = genome
-                elif output_format == 'named_list':
-                    genomes.append((name, genome))
-                else:
-                    genomes.append(genome)
-
-            logging.info(f"Successfully parsed {processed_entries} entries from the FASTA file {fasta_file}.")
-            return genomes
-
-    except FileNotFoundError:
-        logging.error(f"File {fasta_file} not found.")
-        return None
-    except PermissionError:
-        logging.error(f"Permission denied. Cannot read {fasta_file}")
-        return None
-    except Exception as e:
-        logging.error(f"An error occurred while parsing the FASTA file {fasta_file}. Exception: {e}")
-        return None
+    if output_format == 'dict':
+        return dict(records)
+    if output_format == 'named_list':
+        return records
+    return [sequence for _name, sequence in records]
 
 
-def parse(fasta, names = False, dictonary = False):
-	if not os.path.isfile(fasta):
-		print("File input does not exist. Enter a correct filepath")
-		return -1
-	if isinstance(names,bool) and isinstance(dictonary, bool):
-		return fasta_parser(fasta, names, dictonary)
-	else:
-		print("Second and third arguments must be booleans")
-		return -1
+def read_alignment(alignment_file: str) -> Dict[str, str]:
+    """
+    Read a whole genome alignment, with the reference genome as its first record.
+
+    Args:
+        alignment_file: Path to the alignment in FASTA format.
+
+    Returns:
+        The aligned sequences, keyed by name, with the reference first.
+
+    Raises:
+        ValueError: If the alignment holds fewer than two records, or if the
+            records are not all of the same length.
+    """
+    records = read_fasta(alignment_file)
+
+    if len(records) < 2:
+        raise ValueError(
+            f"{alignment_file}: an alignment needs the reference and at least one other "
+            f"genome, found {len(records)}")
+
+    lengths = {len(sequence) for _name, sequence in records}
+    if len(lengths) > 1:
+        shortest = min(records, key=lambda record: len(record[1]))
+        longest = max(records, key=lambda record: len(record[1]))
+        raise ValueError(
+            f"{alignment_file}: the records are not aligned; '{longest[0]}' holds "
+            f"{len(longest[1])} columns and '{shortest[0]}' holds {len(shortest[1])}")
+
+    logging.info(
+        f"Read an alignment of {len(records)} genomes over {len(records[0][1])} columns, "
+        f"with '{records[0][0]}' as the reference")
+    return dict(records)
 
 
 
@@ -242,7 +292,7 @@ class HCParser:
             repgenr_group_data_file (str): The path to the repgenr_group data file.
         """
         logging.info(f"Processing repgenr_group data file: {repgenr_group_data_file}")
-        with open(repgenr_group_data_file, 'r') as file:
+        with open(repgenr_group_data_file) as file:
             reader = csv.DictReader(file, delimiter='\t')
             for row in reader:
                 representative = row['representative'].replace('.fasta', '')
@@ -264,7 +314,7 @@ class HCParser:
             csv_file (str): The path to the CSV file.
         """
         logging.info(f"Processing CSV file: {csv_file}")
-        with open(csv_file, 'r') as csvfile:
+        with open(csv_file) as csvfile:
             reader = csv.reader(csvfile)
             for index, row in enumerate(reader):
                 if index == 0:
@@ -343,7 +393,7 @@ def snp_file_parser(snpfile: str) -> List[List[Union[int, str]]]:
     snps: List[List[Union[int, str]]] = []  # Explicitly mention the type for better readability
 
     try:
-        with open(snpfile, 'r') as snp_file:
+        with open(snpfile) as snp_file:
             for line_number, line in enumerate(snp_file, 1):  # Added line_number for better logging
                 line = line.strip()
                 if not line:
@@ -369,51 +419,24 @@ def snp_file_parser(snpfile: str) -> List[List[Union[int, str]]]:
         logging.error(f"Permission denied: Cannot read {snpfile}")
         return []
 
-def reference_parser(reference: str) -> List[Union[str, int]]:
+def reference_parser(reference: str) -> Reference:
     """
-    Parse a reference genome file.
+    Parse a reference genome file into contigs.
 
     Args:
-    reference (str): The path to the reference genome file.
+        reference: The path to the reference genome in FASTA format.
 
     Returns:
-    List[Union[str, int]]: A list containing the reference genome as a string and the lengths of each chromosome as integers.
+        The reference, with one contig per record in file order.
 
     Raises:
-    FileNotFoundError: If the reference file is not found.
-    PermissionError: If the permission to read the reference file is denied.
+        ValueError: If the file is not usable as a reference.
     """
-
-    logging.info(f"Starting to parse reference file: {reference}")
-    ref: str = ""
-    chromosomes: int = 0
-    chro_lengths: List[int] = []
-
-    try:
-        with open(reference, 'r') as fil:
-            for line_number, line in enumerate(fil, 1):
-                line = line.strip()
-                if not line:
-                    logging.debug(f"Ignoring empty line at line {line_number}.")
-                    continue
-
-                if ">" not in line:
-                    ref += line
-                else:
-                    if chromosomes != 0:
-                        chro_lengths.append(len(ref))
-                    chromosomes += 1
-                    logging.debug(f"Found chromosome header at line {line_number}, total chromosomes now {chromosomes}.")
-
-        return_list: List[Union[str, int]] = [ref] + chro_lengths
-        logging.info(f"Successfully parsed {chromosomes} chromosomes from {reference}.")
-        return return_list
-    except FileNotFoundError:
-        logging.error(f"File {reference} not found.")
-        return []
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {reference}")
-        return []
+    logging.info(f"Reading the reference genome from {reference}")
+    parsed = Reference.from_records(read_fasta(reference))
+    logging.info(
+        f"Read {len(parsed)} contigs totalling {parsed.length} bases: {', '.join(parsed.names)}")
+    return parsed
 
 def gff_parser(gff_file: str) -> Dict[int, List[List[Union[int, str]]]]:
     """
@@ -437,7 +460,7 @@ def gff_parser(gff_file: str) -> Dict[int, List[List[Union[int, str]]]]:
     genes: Dict[int, List[List[Union[int, str]]]] = {}
 
     try:
-        with open(gff_file, 'r') as gff:
+        with open(gff_file) as gff:
             current_region: int = 0
             for line_number, line in enumerate(gff, 1):
                 line = line.strip()
@@ -478,7 +501,7 @@ def trf_parser(trf_file_path: str) -> Dict[int, List[Tuple[int, int]]]:
     intervals_by_chromosome = {}
     chromosome_number = 0
 
-    with open(trf_file_path, 'r') as trf_file:
+    with open(trf_file_path) as trf_file:
         for line in trf_file:
             if "@" in line:
                 chromosome_number += 1
@@ -499,26 +522,20 @@ def trf_parser(trf_file_path: str) -> Dict[int, List[Tuple[int, int]]]:
     return intervals_by_chromosome
 
 
-def score_file_writer(snp_data: List[List[Union[str, int, float]]], output_file_path: str) -> None:
+def score_file_writer(scores: Sequence[ScoredSnp], output_file_path: str) -> None:
     """
-    Writes SNP data to a CSV file.
+    Write scored canSNPs to a CSV file.
 
     Args:
-    snp_data: A list of lists, where each inner list represents a row of SNP data.
-    output_file_path: The file path where the CSV file will be saved.
-
-    Returns:
-    None
+        scores: The scored canSNPs to write.
+        output_file_path: Where to write the file.
     """
-    header = ["Position", "Group", "Score", "NeighborDistanceScore", "GCContentScore", "TandemRepeatProximityScore", "GeneProximityScore", "MutationTypeScore"]
-
-    # Log the number of CanSNPs entries
-    logging.info(f"Writing {len(snp_data)} CanSNP entries to the file {output_file_path}.")
+    logging.info(f"Writing {len(scores)} scored canSNPs to {output_file_path}")
 
     with open(output_file_path, 'w', newline='') as out_file:
         csv_writer = csv.writer(out_file, delimiter=',')
-        csv_writer.writerow(header)
-        csv_writer.writerows(snp_data)
+        csv_writer.writerow(ScoredSnp.HEADER)
+        csv_writer.writerows(score.row() for score in scores)
 
 
 def check_files_exist(files: List[str]) -> bool:
@@ -587,7 +604,7 @@ def recognize_group_file_format(file_path: str) -> str:
     """
     logging.basicConfig(level=logging.INFO)
     try:
-        with open(file_path, 'r') as file:
+        with open(file_path) as file:
             lines: List[str] = [file.readline().strip() for _ in range(5)]  # Read the first 5 lines
             header: str = lines[0]  # Typically the header should be the first line
 
@@ -615,7 +632,7 @@ def recognize_group_file_format(file_path: str) -> str:
 def recognize_hc_file_format(file_path: str) -> Union[str, None]:
     logging.info(f"Attempting to recognize the format of file: {file_path}")
 
-    with open(file_path, 'r') as f:
+    with open(file_path) as f:
         first_line = f.readline().strip()  # Read the first line which should be the header
 
     # Check if the file is empty or only contains whitespace

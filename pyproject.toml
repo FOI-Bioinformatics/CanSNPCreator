@@ -44,4 +44,6 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
-ignore = ["E501"]
+# The project supports Python 3.9, where typing.List and friends are still the
+# convention used throughout; E501 is covered by line-length alone.
+ignore = ["E501", "UP006", "UP035"]

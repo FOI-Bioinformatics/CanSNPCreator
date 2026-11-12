@@ -6,6 +6,7 @@ Tests for the defects being fixed live beside them, one file per area.
 """
 
 import pytest
+from conftest import CLUSTERS, GENOMES, INCONGRUENT, PLANTED, node_isolates
 
 from cansnpscorer.helpers.data_utils import (
     canSNP_extractor,
@@ -31,8 +32,7 @@ from cansnpscorer.helpers.file_utils import (
     trf_parser,
 )
 from cansnpscorer.helpers.genetic_code import codon_table
-
-from conftest import CLUSTERS, GENOMES, INCONGRUENT, PLANTED, node_isolates
+from cansnpscorer.helpers.scoring_methods import MAXIMUM_SCORE, TERMS, ScoredSnp
 
 # -- parsers -----------------------------------------------------------------
 
@@ -126,10 +126,12 @@ def test_gc_content_scores_distance_from_the_goal():
 
 
 def test_search_reports_inside_near_and_absent():
+    # The interval comes back only for a position inside it, where its reading
+    # frame applies; near and absent both report a distance alone.
     intervals = [(100, 200), (400, 500)]
-    assert search(150, intervals, 50) == (0, (100, 200))
-    assert search(80, intervals, 50) == (pytest.approx(0.4),)
-    assert search(300, intervals, 50) == (1,)
+    assert search(150, intervals, 50) == (0.0, (100, 200))
+    assert search(80, intervals, 50) == (pytest.approx(0.4), None)
+    assert search(300, intervals, 50) == (1.0, None)
 
 
 def test_codon_helpers():
@@ -142,35 +144,36 @@ def test_codon_helpers():
 
 def test_score_terms_are_scaled_and_summed(scored):
     for entry in scored:
-        position, node, total, *terms = entry
-        assert isinstance(position, int)
-        assert isinstance(node, str)
-        assert len(terms) == 5
-        assert total == sum(terms)
-        assert all(0 <= term <= 200 for term in terms)
+        assert isinstance(entry.position, int)
+        assert isinstance(entry.node, str)
+        assert set(entry.terms) == set(TERMS)
+        assert entry.total == sum(entry.terms.values())
+        assert all(0 <= term <= 200 for term in entry.terms.values())
 
 
 def test_gene_term_is_weighted_twice_by_default(scored):
-    gene_terms = {entry[6] for entry in scored}
+    gene_terms = {entry.terms["gene_score"] for entry in scored}
     assert gene_terms <= {0, 200}, "the gene term is doubled, so it is 0 or 200"
+    assert MAXIMUM_SCORE == 600
 
 
 # -- filtering and output ----------------------------------------------------
 
 
+def make_score(position, node, total):
+    return ScoredSnp(contig="c1", position=position, node=node, total=total,
+                     terms=dict.fromkeys(TERMS, 0))
+
+
 def test_filter_scores_by_cutoff():
-    scores = [
-        [1, "A", 300, 100, 100, 100, 0, 0],
-        [2, "A", 100, 100, 0, 0, 0, 0],
-        [3, "B", 400, 100, 100, 100, 100, 0],
-    ]
-    assert [entry[0] for entry in filter_scores_by_cutoff(scores, 150)] == [1, 3]
+    scores = [make_score(1, "A", 300), make_score(2, "A", 100), make_score(3, "B", 400)]
+    assert [entry.position for entry in filter_scores_by_cutoff(scores, 150)] == [1, 3]
     top = filter_scores_by_cutoff(scores, 50, top=1)
-    assert sorted(entry[0] for entry in top) == [1, 3]
+    assert sorted(entry.position for entry in top) == [1, 3]
 
 
 def test_summarize_scores_counts_snps_per_node():
-    scores = [[1, "A", 300], [2, "A", 300], [3, "B", 300]]
+    scores = [make_score(1, "A", 300), make_score(2, "A", 300), make_score(3, "B", 300)]
     assert summarize_scores(["A", "B", "C"], scores) == {"A": 2, "B": 1}
 
 
@@ -179,7 +182,7 @@ def test_score_file_writer_columns(tmp_path, scored):
     score_file_writer(scored, output)
     lines = open(output).read().splitlines()
     assert lines[0] == (
-        "Position,Group,Score,NeighborDistanceScore,GCContentScore,"
+        "Contig,Position,Group,Score,NeighborDistanceScore,GCContentScore,"
         "TandemRepeatProximityScore,GeneProximityScore,MutationTypeScore"
     )
     assert len(lines) == len(scored) + 1

@@ -1,9 +1,7 @@
-from typing import List, Dict, Union, NoReturn, Tuple
-import re
-from collections import Counter, defaultdict
-import logging
-
 import heapq
+import logging
+from collections import Counter, defaultdict
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
 
@@ -42,42 +40,49 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> flo
     Returns:
         float: Normalized deviation from the target GC content.
     """
-    # Extract the sequence around the SNP
-    sequence = reference[snp - distance:snp + distance]
+    if not 0 < goal < 1:
+        raise ValueError(f"the GC goal must lie between 0 and 1, got {goal}")
 
-    # Count the number of G's and C's in the sequence
+    # Extract the sequence around the SNP, clamped to the ends of the sequence.
+    # Slicing with a negative start would otherwise wrap and give a window that
+    # is short, in the wrong place, or empty.
+    sequence = reference[max(snp - distance, 0):snp + distance]
+    if not sequence:
+        return 0.0
+
     gc_count = sequence.count('G') + sequence.count('C')
+    observed = gc_count / float(len(sequence))
 
-    # Calculate the GC content
-    gc_content = gc_count / float(len(sequence))
+    # Normalized deviation from the target, clamped so that a sequence far from
+    # a low goal cannot contribute a negative score.
+    normalized_deviation = 1 - (abs(observed - goal) / goal)
 
-    # Calculate the normalized deviation from the target GC content
-    normalized_deviation = 1 - (abs(gc_content - goal) * (1 / goal))
-
-    return normalized_deviation
+    return max(normalized_deviation, 0.0)
 
 #Binary search algorithm
-def search(snp: int, intervals: list[Tuple[int, int]], limit: int) -> Union[Tuple[int], Tuple[float, Tuple[int, int]]]:
+def search(snp: int, intervals: Sequence[Sequence[int]], limit: int) -> Tuple[float, Optional[Sequence[int]]]:
     """
-    Perform a binary search to find the interval containing the given SNP.
+    Find the interval that contains the given position, or lies within limit of it.
 
     Args:
-        snp (int): The position of the SNP to search for.
-        intervals (list[Tuple[int, int]]): A list of sorted intervals to search within.
-        limit (int): A limit used for extending the interval boundaries.
+        snp (int): The position to search for.
+        intervals (Sequence[Sequence[int]]): Intervals sorted by their start, each
+            beginning with a start and an end. Further elements, such as a strand,
+            are carried through untouched.
+        limit (int): How far outside an interval still counts as close to it.
 
     Returns:
-        Union[Tuple[int], Tuple[float, Tuple[int, int]]]: Either a tuple containing just 1 if not found,
-        or a tuple containing the normalized distance and the interval if found.
+        Tuple[float, Optional[Sequence[int]]]: The normalized distance to the
+        nearest interval and that interval, or (1.0, None) if none is close.
+        The distance is 0.0 inside an interval and 1.0 at or beyond the limit.
+        The second element is the interval only when the position is inside it,
+        so that the caller knows the reading frame applies.
     """
     lowerbound = 0
     upperbound = len(intervals) - 1
 
-    while True:
-        if upperbound < lowerbound:
-            return 1,
-
-        current = (lowerbound + upperbound) // 2  # Use // for integer division in Python 3
+    while lowerbound <= upperbound:
+        current = (lowerbound + upperbound) // 2
         temp = intervals[current]
 
         left = max(temp[0] - limit, 0)
@@ -85,49 +90,16 @@ def search(snp: int, intervals: list[Tuple[int, int]], limit: int) -> Union[Tupl
 
         if left <= snp <= right:
             if snp < temp[0]:
-                return (temp[0] - snp) / float(limit),
-            elif snp > temp[1]:
-                return (snp - temp[1]) / float(limit),
-            else:
-                return 0, temp
-        elif snp < left:
+                return (temp[0] - snp) / float(limit), None
+            if snp > temp[1]:
+                return (snp - temp[1]) / float(limit), None
+            return 0.0, temp
+        if snp < left:
             upperbound = current - 1
-        else:  # snp > right
+        else:
             lowerbound = current + 1
 
-#Method for checking type of substitution mutation
-def gene_checker(snp: List[Union[int, str]], reference: List[str], gene_interval: Tuple[int, int, str], correction: int) -> float:
-    """
-    Checks the gene region for SNPs and compares the codons.
-
-    Args:
-        snp (List[Union[int, str]]): List representing the SNP, where the first element is the index and the rest are variants.
-        reference (List[str]): List representing the reference genome sequence.
-        gene_interval (Tuple[int, int, str]): Tuple representing the start, end, and strand of the gene.
-        correction (int): Position correction factor.
-
-    Returns:
-        float: Similarity score between the codons.
-    """
-    variants = []
-    index = snp[0] - gene_interval[0] - correction
-    gene = reference[0][gene_interval[0] + correction: gene_interval[1] + correction + 1]
-
-    if gene_interval[2] == "-":
-        index = (gene_interval[1] - gene_interval[0]) - index
-        gene = gene[::-1]
-
-    j = index % 3
-    for i in snp[2:]:
-        left = gene[index - j: index]
-        mid = i
-        right = gene[index + 1: index + 1 + 2 - j]
-
-        variants.append(left + mid + right)
-
-    sim_score = codon_comparer(variants, gene_interval[2])
-    return sim_score
-
+    return 1.0, None
 
 #Compare two codons
 def codon_comparer(variants: List[str], strand: str) -> float:
@@ -314,66 +286,51 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]], sn
 
 def filter_scores_by_cutoff(scores, cutoff, top=None):
     """
-    Filters scores based on a specified cutoff for the 'Score' field and selects the top scoring SNPs for each node_id.
+    Keep the scores above a cutoff, and at most the best few for each node.
 
     Args:
-        scores: List of score entries, each entry is a list containing the SNP position, SNP variant, total score, and individual scores.
-        cutoff: A score cutoff value. Only scores higher than this value are retained.
-        top: Number of top scores to retain for each node_id. If None, all scores above cutoff are retained.
+        scores: Scored SNPs, each with a total and a node.
+        cutoff: Only scores above this value are kept.
+        top: How many of the best scores to keep per node. All of them if None.
 
     Returns:
-        filtered_scores: List of score entries that have a 'Score' higher than the cutoff and are in the top n for their node_id.
+        The scores that were kept, in the order they were given.
     """
-    # Score is the third item in each score entry based on the ScoringManager's final_score structure.
-    # Adjust the index if the structure changes.
-    SCORE_INDEX = 2
-    NODE_ID_INDEX = 1
+    kept = [score for score in scores if score.total > cutoff]
 
-    # First, filter scores by the cutoff
-    filtered_scores = [score for score in scores if score[SCORE_INDEX] > cutoff]
+    if top is None:
+        return kept
 
-    if top is not None:
-        # Group scores by node_id
-        scores_by_node = defaultdict(list)
-        for score in filtered_scores:
-            node_id = score[NODE_ID_INDEX]
-            # We use negative scores because heapq is a min-heap, but we want the max scores
-            heapq.heappush(scores_by_node[node_id], (-score[SCORE_INDEX], score))
+    by_node = defaultdict(list)
+    for position, score in enumerate(kept):
+        # A min-heap, so the totals are negated to pop the best first; the
+        # position breaks ties without comparing the scores themselves.
+        heapq.heappush(by_node[score.node], (-score.total, position, score))
 
-        # Now select the top n scores for each node_id
-        top_scores_by_node = {}
-        for node_id, node_scores in scores_by_node.items():
-            top_scores_by_node[node_id] = [heapq.heappop(node_scores)[1] for _ in range(min(len(node_scores), top))]
+    selected = set()
+    for node_scores in by_node.values():
+        for _ in range(min(len(node_scores), top)):
+            selected.add(heapq.heappop(node_scores)[1])
 
-        # Flatten the dictionary of top scores into a list
-        top_scores = [score for scores_list in top_scores_by_node.values() for score in scores_list]
-        filtered_scores = top_scores
-
-    return filtered_scores
+    return [score for position, score in enumerate(kept) if position in selected]
 
 
 def summarize_scores(nodes_data, scores):
     """
-    Provides a summary of the scores, including the count of occurrences for each node.
+    Count the SNPs kept for each node, and report the nodes left without one.
 
     Args:
-        nodes_data: Set of node identifiers.
-        scores: List of score entries that have been filtered by a score cutoff.
+        nodes_data: The node identifiers of the scheme.
+        scores: The scored SNPs that passed filtering.
 
     Returns:
-        dict: A dictionary with nodes as keys and their counts as values.
+        dict: The nodes that have at least one SNP, and how many.
     """
-    # Assuming that the second element (index 1) of each score list is the node identifier.
-    NODE_ID_INDEX = 1
-
-    # Initialize a dictionary to count occurrences
     node_counts = {node: 0 for node in nodes_data}
 
-    # Count occurrences of each node in scores
     for score in scores:
-        node_id = score[NODE_ID_INDEX]
-        if node_id in node_counts:
-            node_counts[node_id] += 1
+        if score.node in node_counts:
+            node_counts[score.node] += 1
 
     # Log info or warnings and build the export dictionary
     export_dict = {}

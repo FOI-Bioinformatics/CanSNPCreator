@@ -1,25 +1,27 @@
 import logging
-from datetime import datetime
 import os
+from datetime import datetime
+
+from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
+from cansnpscorer.helpers.file_utils import (
+    HCParser,
+    cansnp_file_writer,
+    read_alignment,
+    read_hc_file,
+    recognize_group_file_format,
+    recognize_hc_file_format,
+)
 
 
-from cansnpscorer.helpers.file_utils import fasta_parser, HCParser, cansnp_file_writer, read_yaml_file, recognize_hc_file_format, convert_data, save_to_file, recognize_group_file_format, read_hc_file
-from cansnpscorer.helpers.data_utils import snp_extractor, canSNP_extractor
-
-
-
-def main(groupfile=None, hcfile=None, fastafile=None, output=None):
-
-    # Initialize logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
+def main(groupfile=None, hcfile=None, fastafile=None, output=None) -> int:
+    """Extract canSNPs from an alignment. Returns a process exit status."""
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(f"Parameters: groupfile={groupfile}, hcfile={hcfile}, fastafile={fastafile}, output={output}")
 
-    # Check if the input files exist
-    if not (os.path.isfile(groupfile) and os.path.isfile(hcfile) and os.path.isfile(fastafile)):
-        logging.error(f"Input files do not exist. Exiting...")
-        sys.exit(1)
+    missing = [path for path in (groupfile, hcfile, fastafile) if not os.path.isfile(path)]
+    if missing:
+        logging.error(f"These input files do not exist: {', '.join(missing)}")
+        return 1
 
     # Check the format of the hc file
     hc_format = recognize_hc_file_format(hcfile)
@@ -33,16 +35,21 @@ def main(groupfile=None, hcfile=None, fastafile=None, output=None):
     hc_data = hc_parser_obj.reader(tree_data)
 
 
-    # Parse FASTA data
-    fasta_data = fasta_parser(fastafile, 'dict')
+    # Parse the alignment, which must hold the reference as its first record
+    try:
+        alignment = read_alignment(fastafile)
+    except (OSError, ValueError) as error:
+        logging.error(error)
+        return 1
 
     # Extract SNPs
-    snps = snp_extractor(fasta_data)
+    snps = snp_extractor(alignment)
 
     # ExtractCanSNPs
-    cansnps = canSNP_extractor(fasta_data, hc_data, snps)
+    cansnps = canSNP_extractor(alignment, hc_data, snps)
 
     # Write canSNPs to the output file
     cansnp_file_writer(cansnps, output)
 
     logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    return 0

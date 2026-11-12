@@ -1,11 +1,29 @@
 import argparse
 import logging
+import sys
+
+from cansnpscorer import __version__, cansnp_evaluator, cansnp_extractor, cansnp_trf
+from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, TERMS
 
 
-from cansnpscorer import cansnp_evaluator, cansnp_extractor, cansnp_trf
+def score_weights(settings):
+    """Turn --score-weight TERM=FACTOR arguments into a dictionary of weights."""
+    if not settings:
+        return dict(DEFAULT_WEIGHTS)
 
-# Import the version number
-from cansnpscorer import __version__
+    weights = {}
+    for setting in settings:
+        term, _, factor = setting.partition("=")
+        if term not in TERMS:
+            raise argparse.ArgumentTypeError(
+                f"unknown score term '{term}'; choose from {', '.join(TERMS)}")
+        try:
+            weights[term] = float(factor)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"the weight for '{term}' must be a number, got '{factor}'") from None
+    return weights
+
 
 def main():
     # Create the top-level parser
@@ -33,8 +51,17 @@ def main():
     parser_evaluate.add_argument("--tandem-limit", type=int, default=50, help="Tandem repeat proximity limit.")
     parser_evaluate.add_argument("--gene-limit", type=int, default=0, help="Gene proximity limit.")
     parser_evaluate.add_argument("--gc-goal", type=float, default=0.5, help="Goal for GC content scoring.")
-    parser_evaluate.add_argument("--cutoff-value", type=int, default=500, help="Cutoff value for SNP score filtering.")
+    parser_evaluate.add_argument("--cutoff-value", type=int, default=500,
+                                 help=f"Only report SNPs scoring above this value. The highest "
+                                      f"reachable total is {MAXIMUM_SCORE} with the default "
+                                      f"weights, and the default cutoff of 500 in practice "
+                                      f"requires the SNP to fall inside a gene.")
     parser_evaluate.add_argument("--top-n-snp", type=int, default=None, help="The number of top scoring SNPs to select for each node_id.")
+    parser_evaluate.add_argument("--score-weight", action="append", metavar="TERM=FACTOR",
+                                 help=f"Weight one score term before the terms are summed, for "
+                                      f"example gene_score=2. Terms: {', '.join(TERMS)}. "
+                                      f"Repeatable. Default: "
+                                      f"{', '.join(f'{k}={v:g}' for k, v in DEFAULT_WEIGHTS.items())}.")
     parser_evaluate.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
     # Create the parser for the "trf" command
@@ -57,14 +84,21 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     if args.command == 'extract':
-        logging.info(f"Starting canSNP extraction...")
-        cansnp_extractor.main(args.groupfile, args.hcfile, args.fastafile, args.output)
+        logging.info("Starting canSNP extraction")
+        return cansnp_extractor.main(args.groupfile, args.hcfile, args.fastafile, args.output)
     elif args.command == 'evaluate':
-        logging.info(f"Starting canSNP evaluation...")
-        cansnp_evaluator.main(args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.hcfile, args.output_file, args.tandem_limit, args.gene_limit, args.gc_goal, args.cutoff_value, args.top_n_snp)
+        logging.info("Starting canSNP evaluation")
+        try:
+            weights = score_weights(args.score_weight)
+        except argparse.ArgumentTypeError as error:
+            parser_evaluate.error(str(error))
+        return cansnp_evaluator.main(
+            args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.hcfile,
+            args.output_file, args.tandem_limit, args.gene_limit, args.gc_goal,
+            args.cutoff_value, args.top_n_snp, weights)
     elif args.command == 'trf':
-        logging.info(f"Starting canSNP TRF...")
-        cansnp_trf.run_trf(
+        logging.info("Starting canSNP TRF")
+        return cansnp_trf.run_trf(
             args.input,
             args.output,
             args.match,
@@ -77,7 +111,8 @@ def main():
         )
     else:
         parser.print_help()
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
