@@ -64,7 +64,13 @@ def read_genome_tree(path: str, nodes_file: Optional[str] = None) -> Hierarchy:
         HierarchyError: If the tree cannot be read.
         ValueError: If the node table lacks its columns.
     """
-    tree = read_hc_file(path, recognize_hc_file_format(path))
+    file_format = recognize_hc_file_format(path)
+    if file_format == "newick":
+        # A genome tree's numeric internal labels are support values.
+        with open(path) as handle:
+            tree = Hierarchy.from_newick(handle.read(), support_labels=True)
+    else:
+        tree = read_hc_file(path, file_format)
     if nodes_file:
         with open(nodes_file) as handle:
             reader = csv.DictReader(handle, delimiter="\t")

@@ -189,12 +189,15 @@ class Hierarchy:
             raise HierarchyError(f"the hierarchy is not valid JSON: {error}") from None
 
     @classmethod
-    def from_newick(cls, text: str) -> "Hierarchy":
+    def from_newick(cls, text: str, support_labels: bool = False) -> "Hierarchy":
         """Build from a Newick string.
 
-        Branch lengths are kept in ``lengths``. An internal label that is a
-        number, or numbers separated by slashes as IQ-TREE writes SH-aLRT and
-        ultrafast bootstrap together, is a support value rather than a name: it
+        Branch lengths are kept in ``lengths``. Newick does not say whether an
+        internal label is a name or a support value, so the caller does: in a
+        scheme's hierarchy every label is a name, as a node called 2.1 must
+        stay 2.1. With ``support_labels``, as for a genome tree, an internal
+        label that is a number, or numbers separated by slashes as IQ-TREE
+        writes SH-aLRT and ultrafast bootstrap together, is a support value: it
         is kept in ``support``, as a fraction, from the last number of the
         label. Unnamed internal nodes are given a generated name, since a canSNP
         scheme addresses its branches by name. Single-quoted labels may hold
@@ -244,7 +247,7 @@ class Hierarchy:
                         f"'{tokens[position][1:]}' is not a branch length") from None
                 position += 1
 
-            value = _support_value(label) if children else None
+            value = _support_value(label) if children and support_labels else None
             name = label if value is None else ""
             if not name:
                 if not children:

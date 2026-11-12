@@ -36,20 +36,29 @@ PLANTED_TREE = "(ref:0.5,(((s1:0.01,s1b:0.01)97:0.2,s2:0.3)99:0.4,(s3:0.2,s4:0.2
 
 
 def test_numeric_internal_labels_are_support_and_not_names():
-    tree = Hierarchy.from_newick("((a:1,b:2)95:0.5,(c,d)80:0.25,e);")
+    tree = Hierarchy.from_newick("((a:1,b:2)95:0.5,(c,d)80:0.25,e);", support_labels=True)
     assert sorted(tree.support.values()) == [0.8, 0.95], "percentages read as fractions"
     assert "95" not in tree and "80" not in tree
     assert tree.lengths["a"] == 1.0 and len(tree.lengths) == 4
 
 
+def test_a_schemes_numeric_node_names_stay_names(tmp_path):
+    # A hierarchy is a scheme's, whose labels are names: 2 and 3 are nodes.
+    path = tmp_path / "scheme.nwk"
+    path.write_text("((2.1,2.2)2,(3.1,3.2)3)root;")
+    assert set(read_hc_file(str(path)).nodes) == {"root", "2", "3", "2.1", "2.2", "3.1", "3.2"}
+    # The same text read as a genome tree takes them for support values.
+    assert set(read_genome_tree(str(path)).support.values()) == {0.02, 0.03}
+
+
 def test_two_internal_nodes_with_the_same_support_do_not_collide():
     # Read as names, the two '100' labels gave one node two parents.
-    tree = Hierarchy.from_newick("((a,b)100,(c,d)100);")
+    tree = Hierarchy.from_newick("((a,b)100,(c,d)100);", support_labels=True)
     assert len(tree.leaves) == 4 and len(tree) == 7
 
 
 def test_an_iqtree_label_gives_the_last_support_value():
-    tree = Hierarchy.from_newick("((a,b)80.5/99,c);")
+    tree = Hierarchy.from_newick("((a,b)80.5/99,c);", support_labels=True)
     assert list(tree.support.values()) == [0.99]
 
 
@@ -109,7 +118,8 @@ def test_an_accession_in_two_records_matches_neither():
 
 def collapsed_tree():
     return Hierarchy.from_newick(
-        "(((a:1,b:1)0.99:5,(c:1,d:1)0.40:5)0.95:1,((e:1,f:1)0.99:0.5,g:1)0.98:3);")
+        "(((a:1,b:1)0.99:5,(c:1,d:1)0.40:5)0.95:1,((e:1,f:1)0.99:0.5,g:1)0.98:3);",
+        support_labels=True)
 
 
 def test_weakly_supported_nodes_are_removed_and_their_genomes_move_up():
@@ -147,22 +157,23 @@ def test_a_node_with_the_genomes_of_its_parent_is_joined_into_it():
 
 
 def test_an_outgroup_is_placed_nowhere_and_the_root_is_the_ingroups():
-    result = collapse(Hierarchy.from_newick(PLANTED_TREE), outgroups=["ref"])
+    result = collapse(Hierarchy.from_newick(PLANTED_TREE, support_labels=True), outgroups=["ref"])
     assert "ref" not in result.genomes
     assert len(result.hierarchy.children[result.hierarchy.root]) == 2
     with pytest.raises(HierarchyError, match="no leaf named"):
-        collapse(Hierarchy.from_newick(PLANTED_TREE), outgroups=["nothere"])
+        collapse(Hierarchy.from_newick(PLANTED_TREE, support_labels=True), outgroups=["nothere"])
 
 
 def test_renaming_gives_hierarchical_names_largest_first():
-    result = rename(collapse(Hierarchy.from_newick(PLANTED_TREE), outgroups=["ref"]), "T")
+    tree = Hierarchy.from_newick(PLANTED_TREE, support_labels=True)
+    result = rename(collapse(tree, outgroups=["ref"]), "T")
     assert result.genomes["s1"] == "T.1.1", "A holds three genomes, B two"
     assert result.genomes["s3"] == "T.2"
-    assert result.source["T"] in Hierarchy.from_newick(PLANTED_TREE)
+    assert result.source["T"] in tree
 
 
 def test_the_written_files_are_read_back_by_extract(tmp_path):
-    tree = Hierarchy.from_newick(PLANTED_TREE)
+    tree = Hierarchy.from_newick(PLANTED_TREE, support_labels=True)
     result = rename(collapse(tree, outgroups=["ref"]), "T")
     hierarchy_path, genomes_path, nodes_path = write_collapsed(result, tree, str(tmp_path), "t")
     assert read_hc_file(hierarchy_path).root == "T"
@@ -207,7 +218,7 @@ def test_complementary_nodes_are_reported_as_a_missing_outgroup(caplog):
 
 def test_the_planted_genomes_are_placed_where_they_belong(written, dataset):
     outdir, _scores = written
-    placement = place(read_scheme(outdir), Hierarchy.from_newick(PLANTED_TREE),
+    placement = place(read_scheme(outdir), Hierarchy.from_newick(PLANTED_TREE, support_labels=True),
                       read_alignment(dataset.alignment), reference_parser(dataset.reference))
     assert {node: sorted(genomes) for node, genomes in placement.clusters.items()} == {
         node: sorted(genomes) for node, genomes in CLUSTERS.items()}
