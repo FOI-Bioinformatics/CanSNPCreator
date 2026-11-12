@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from ruamel.yaml import YAML
 
-from cansnpscorer.helpers.names import clean_name, strip_fasta_suffix
+from cansnpscorer.helpers.names import strip_fasta_suffix
 from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
@@ -79,9 +79,10 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     """
     Read a FASTA file into (name, sequence) pairs, in file order.
 
-    Sequence names are cleaned of non-alphanumeric characters, so that they
-    match the strain names in a group file, and sequences are upper cased, so
-    that soft masked regions are not mistaken for unusable bases.
+    A record is named by its ID, the first word of its header, as GFF3, VCF,
+    BED and samtools faidx all name a sequence; the rest of the header is a
+    description. Sequences are upper cased, so that soft masked regions are
+    not mistaken for unusable bases.
 
     Args:
         fasta_file: Path to the FASTA file.
@@ -91,7 +92,7 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
 
     Raises:
         ValueError: If the file holds no records, has sequence before its first
-            header, or names a sequence more than once.
+            header, has a header without an ID, or names a sequence more than once.
     """
     logging.info(f"Reading FASTA records from {fasta_file}")
 
@@ -108,7 +109,10 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
             if line.startswith(">"):
                 if name is not None:
                     records.append((name, "".join(chunks)))
-                name = clean_name(line[1:].strip())
+                words = line[1:].split()
+                if not words:
+                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID")
+                name = words[0]
                 chunks = []
             else:
                 if name is None:
@@ -127,8 +131,8 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     repeated = sorted(record_name for record_name, count in counts.items() if count > 1)
     if repeated:
         raise ValueError(
-            f"{fasta_file}: names {', '.join(repeated)} more than once; "
-            "names must be unique once cleaned of non-alphanumeric characters")
+            f"{fasta_file}: names {', '.join(repeated)} more than once; sequence IDs, the first "
+            "word of each header, must be unique")
 
     if masked:
         logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
@@ -245,7 +249,7 @@ class HCParser:
                 # the hierarchy names it; the contained value names a genome,
                 # which must match the cleaned names of the alignment.
                 representative = row['representative'].strip()
-                contained = clean_name(row['contained'].replace('.fasta', ''))
+                contained = strip_fasta_suffix(row['contained'].strip())
                 self.isolates.setdefault(representative, [])
                 if contained not in self.isolates[representative]:
                     self.isolates[representative].append(contained)
@@ -269,7 +273,7 @@ class HCParser:
                     raise ValueError(
                         f"{path}: line {number} should hold a genome and a node separated by "
                         f"one tab")
-                genome = clean_name(strip_fasta_suffix(fields[0].strip()))
+                genome = strip_fasta_suffix(fields[0].strip())
                 node = fields[1].strip()
                 if genome not in self.isolates.setdefault(node, []):
                     self.isolates[node].append(genome)
@@ -296,7 +300,7 @@ class HCParser:
                         f"{csv_file}: row {index + 1} has {len(row)} fields, too few to hold "
                         f"both a strain and a group")
                 group = row[self.group_index].strip()
-                strain = clean_name(row[self.strain_index])
+                strain = row[self.strain_index].strip()
                 if not group or not strain:
                     raise ValueError(
                         f"{csv_file}: row {index + 1} leaves the strain or the group empty")
@@ -415,75 +419,85 @@ def reference_parser(reference: str) -> Reference:
         f"Read {len(parsed)} contigs totalling {parsed.length} bases: {', '.join(parsed.names)}")
     return parsed
 
-#: The GFF feature types read as a reading frame. A gene and its CDS normally
-#: coincide in bacteria, and 'gene' is what this tool has always read.
-GENE_FEATURES = ("gene",)
+#: GFF3 feature types that place a SNP inside a gene. A CDS counts as well as a
+#: gene, since Prokka writes CDS features without gene features by default.
+GENE_FEATURES = frozenset({"gene", "CDS"})
 
-#: GFF columns, by position, as the specification fixes them.
-GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND = 0, 2, 3, 4, 6
+GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE = 0, 2, 3, 4, 6, 7
 
 
-def gff_parser(gff_file: str) -> Dict[str, List[Tuple[int, int, str]]]:
+@dataclass
+class GeneModel:
+    """The genes of a GFF3 file, by sequence ID, 0-based and inclusive.
+
+    ``genes`` holds every gene and CDS as (start, end, strand) and decides
+    whether a SNP lies in a gene. ``cds`` holds the CDS features as (start,
+    end, strand, phase), which give the reading frame a codon is read in.
     """
-    Read the genes of a GFF file, keyed by the sequence they sit on.
 
-    Columns are read by position, as the GFF specification fixes them, rather
-    than by looking for a field whose value happens to be 'gene'. Only a line
-    that begins with '#' is a comment, so a '#' inside an attribute no longer
-    discards the feature. Sequences are keyed by their own names, cleaned the
-    same way the FASTA readers clean them, so annotations are matched to
-    contigs by name rather than by the order regions happen to appear in.
+    genes: Dict[str, List[Tuple[int, int, str]]]
+    cds: Dict[str, List[Tuple[int, int, str, int]]]
 
-    Args:
-        gff_file: The path to the GFF file.
 
-    Returns:
-        Gene intervals per sequence as (start, end, strand), 0-based and
-        inclusive, sorted by start.
+def read_gff3(gff_file: str) -> GeneModel:
+    """
+    Read the genes and coding sequences of a GFF3 file.
+
+    Columns are read by position, as GFF3 fixes them, and sequences are named
+    by their seqid exactly, as the reference FASTA names them by its IDs. A
+    line beginning with '#' is a comment or directive, and a ##FASTA directive
+    ends the annotation.
 
     Raises:
+        ValueError: If a feature has no readable start and end.
         OSError: If the file cannot be read.
     """
     logging.info(f"Reading genes from {gff_file}")
     genes: Dict[str, List[Tuple[int, int, str]]] = {}
-    unreadable = 0
+    cds: Dict[str, List[Tuple[int, int, str, int]]] = {}
 
     with open(gff_file) as gff:
         for line_number, line in enumerate(gff, 1):
-            if line.startswith("#"):
+            if line.startswith("##FASTA"):
+                break
+            if line.startswith("#") or not line.strip():
                 continue
-            fields = line.rstrip("\n").split("\t")
-            if len(fields) <= GFF_STRAND:
-                continue
+            fields = line.rstrip("\r\n").split("\t")
+            if len(fields) != 9:
+                raise ValueError(
+                    f"{gff_file}: line {line_number} holds {len(fields)} tab separated columns "
+                    f"where GFF3 has 9")
             if fields[GFF_TYPE] not in GENE_FEATURES:
                 continue
-
             try:
                 start = int(fields[GFF_START]) - 1
                 end = int(fields[GFF_END]) - 1
             except ValueError:
-                unreadable += 1
-                logging.error(f"{gff_file}: line {line_number} has no readable start and end")
-                continue
-
-            if end < start:
-                unreadable += 1
-                logging.error(f"{gff_file}: line {line_number} ends before it starts")
-                continue
-
-            sequence = clean_name(fields[GFF_SEQID])
+                raise ValueError(
+                    f"{gff_file}: line {line_number} has no readable start and end") from None
+            if end < start or start < 0:
+                raise ValueError(f"{gff_file}: line {line_number} has an impossible interval")
+            sequence = fields[GFF_SEQID]
             strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
             genes.setdefault(sequence, []).append((start, end, strand))
+            if fields[GFF_TYPE] == "CDS":
+                phase = fields[GFF_PHASE]
+                if phase not in {"0", "1", "2"}:
+                    raise ValueError(
+                        f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
+                cds.setdefault(sequence, []).append((start, end, strand, int(phase)))
 
+    # A gene and its CDS usually cover the same bases; one interval is enough
+    # to say a SNP is in a gene.
     for sequence in genes:
-        genes[sequence].sort(key=itemgetter(0))
-
-    if unreadable:
-        logging.warning(f"Skipped {unreadable} unreadable features in {gff_file}")
+        genes[sequence] = sorted(set(genes[sequence]), key=itemgetter(0, 1))
+    for sequence in cds:
+        cds[sequence].sort(key=itemgetter(0, 1))
     logging.info(
-        f"Read {sum(len(found) for found in genes.values())} genes over "
-        f"{len(genes)} sequences from {gff_file}")
-    return genes
+        f"Read {sum(len(found) for found in genes.values())} genes and CDS, "
+        f"{sum(len(found) for found in cds.values())} of them CDS, over {len(genes)} "
+        f"sequences from {gff_file}")
+    return GeneModel(genes=genes, cds=cds)
 
 
 def trf_parser(trf_file_path: str) -> Dict[str, List[Tuple[int, int]]]:
@@ -511,7 +525,7 @@ def trf_parser(trf_file_path: str) -> Dict[str, List[Tuple[int, int]]]:
             if not line:
                 continue
             if line.startswith("@"):
-                sequence = clean_name(line[1:].split()[0]) if line[1:].split() else None
+                sequence = line[1:].split()[0] if line[1:].split() else None
                 if sequence:
                     intervals.setdefault(sequence, [])
                 continue

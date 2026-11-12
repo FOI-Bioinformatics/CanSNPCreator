@@ -77,7 +77,7 @@ def test_intervals_are_sorted_before_they_are_searched():
     unsorted_genes = {"c1": [(300, 350, "+"), (50, 150, "+")]}
     built = contexts_for([(contig, 100, "A.1", ("A", "G"))], unsorted_genes, {})[0]
     assert [interval[0] for interval in built.genes] == [50, 300]
-    assert gene_score(built, 0)[0] == 1.0
+    assert gene_score(built, 0) == 1.0
 
 
 # -- the individual terms ----------------------------------------------------
@@ -102,19 +102,17 @@ def test_a_snp_near_a_gene_is_scored_without_crashing():
     # --gene-limit greater than zero raised IndexError.
     near = context(position=90, sequence="ACGT" * 100)
     near.genes = [(100, 200, "+")]
-    score, interval = gene_score(near, 200)
+    near.cds = [(100, 200, "+", 0)]
+    score = gene_score(near, 200)
     assert 0.0 < score < 1.0, "close to a gene, but not in it"
-    assert interval is None, "no reading frame applies outside the gene"
-    assert mutation_score(near, interval) == 0.0
+    assert mutation_score(near) == 0.0, "no reading frame applies outside the CDS"
     assert score_snp(near, gene_limit=200).total >= 0
 
 
 def test_a_snp_inside_a_gene_scores_full_proximity():
     inside = context(position=150)
     inside.genes = [(100, 200, "+")]
-    score, interval = gene_score(inside, 200)
-    assert score == 1.0
-    assert interval == (100, 200, "+")
+    assert gene_score(inside, 200) == 1.0
 
 
 def test_repeat_proximity():
@@ -127,38 +125,53 @@ def test_repeat_proximity():
 # -- codons ------------------------------------------------------------------
 
 
-def test_the_codon_is_read_in_the_frame_of_the_gene():
-    # The SNP position was corrected by subtracting an offset while the gene
-    # interval was corrected by adding it, so on any contig after the first the
-    # codon was read from the wrong place.
+def at(contig, position, alleles, cds):
+    return SnpContext(contig=contig, position=position, node="A.1", alleles=alleles,
+                      cds=[cds])
+
+
+def test_the_codon_is_read_in_the_frame_of_the_cds():
     contig = Contig(name="c1", sequence="TT" + GENE + "TT", start=0)
-    gene = (2, 10, "+")
-
-    synonymous = SnpContext(contig=contig, position=7, node="A.1", alleles=("A", "G"))
-    assert mutation_score(synonymous, gene) == 1.0, "TTA and TTG are both Leu"
-
-    nonsynonymous = SnpContext(contig=contig, position=5, node="A.1", alleles=("T", "G"))
-    assert mutation_score(nonsynonymous, gene) == 0.5, "Leu becomes Val"
-
-    nonsense = SnpContext(contig=contig, position=9, node="A.1", alleles=("A", "T"))
-    assert mutation_score(nonsense, gene) == 0.0, "the stop codon is lost"
+    cds = (2, 10, "+", 0)
+    assert mutation_score(at(contig, 7, ("A", "G"), cds)) == 1.0, "TTA and TTG are both Leu"
+    assert mutation_score(at(contig, 5, ("T", "G"), cds)) == 0.5, "Leu becomes Val"
+    assert mutation_score(at(contig, 9, ("A", "T"), cds)) == 0.0, "the stop codon is lost"
 
 
-def test_a_gene_on_the_minus_strand_is_reverse_complemented():
+def test_the_phase_moves_the_frame():
+    # GFF3's phase is the number of bases to skip before the first codon. With
+    # two leading bases in the CDS and a phase of 2, the codons are those of
+    # GENE, as above.
+    contig = Contig(name="c1", sequence="TT" + GENE + "TT", start=0)
+    cds = (0, 10, "+", 2)
+    assert mutation_score(at(contig, 7, ("A", "G"), cds)) == 1.0
+    assert mutation_score(at(contig, 1, ("T", "G"), cds)) == 0.0, "before the first codon"
+
+
+def test_a_cds_on_the_minus_strand_is_read_from_its_end():
     contig = Contig(name="c1", sequence=reverse_complement(GENE), start=0)
-    gene = (0, 8, "-")
-    # The synonymous third base of codon two sits at offset 5 of the gene,
-    # which is position 3 of the contig once the strand is accounted for.
+    cds = (0, 8, "-", 0)
+    # The synonymous third base of codon two sits at offset 5 of the CDS,
+    # which is position 3 of the contig on the minus strand.
     alleles = tuple(reverse_complement(base) for base in ("A", "G"))
-    synonymous = SnpContext(contig=contig, position=3, node="A.1", alleles=alleles)
-    assert mutation_score(synonymous, gene) == 1.0
+    assert mutation_score(at(contig, 3, alleles, cds)) == 1.0
+    # A phase of 1 on the minus strand skips the CDS's last base.
+    shifted = Contig(name="c1", sequence=reverse_complement(GENE) + "A", start=0)
+    assert mutation_score(at(shifted, 3, alleles, (0, 9, "-", 1))) == 1.0
 
 
 def test_an_incomplete_codon_scores_zero():
     contig = Contig(name="c1", sequence=GENE, start=0)
-    partial_gene = (0, 7, "+")  # eight bases, so the last codon is truncated
-    snp = SnpContext(contig=contig, position=6, node="A.1", alleles=("T", "C"))
-    assert mutation_score(snp, partial_gene) == 0.0
+    snp = at(contig, 6, ("T", "C"), (0, 7, "+", 0))  # the last codon is cut short
+    assert mutation_score(snp) == 0.0
+
+
+def test_a_gene_without_a_cds_gives_no_frame():
+    # A gene feature says the SNP is in a gene; only a CDS says how it is read.
+    snp = SnpContext(contig=Contig(name="c1", sequence=GENE, start=0), position=5,
+                     node="A.1", alleles=("T", "G"), genes=[(0, 8, "+")])
+    assert gene_score(snp, 0) == 1.0
+    assert mutation_score(snp) == 0.0
 
 
 def test_the_planted_dataset_scores_every_node(scored):

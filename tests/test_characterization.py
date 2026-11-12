@@ -20,9 +20,8 @@ from cansnpscorer.helpers.data_utils import (
 )
 from cansnpscorer.helpers.file_utils import (
     HCParser,
-    clean_name,
     fasta_parser,
-    gff_parser,
+    read_gff3,
     recognize_group_file_format,
     recognize_hc_file_format,
     score_file_writer,
@@ -30,6 +29,7 @@ from cansnpscorer.helpers.file_utils import (
     trf_parser,
 )
 from cansnpscorer.helpers.genetic_code import codon_table
+from cansnpscorer.helpers.names import clean_name
 from cansnpscorer.helpers.scoring_methods import MAXIMUM_SCORE, TERMS, ScoredSnp
 
 # -- parsers -----------------------------------------------------------------
@@ -58,11 +58,12 @@ def test_format_recognition(dataset):
     assert recognize_hc_file_format(dataset.hc_repgenr) == "repgenr"
 
 
-def test_gff_parser_reports_genes_per_sequence_zero_based(dataset):
-    genes = gff_parser(dataset.gff)
-    assert sorted(genes) == ["c1", "c2"]
-    assert genes["c1"] == [(150, 449, "+"), (550, 649, "-")]
-    assert genes["c2"] == [(10, 199, "+")]
+def test_gff3_genes_and_cds_are_read_per_sequence_zero_based(dataset):
+    model = read_gff3(dataset.gff)
+    assert sorted(model.genes) == ["c1", "c2"]
+    assert model.genes["c1"] == [(150, 449, "+"), (550, 649, "-")], "gene and CDS once"
+    assert model.genes["c2"] == [(10, 199, "+")]
+    assert model.cds["c1"] == [(150, 449, "+", 0), (550, 649, "-", 0)]
 
 
 def test_trf_parser_reports_intervals_per_sequence_zero_based(dataset):

@@ -14,9 +14,15 @@ from cansnpscorer.helpers.file_utils import (
     recognize_group_file_format,
     reference_parser,
 )
+from cansnpscorer.helpers.names import resolve_clusters
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import AlignmentMap, ReferenceError
-from cansnpscorer.validate import check_alignment_against_reference, check_groups, report
+from cansnpscorer.validate import (
+    check_alignment_against_reference,
+    check_groups,
+    report,
+    unresolved_genomes,
+)
 
 
 def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output=None) -> int:
@@ -43,6 +49,8 @@ def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output
 
     # Report everything inconsistent between the files before doing any work.
     problems, warnings = check_alignment_against_reference(alignment, reference)
+    clusters, unmatched, ambiguous = resolve_clusters(clusters, list(alignment))
+    problems += unresolved_genomes(unmatched, ambiguous)
     found = check_groups(alignment, clusters, hierarchy, next(iter(alignment)))
     problems, warnings = problems + found[0], warnings + found[1]
     if not report(problems, warnings):

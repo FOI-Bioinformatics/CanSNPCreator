@@ -107,6 +107,20 @@ def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[s
     return problems, warnings
 
 
+def unresolved_genomes(unmatched: Sequence[str], ambiguous: Sequence[str]) -> List[str]:
+    """Problems for genome names that match no alignment record, or several."""
+    problems: List[str] = []
+    if unmatched:
+        problems.append(
+            f"the genome map names {len(unmatched)} genomes that the alignment does not hold: "
+            f"{', '.join(unmatched[:5])}")
+    if ambiguous:
+        problems.append(
+            f"{len(ambiguous)} genomes of the genome map match more than one record of the "
+            f"alignment: {', '.join(ambiguous[:5])}")
+    return problems
+
+
 def check_annotations(annotations: Mapping[str, Sequence[Sequence[int]]], reference: Reference,
                       description: str) -> Report:
     """Annotations must lie within the contigs they are attached to."""

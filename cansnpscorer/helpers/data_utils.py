@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
-from cansnpscorer.helpers.names import clean_name
 
 #: CanSNPer2 calls a node only when at least this many SNPs on its path are
 #: seen, which is its --min_required_hits default.
@@ -254,7 +253,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
     """
     logging.info(f"Looking for canSNPs among {len(snps)} SNPs over {len(groups)} nodes")
 
-    wanted = {clean_name(isolate) for isolates in groups.values() for isolate in isolates}
+    wanted = {isolate for isolates in groups.values() for isolate in isolates}
     missing = sorted(wanted - set(alignment))
     if missing:
         raise ValueError(
@@ -270,7 +269,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
             f"{', '.join(empty[:5])}")
 
     members = {
-        node: [clean_name(isolate) for isolate in isolates]
+        node: list(isolates)
         for node, isolates in groups.items() if isolates
     }
 

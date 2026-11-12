@@ -269,14 +269,72 @@ def test_annotations_are_matched_to_contigs_by_name(dataset):
     assert annotations_by_contig({"c1": [(3, 4)]}, reference, "gene")["c2"] == []
 
 
-def test_annotations_whose_names_match_nothing_fall_back_to_file_order(dataset):
+def test_annotations_whose_names_match_nothing_are_refused(dataset):
+    # Matching by file order once attached the genes of a sequence the
+    # reference does not hold to another contig, with only a warning.
     reference = reference_parser(dataset.reference)
-    by_accession = {"NC0001": [(1, 2)], "NC0002": [(3, 4)]}
-    assert annotations_by_contig(by_accession, reference, "gene") == {
-        "c1": [(1, 2)], "c2": [(3, 4)]}
+    with pytest.raises(ValueError, match="none of the 2 sequences"):
+        annotations_by_contig({"NC0001": [(1, 2)], "NC0002": [(3, 4)]}, reference, "gene")
 
 
-def test_annotations_that_match_neither_by_name_nor_by_count_are_refused(dataset):
+def test_annotations_on_a_sequence_the_reference_lacks_are_left_out(dataset, caplog):
     reference = reference_parser(dataset.reference)
-    with pytest.raises(ValueError, match="describes 1 sequences .* but the reference has 2"):
-        annotations_by_contig({"NC0001": []}, reference, "gene")
+    matched = annotations_by_contig({"c1": [(3, 4)], "CP000890.1": [(1, 2)]}, reference, "gene")
+    assert matched == {"c1": [(3, 4)], "c2": []}
+    assert "CP000890.1" in caplog.text
+
+
+def test_a_contig_is_named_by_the_first_word_of_its_header(dataset):
+    # The dataset's headers read "c1 Testus organismus c1, complete sequence".
+    assert reference_parser(dataset.reference).names == ["c1", "c2"]
+
+
+# -- standard names and annotations ------------------------------------------
+
+
+def test_two_records_with_one_id_are_refused(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_fasta
+
+    path = tmp_path / "twice.fasta"
+    path.write_text(">c1 chromosome\nACGT\n>c1 plasmid\nACGT\n")
+    with pytest.raises(ValueError, match="names c1 more than once"):
+        read_fasta(str(path))
+
+
+def test_a_prokka_gff3_with_cds_only_gives_genes_and_frames(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_gff3
+
+    # Prokka writes CDS features without gene features unless --addgenes,
+    # and ends the file with the sequence after a ##FASTA directive.
+    path = tmp_path / "prokka.gff"
+    path.write_text("##gff-version 3\n"
+                    "c1\tProdigal:002006\tCDS\t3\t11\t.\t-\t0\tID=X_00001\n"
+                    "c1\tAragorn:001002\ttRNA\t20\t90\t.\t+\t.\tID=X_00002\n"
+                    "##FASTA\n>c1\nACGTACGTACGT\n")
+    model = read_gff3(str(path))
+    assert model.genes == {"c1": [(2, 10, "-")]}
+    assert model.cds == {"c1": [(2, 10, "-", 0)]}
+
+
+@pytest.mark.parametrize("line,message", [
+    ("c1\tx\tCDS\t3\t11\t.\t+\t.\tID=a", "without a phase"),
+    ("c1\tx\tgene\t11\t3\t.\t+\t.\tID=a", "impossible interval"),
+    ("c1 x gene 3 11 . + . ID=a", "9"),
+])
+def test_a_malformed_gff3_line_is_refused(tmp_path, line, message):
+    from cansnpscorer.helpers.file_utils import read_gff3
+
+    path = tmp_path / "bad.gff"
+    path.write_text("##gff-version 3\n" + line + "\n")
+    with pytest.raises(ValueError, match=message):
+        read_gff3(str(path))
+
+
+def test_genome_names_are_resolved_to_alignment_records():
+    from cansnpscorer.helpers.names import resolve_clusters
+
+    records = ["ref", "Fam_Gen_sp_GCF_000000001.1", "strain-7"]
+    clusters = {"A": ["GCF_000000001.1", "strain_7", "strain7"], "B": ["missing"]}
+    resolved, unmatched, ambiguous = resolve_clusters(clusters, records)
+    assert resolved == {"A": ["Fam_Gen_sp_GCF_000000001.1", "strain-7"], "B": []}
+    assert unmatched == ["missing"] and ambiguous == []

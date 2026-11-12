@@ -57,6 +57,25 @@ def resolve_names(names, records):
     return matched, unmatched, ambiguous
 
 
+def resolve_clusters(clusters, records):
+    """Rewrite the genomes of each node as the alignment records they match.
+
+    Returns the clusters with record names, the genome names that matched no
+    record, and those that matched more than one.
+    """
+    names = [name for genomes in clusters.values() for name in genomes]
+    matched, unmatched, ambiguous = resolve_names(names, records)
+    resolved = {}
+    for node, genomes in clusters.items():
+        found = []
+        for name in genomes:
+            record = matched.get(name)
+            if record is not None and record not in found:
+                found.append(record)
+        resolved[node] = found
+    return resolved, sorted(set(unmatched)), sorted(set(ambiguous))
+
+
 def strip_fasta_suffix(name: str) -> str:
     """Remove a FASTA file suffix, so that a file name reads as its genome.
 

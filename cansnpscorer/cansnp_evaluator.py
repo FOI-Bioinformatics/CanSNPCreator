@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from cansnpscorer.helpers.data_utils import filter_scores_by_cutoff, summarize_scores
 from cansnpscorer.helpers.file_utils import (
     ParsedSnp,
-    gff_parser,
+    read_gff3,
     read_hc_file,
     reference_parser,
     score_file_writer,
@@ -26,48 +26,37 @@ NUCLEOTIDES = frozenset("ACGT")
 
 def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference,
                           description: str) -> Dict[str, Sequence]:
-    """Attach annotations to the contigs of the reference.
+    """Attach annotations to the contigs of the reference, by exact sequence ID.
 
-    Annotations are matched to contigs by name. When the names have nothing in
-    common, which happens when a GFF uses accessions and the reference FASTA
-    uses something else, they are matched by file order instead, and that is
-    only safe if both files describe the same contigs in the same order.
+    GFF3, BED and VCF name a sequence by the ID the reference FASTA gives it,
+    the first word of its header, so the names must agree. Annotations on a
+    sequence the reference does not hold are left out with a warning.
 
     Raises:
-        ValueError: If the names do not match and the two files do not even
-            describe the same number of contigs, in which case every
-            annotation after the first difference would land on the wrong one.
+        ValueError: If no annotated sequence is a contig of the reference,
+            which means the file describes another genome or another naming.
     """
     if not annotations:
         logging.warning(f"The {description} file describes no sequences")
         return {}
 
-    shared = set(annotations) & set(reference.names)
-    if shared:
-        unmatched = sorted(set(annotations) - set(reference.names))
-        if unmatched:
-            logging.warning(
-                f"The {description} file describes sequences that the reference does not hold, "
-                f"and they were left out: {', '.join(unmatched[:5])}")
-        missing = sorted(set(reference.names) - set(annotations))
-        if missing:
-            logging.warning(
-                f"These contigs have no {description} annotation: {', '.join(missing[:5])}")
-        return {name: annotations.get(name, []) for name in reference.names}
-
-    if len(annotations) != len(reference):
+    unmatched = sorted(set(annotations) - set(reference.names))
+    if len(unmatched) == len(annotations):
         raise ValueError(
-            f"the {description} file describes {len(annotations)} sequences "
-            f"({', '.join(sorted(annotations)[:5])}) but the reference has {len(reference)} "
-            f"({', '.join(reference.names)}), and their names have nothing in common")
-
-    logging.warning(
-        f"No {description} sequence name matches a contig of the reference, so they are "
-        f"matched by file order: {', '.join(f'{a}={b}' for a, b in zip(sorted(annotations), reference.names))}")
-    return {
-        contig.name: annotations[name]
-        for contig, name in zip(reference, sorted(annotations))
-    }
+            f"none of the {len(annotations)} sequences of the {description} file "
+            f"({', '.join(unmatched[:5])}) is a contig of the reference "
+            f"({', '.join(reference.names[:5])}). Sequences are matched by ID, the first word "
+            f"of each FASTA header, so the files must describe the same assembly under the "
+            f"same names")
+    if unmatched:
+        logging.warning(
+            f"The {description} file describes sequences that the reference does not hold, "
+            f"and they were left out: {', '.join(unmatched[:5])}")
+    missing = sorted(set(reference.names) - set(annotations))
+    if missing:
+        logging.warning(
+            f"These contigs have no {description} annotation: {', '.join(missing[:5])}")
+    return {name: annotations.get(name, []) for name in reference.names}
 
 
 def locate_snps(snps: Sequence[ParsedSnp], reference: Reference,
@@ -145,7 +134,9 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
     try:
         snps = snp_file_parser(snp_file)
         reference = reference_parser(reference_file)
-        genes = annotations_by_contig(gff_parser(gff_file), reference, "gene")
+        model = read_gff3(gff_file)
+        genes = annotations_by_contig(model.genes, reference, "gene")
+        cds = annotations_by_contig(model.cds, reference, "CDS") if model.cds else {}
         repeats = annotations_by_contig(trf_parser(trf_file), reference, "repeat")
         hierarchy = read_hc_file(hcfile)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
@@ -166,7 +157,11 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
     # Neighbouring SNPs matter whether or not they are canonical, so the
     # contexts are built from every SNP and only then narrowed to the canonical
     # ones, which are the candidate assay targets.
-    contexts = contexts_for(located, genes, repeats)
+    if not cds:
+        logging.warning(
+            "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
+            "scores 0 for the mutation term")
+    contexts = contexts_for(located, genes, repeats, cds)
     scores = [
         score_snp(context, tandem_limit, gene_limit, gc_goal, weights)
         for context in contexts

@@ -31,6 +31,7 @@ from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tupl
 
 from cansnpscorer.findings import CHECK, EXTEND, MODIFY, Finding, problem, recommendation
 from cansnpscorer.helpers.data_utils import snp_extractor
+from cansnpscorer.helpers.names import resolve_clusters
 from cansnpscorer.model import AlignmentMap, Reference, ReferenceError
 from cansnpscorer.scheme import Scheme
 
@@ -433,7 +434,14 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
                         f"the alignment's first record is not the reference genome: {error}")]
 
     names = list(alignment)
+    clusters, unmatched, ambiguous = resolve_clusters(clusters, names)
     placement = Placement(scheme, clusters, names)
+    placement.missing_genomes = sorted(set(placement.missing_genomes) | set(unmatched))
+    if ambiguous:
+        findings.append(problem(
+            CHECK, "ambiguous-genome", "",
+            f"{len(ambiguous)} genomes of the genome map match more than one record of the "
+            f"alignment, and were left out: {_names(ambiguous)}"))
 
     if placement.unknown_clusters:
         findings.append(problem(

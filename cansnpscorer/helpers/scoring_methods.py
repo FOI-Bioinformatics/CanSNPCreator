@@ -16,17 +16,20 @@ The five terms are, each on a scale of 0 to 1 before weighting:
 ``repeat``
     distance to the closest tandem repeat.
 ``gene``
-    whether the SNP falls in a gene, which makes its context better defined.
+    whether the SNP falls in a gene or CDS, which makes its context better
+    defined.
 ``mutation``
-    whether the substitution is synonymous, which makes it more likely to be
-    neutral; a substitution that introduces or removes a stop codon scores 0.
+    whether the substitution is synonymous in the CDS it falls in, read in
+    that CDS's frame, which makes it more likely to be neutral; one that
+    introduces or removes a stop codon, or lies outside any CDS, scores 0.
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from cansnpscorer.helpers.data_utils import codon_comparer, gc_content, neighbour_distance, search
-from cansnpscorer.model import Contig, reverse_complement
+from cansnpscorer.model import Contig
+from cansnpscorer.model import complement as complement_base
 
 #: The score terms, in the order they are reported.
 TERMS = ("neighbour_score", "gc_score", "tandem_score", "gene_score", "mutation_score")
@@ -53,7 +56,9 @@ class SnpContext:
     following: Optional[int] = None
     """0-based position of the closest SNP to the right on this contig."""
     genes: Sequence[Sequence[int]] = field(default_factory=list)
-    """Gene intervals on this contig as (start, end, strand), sorted by start."""
+    """Gene and CDS intervals on this contig as (start, end, strand), sorted by start."""
+    cds: Sequence[Sequence[int]] = field(default_factory=list)
+    """CDS intervals on this contig as (start, end, strand, phase), sorted by start."""
     repeats: Sequence[Sequence[int]] = field(default_factory=list)
     """Tandem repeat intervals on this contig as (start, end), sorted by start."""
 
@@ -94,50 +99,73 @@ def repeat_score(context: SnpContext, limit: int) -> float:
     return score
 
 
-def gene_score(context: SnpContext, limit: int) -> Tuple[float, Optional[Sequence[int]]]:
-    """Whether the SNP falls in a gene, and the gene it falls in.
+def gene_score(context: SnpContext, limit: int) -> float:
+    """Whether the SNP falls in a gene or CDS.
 
-    The score is 1 inside a gene and falls to 0 at the limit, so a SNP in a
-    well defined coding context scores highest. The interval is returned only
-    when the SNP is inside the gene, where its reading frame applies.
+    The score is 1 inside one and falls to 0 at the limit, so a SNP in a well
+    defined coding context scores highest.
     """
-    distance, interval = search(context.position, context.genes, limit)
-    return 1.0 - distance, interval
+    distance, _interval = search(context.position, context.genes, limit)
+    return 1.0 - distance
 
 
-def mutation_score(context: SnpContext, interval: Optional[Sequence[int]]) -> float:
-    """Compare the codons the alleles produce, for a SNP inside a gene.
+def codons_at(context: SnpContext) -> Optional[List[str]]:
+    """The codon each allele gives, read in the frame of the CDS the SNP is in.
 
-    Returns 0 for a SNP outside a gene, and for one whose codon is incomplete
-    because the annotated gene is not a whole number of codons.
+    A CDS is read from its 5' end, skipping ``phase`` bases first, as GFF3
+    defines the phase: forward from its start on the plus strand, and backward
+    from its end on the minus strand, complemented. Returns None outside every
+    CDS, for a SNP in the skipped bases, and for a codon the CDS ends inside.
+    When CDS overlap, the first one that holds the SNP is read.
     """
-    if interval is None:
-        return 0.0
     if len(context.alleles) != 2:
+        return None
+    sequence = context.contig.sequence
+    position = context.position
+
+    for start, end, strand, phase in context.cds:
+        if start > position:
+            break
+        if position > end:
+            continue
+        if strand == "-":
+            # Transcribed from the end: the first codon begins at end - phase
+            # and each codon reads towards lower coordinates.
+            first = end - phase
+            if position > first:
+                return None
+            index = (first - position) % 3
+            top = position + index
+            positions = [top, top - 1, top - 2]
+            if positions[-1] < start:
+                return None
+            codon = [complement_base(sequence[at]) for at in positions]
+            alleles = [complement_base(allele) for allele in context.alleles]
+        else:
+            first = start + phase
+            if position < first:
+                return None
+            index = (position - first) % 3
+            positions = [position - index + offset for offset in range(3)]
+            if positions[-1] > end:
+                return None
+            codon = [sequence[at] for at in positions]
+            alleles = list(context.alleles)
+        codons = []
+        for allele in alleles:
+            changed = list(codon)
+            changed[index] = allele
+            codons.append("".join(changed))
+        return codons
+    return None
+
+
+def mutation_score(context: SnpContext) -> float:
+    """1 for a synonymous substitution, 0.5 for one that changes the amino acid,
+    and 0 for one that gains or loses a stop codon or lies outside every CDS."""
+    codons = codons_at(context)
+    if codons is None:
         return 0.0
-
-    start, end, strand = interval[0], interval[1], interval[2]
-    gene = context.contig.sequence[start:end + 1]
-    offset = context.position - start
-    if not 0 <= offset < len(gene):
-        return 0.0
-
-    alleles = list(context.alleles)
-    if strand == "-":
-        gene = reverse_complement(gene)
-        offset = len(gene) - 1 - offset
-        alleles = [reverse_complement(allele) for allele in alleles]
-
-    codons = []
-    codon_start = offset - offset % 3
-    for allele in alleles:
-        codon = list(gene[codon_start:codon_start + 3])
-        if len(codon) != 3:
-            return 0.0
-        codon[offset - codon_start] = allele
-        codons.append("".join(codon))
-
-    # The strand is already accounted for, so compare the codons as they read.
     return codon_comparer(codons, "+")
 
 
@@ -174,13 +202,12 @@ def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
     """
     weights = DEFAULT_WEIGHTS if weights is None else weights
 
-    gene, interval = gene_score(context, gene_limit)
     raw = {
         "neighbour_score": neighbour_score(context),
         "gc_score": gc_score(context, gc_goal),
         "tandem_score": repeat_score(context, tandem_limit),
-        "gene_score": gene,
-        "mutation_score": mutation_score(context, interval),
+        "gene_score": gene_score(context, gene_limit),
+        "mutation_score": mutation_score(context),
     }
 
     terms = {term: round(raw[term] * weights.get(term, 1.0) * 100) for term in TERMS}
@@ -197,13 +224,15 @@ def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
 
 def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
                  genes: Dict[str, Sequence[Sequence[int]]],
-                 repeats: Dict[str, Sequence[Sequence[int]]]) -> List[SnpContext]:
+                 repeats: Dict[str, Sequence[Sequence[int]]],
+                 cds: Optional[Dict[str, Sequence[Sequence[int]]]] = None) -> List[SnpContext]:
     """Build the contexts for a set of SNPs, filling in each SNP's neighbours.
 
     Args:
         snps: (contig, 0-based position within the contig, node, alleles) per SNP.
-        genes: Gene intervals per contig name.
+        genes: Gene and CDS intervals per contig name.
         repeats: Tandem repeat intervals per contig name.
+        cds: CDS intervals with their phase per contig name.
 
     Returns:
         One context per SNP, ordered by contig and position. Neighbours are the
@@ -231,6 +260,7 @@ def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
                 following=on_contig[index + 1] if index + 1 < len(on_contig) else None,
                 genes=sorted(genes.get(contig.name, []), key=lambda interval: interval[0]),
                 repeats=sorted(repeats.get(contig.name, []), key=lambda interval: interval[0]),
+                cds=sorted((cds or {}).get(contig.name, []), key=lambda interval: interval[0]),
             )
         )
     return contexts
