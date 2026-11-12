@@ -171,37 +171,26 @@ def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, 
         ]
 
     """
-    alignment = list(fasta.values())
-    reference = alignment[0]
-    alignment = alignment[1:]
+    nucleotides = frozenset("ACGT")
+    rows = list(fasta.values())
+    total_length = len(rows[0]) if rows else 0
     snps = []
-
-    nucleotides = set(['A', 'T', 'C', 'G'])
-    total_length = len(reference)
-    last_logged_percent = 0
+    step = max(total_length // 10, 1)
 
     logging.info("Starting SNP extraction...")
 
-    for index, nucleotide in enumerate(reference):
-        if nucleotide not in nucleotides:
+    # zip walks the columns in C, one tuple per column, which is several times
+    # faster than indexing every genome in Python, and the counts include the
+    # reference row as the first element.
+    for index, column in enumerate(zip(*rows)):
+        if column[0] not in nucleotides:
             continue
-
-        variants_at_position = [genome[index] for genome in alignment]
-        variants_count = Counter(variants_at_position)
-
-        if nucleotide not in variants_count:
-            variants_count[nucleotide] = 1
-        else:
-            variants_count[nucleotide] += 1
-
-        if all(base in nucleotides for base in variants_count) and len(variants_count) == 2:
-            snps.append({'index': index, 'variants': dict(variants_count)})
-
-        # Log progress every 10%
-        current_percent = int(((index + 1) / total_length) * 100)
-        if current_percent >= last_logged_percent + 10:
-            logging.info(f"Processed {index + 1}/{total_length} positions ({current_percent}%)")
-            last_logged_percent = current_percent
+        counts = Counter(column)
+        if len(counts) == 2 and nucleotides.issuperset(counts):
+            snps.append({'index': index, 'variants': dict(counts)})
+        if (index + 1) % step == 0:
+            logging.info(f"Processed {index + 1}/{total_length} positions "
+                         f"({round(100 * (index + 1) / total_length)}%)")
 
     logging.info(f"Extraction of {len(snps)} SNPs complete")
     return snps
