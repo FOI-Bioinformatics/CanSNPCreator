@@ -4,7 +4,12 @@ import pytest
 from conftest import CLUSTERS
 
 from cansnpscorer import cansnp_trf
-from cansnpscorer.helpers.file_utils import HCParser, read_alignment, read_hc_file, reference_parser
+from cansnpscorer.helpers.file_utils import (
+    read_alignment,
+    read_genome_map,
+    read_hierarchy,
+    reference_parser,
+)
 from cansnpscorer.validate import (
     check_alignment_against_reference,
     check_annotations,
@@ -18,8 +23,8 @@ def pieces(dataset):
     return (
         read_alignment(dataset.alignment),
         reference_parser(dataset.reference),
-        read_hc_file(dataset.hc_yaml),
-        HCParser(dataset.groups_csv, data_format="csv").isolates,
+        read_hierarchy(dataset.hierarchy),
+        read_genome_map(dataset.genome_map),
     )
 
 

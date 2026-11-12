@@ -10,7 +10,7 @@ from cansnpscorer.helpers.data_utils import filter_scores_by_cutoff, summarize_s
 from cansnpscorer.helpers.file_utils import (
     ParsedSnp,
     read_gff3,
-    read_hc_file,
+    read_hierarchy,
     reference_parser,
     score_file_writer,
     snp_file_parser,
@@ -127,29 +127,29 @@ def back_up_existing(output: str) -> None:
     logging.warning(f"{output} already existed; copied it to {backup_name}")
 
 
-def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfile=None,
-         output_file=None, tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff_value=0,
-         top_n_snp=None, weights: Optional[Dict[str, float]] = None) -> int:
+def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
+         tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
+         weights: Optional[Dict[str, float]] = None) -> int:
     """Score the canSNPs in a SNP file. Returns a process exit status."""
     try:
-        snps = snp_file_parser(snp_file)
-        reference = reference_parser(reference_file)
-        model = read_gff3(gff_file)
-        genes = annotations_by_contig(model.genes, reference, "gene")
-        cds = annotations_by_contig(model.cds, reference, "CDS") if model.cds else {}
-        repeats = annotations_by_contig(trf_parser(trf_file), reference, "repeat")
-        hierarchy = read_hc_file(hcfile)
+        parsed = snp_file_parser(snps)
+        genome = reference_parser(reference)
+        model = read_gff3(genes)
+        gene_intervals = annotations_by_contig(model.genes, genome, "gene")
+        cds = annotations_by_contig(model.cds, genome, "CDS") if model.cds else {}
+        repeat_intervals = annotations_by_contig(trf_parser(repeats), genome, "repeat")
+        tree = read_hierarchy(hierarchy) if hierarchy else None
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 
-    problems, warnings = check_annotations(genes, reference, "gene")
-    found = check_annotations(repeats, reference, "repeat")
+    problems, warnings = check_annotations(gene_intervals, genome, "gene")
+    found = check_annotations(repeat_intervals, genome, "repeat")
     if not report(problems + found[0], warnings + found[1], "annotations"):
         return 2
 
     try:
-        located = locate_snps(snps, reference)
+        located = locate_snps(parsed, genome)
     except (ValueError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -161,7 +161,7 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
         logging.warning(
             "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
             "scores 0 for the mutation term")
-    contexts = contexts_for(located, genes, repeats, cds)
+    contexts = contexts_for(located, gene_intervals, repeat_intervals, cds)
     scores = [
         score_snp(context, tandem_limit, gene_limit, gc_goal, weights)
         for context in contexts
@@ -169,11 +169,12 @@ def main(snp_file=None, reference_file=None, gff_file=None, trf_file=None, hcfil
     ]
     logging.info(f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs")
 
-    filtered = filter_scores_by_cutoff(scores, cutoff_value, top_n_snp)
-    logging.info(f"{len(filtered)} canSNPs passed the cutoff of {cutoff_value}")
+    filtered = filter_scores_by_cutoff(scores, cutoff, top_n)
+    logging.info(f"{len(filtered)} canSNPs passed the cutoff of {cutoff}")
 
-    summarize_scores(hierarchy.nodes, filtered)
+    if tree is not None:
+        summarize_scores(tree.nodes, filtered)
 
-    back_up_existing(output_file)
-    score_file_writer(filtered, output_file)
+    back_up_existing(output)
+    score_file_writer(filtered, output)
     return 0

@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
 
 from cansnpscorer.findings import CHECK, MODIFY, Finding, problem, recommendation
-from cansnpscorer.helpers.file_utils import read_hc_file, recognize_hc_file_format
+from cansnpscorer.helpers.file_utils import hierarchy_format, read_hierarchy
 from cansnpscorer.helpers.names import resolve_names
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import AlignmentMap, Reference
@@ -64,13 +64,12 @@ def read_genome_tree(path: str, nodes_file: Optional[str] = None) -> Hierarchy:
         HierarchyError: If the tree cannot be read.
         ValueError: If the node table lacks its columns.
     """
-    file_format = recognize_hc_file_format(path)
-    if file_format == "newick":
+    if hierarchy_format(path) == "newick":
         # A genome tree's numeric internal labels are support values.
         with open(path) as handle:
             tree = Hierarchy.from_newick(handle.read(), support_labels=True)
     else:
-        tree = read_hc_file(path, file_format)
+        tree = read_hierarchy(path)
     if nodes_file:
         with open(nodes_file) as handle:
             reader = csv.DictReader(handle, delimiter="\t")

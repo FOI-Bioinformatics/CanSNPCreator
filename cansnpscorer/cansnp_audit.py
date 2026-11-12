@@ -44,10 +44,9 @@ from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of th
 )
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
-    HCParser,
     read_alignment,
+    read_genome_map,
     read_score_file,
-    recognize_group_file_format,
     reference_parser,
 )
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
@@ -440,58 +439,60 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
     logging.info(f"Wrote {len(findings)} findings to {path}")
 
 
-def main(scheme_dir=None, organism=None, reference_file=None, score_file=None, genome=None,
+def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=None,
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
-         strict=False, fastafile=None, groupfile=None, min_clade_size=2,
-         min_clade_snps=1, tree=None, genome_map=None) -> int:
+         strict=False, alignment=None, genome_map=None, min_clade_size=2,
+         min_clade_snps=1, tree=None, members=None) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
     the scheme holds a problem, or, with ``strict``, a recommendation.
     """
+    if scores and not reference:
+        logging.error(
+            "--scores needs --reference, because the scores give positions by contig and the "
+            "scheme counts them over the concatenated genome")
+        return 1
+    if alignment and not reference:
+        logging.error("--alignment needs --reference, the genome the alignment is against")
+        return 1
+    if bool(alignment) != bool(genome_map or tree) or (genome_map and tree):
+        logging.error(
+            "checking the scheme against the genomes needs --alignment, and either "
+            "--genome-map or --tree to say where the genomes sit in the scheme")
+        return 1
+    if members and not tree:
+        logging.error("--members applies to the leaves of --tree")
+        return 1
+
     try:
         scheme = read_scheme(scheme_dir, organism)
-        reference = reference_parser(reference_file) if reference_file else None
-        scores = read_score_file(score_file) if score_file else None
+        sequence = reference_parser(reference) if reference else None
+        scored = read_score_file(scores) if scores else None
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1
 
-    if score_file and reference is None:
-        logging.error(
-            "--score-file needs --reference-file, because the score file gives positions by "
-            "contig and the scheme counts them over the concatenated genome")
-        return 1
-
-    placed_by = groupfile or tree
-    if (groupfile and tree) or bool(fastafile) != bool(placed_by) \
-            or (fastafile and reference is None):
-        logging.error(
-            "checking the scheme against the genomes needs --fastafile and --reference-file, "
-            "and either --groupfile or --tree to say where the genomes sit in the scheme")
-        return 1
-
-    alignment = clusters = None
+    aligned = clusters = None
     placement_findings: List[Finding] = []
-    if fastafile:
+    if alignment:
         try:
-            alignment = read_alignment(fastafile)
-            if groupfile:
-                clusters = HCParser(groupfile,
-                                    data_format=recognize_group_file_format(groupfile)).isolates
+            aligned = read_alignment(alignment)
+            if genome_map:
+                clusters = read_genome_map(genome_map)
             else:
                 genome_tree = read_genome_tree(tree)
-                members = read_members(genome_map, genome_tree) if genome_map else None
-                placement = place(scheme, genome_tree, alignment, reference, genome,
-                                  members=members)
+                folded = read_members(members, genome_tree) if members else None
+                placement = place(scheme, genome_tree, aligned, sequence, genome,
+                                  members=folded)
                 clusters = placement.clusters
                 placement_findings = placement.findings
         except (OSError, ValueError, HierarchyError, ReferenceError) as error:
             logging.error(error)
             return 1
 
-    findings = audit_scheme(scheme, reference, scores, genome, min_required_hits, proximity,
-                            alignment, clusters, min_clade_size, min_clade_snps)
+    findings = audit_scheme(scheme, sequence, scored, genome, min_required_hits, proximity,
+                            aligned, clusters, min_clade_size, min_clade_snps)
     if placement_findings:
         order = {PROBLEM: 0, RECOMMENDATION: 1}
         findings = sorted(findings + placement_findings,

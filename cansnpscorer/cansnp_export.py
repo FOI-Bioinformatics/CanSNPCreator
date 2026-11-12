@@ -22,7 +22,7 @@ import os
 import re
 from typing import Dict, List, Sequence, Tuple
 
-from cansnpscorer.helpers.file_utils import read_hc_file, read_score_file, reference_parser
+from cansnpscorer.helpers.file_utils import read_hierarchy, read_score_file, reference_parser
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
@@ -144,7 +144,7 @@ def paths_for(hierarchy: Hierarchy, kept: Sequence[str]) -> List[List[str]]:
 
 def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
                  best: Dict[str, ScoredSnp], reference: Reference, genome: str, strain: str,
-                 reference_label: str, genbank_id: str, refseq_id: str,
+                 citation: str, genbank_id: str, refseq_id: str,
                  assembly_name: str) -> List[str]:
     """Write the three source files and return their paths."""
     os.makedirs(outdir, exist_ok=True)
@@ -166,7 +166,7 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
             # the concatenated genome, as the published multi-contig schemes do.
             position = reference.contig(score.contig).start + score.position
             handle.write("\t".join([
-                node, strain, reference_label, genome, str(position),
+                node, strain, citation, genome, str(position),
                 score.derived, score.ancestral,
             ]) + "\n")
     written.append(snp_path)
@@ -180,29 +180,29 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
     return written
 
 
-def main(score_file=None, hcfile=None, reference_file=None, outdir=".", organism=None,
-         genome=None, strain=None, reference_label=None, genbank_id=None, refseq_id=None,
+def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
+         genome=None, strain=None, citation=None, genbank_id=None, refseq_id=None,
          assembly_name=None, prune=False) -> int:
     """Write a scored scheme as CanSNPer2-data source files. Returns an exit status."""
     try:
-        scores = read_score_file(score_file)
-        hierarchy = read_hc_file(hcfile)
-        reference = reference_parser(reference_file)
+        scored = read_score_file(scores)
+        tree = read_hierarchy(hierarchy)
+        sequence = reference_parser(reference)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 
-    best = best_per_node(scores)
-    problems, warnings = check_scheme(hierarchy, best, reference)
-    problems += check_metadata(genome, strain, reference_label, genbank_id, refseq_id,
+    best = best_per_node(scored)
+    problems, warnings = check_scheme(tree, best, sequence)
+    problems += check_metadata(genome, strain, citation, genbank_id, refseq_id,
                                assembly_name)
 
-    without = [node for node in hierarchy.nodes if node not in best]
+    without = [node for node in tree.nodes if node not in best]
     if without:
-        if hierarchy.root in without:
+        if tree.root in without:
             problems.append(
-                f"the root '{hierarchy.root}' has no canSNP, and a scheme cannot be written "
-                f"without one. Lower --cutoff-value, or root the scheme elsewhere")
+                f"the root '{tree.root}' has no canSNP, and a scheme cannot be written "
+                f"without one. Lower the evaluate cutoff, or root the scheme elsewhere")
         if prune:
             warnings.append(
                 f"{len(without)} nodes have no canSNP and were left out of the scheme, so their "
@@ -210,16 +210,16 @@ def main(score_file=None, hcfile=None, reference_file=None, outdir=".", organism
         else:
             problems.append(
                 f"{len(without)} nodes have no canSNP: {', '.join(without[:5])}. Every node of a "
-                f"CanSNPer2 scheme carries exactly one, so either lower --cutoff-value or pass "
+                f"CanSNPer2 scheme carries exactly one, so either lower the evaluate cutoff or pass "
                 f"--prune to leave these nodes out")
 
     if not report(problems, warnings, "scheme"):
         return 2
 
-    kept = [node for node in hierarchy.nodes if node in best]
-    paths = paths_for(hierarchy, kept)
-    written = write_scheme(outdir, organism, paths, best, reference, genome, strain,
-                           reference_label, genbank_id, refseq_id, assembly_name)
+    kept = [node for node in tree.nodes if node in best]
+    paths = paths_for(tree, kept)
+    written = write_scheme(outdir, organism, paths, best, sequence, genome, strain,
+                           citation, genbank_id, refseq_id, assembly_name)
 
     logging.info(f"Wrote a scheme of {len(kept)} nodes: {', '.join(written)}")
     logging.info(

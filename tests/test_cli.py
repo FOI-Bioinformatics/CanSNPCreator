@@ -22,10 +22,10 @@ def run(monkeypatch, *arguments):
 def extract(monkeypatch, dataset, output, hierarchy=None, groups=None):
     return run(
         monkeypatch, "extract",
-        "--groupfile", groups or dataset.groups_csv,
-        "--hcfile", hierarchy or dataset.hc_yaml,
-        "--fastafile", dataset.alignment,
-        "--reference-file", dataset.reference,
+        "--genome-map", groups or dataset.genome_map,
+        "--hierarchy", hierarchy or dataset.hierarchy,
+        "--alignment", dataset.alignment,
+        "--reference", dataset.reference,
         "-o", output,
     )
 
@@ -33,13 +33,13 @@ def extract(monkeypatch, dataset, output, hierarchy=None, groups=None):
 def evaluate(monkeypatch, dataset, snp_file, output, *extra):
     return run(
         monkeypatch, "evaluate",
-        "--snp-file", snp_file,
-        "--reference-file", dataset.reference,
-        "--gff-file", dataset.gff,
-        "--trf-file", dataset.trf,
-        "--hcfile", dataset.hc_yaml,
-        "--output-file", output,
-        "--cutoff-value", "0",
+        "--snps", snp_file,
+        "--reference", dataset.reference,
+        "--genes", dataset.gff,
+        "--repeats", dataset.trf,
+        "--hierarchy", dataset.hierarchy,
+        "-o", output,
+        "--cutoff", "0",
         *extra,
     )
 
@@ -47,14 +47,13 @@ def evaluate(monkeypatch, dataset, snp_file, output, *extra):
 # -- the whole run -----------------------------------------------------------
 
 
-@pytest.mark.parametrize("which", ["yaml", "repgenr"])
+@pytest.mark.parametrize("which", ["table", "newick"])
 def test_extract_then_evaluate(monkeypatch, dataset, tmp_path, which):
     snp_file = str(tmp_path / "snps.tsv")
     scores = str(tmp_path / "scores.csv")
 
-    hierarchy = dataset.hc_yaml if which == "yaml" else dataset.hc_repgenr
-    groups = dataset.groups_csv if which == "yaml" else dataset.groups_repgenr
-    assert extract(monkeypatch, dataset, snp_file, hierarchy, groups) == 0
+    hierarchy = dataset.hierarchy if which == "table" else dataset.hierarchy_newick
+    assert extract(monkeypatch, dataset, snp_file, hierarchy, dataset.genome_map) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores) == 0
 
     rows = list(csv.DictReader(open(scores)))
@@ -81,7 +80,7 @@ def test_the_evaluation_can_be_narrowed_to_the_best_snp_per_node(monkeypatch, da
     snp_file = str(tmp_path / "snps.tsv")
     scores = str(tmp_path / "scores.csv")
     assert extract(monkeypatch, dataset, snp_file) == 0
-    assert evaluate(monkeypatch, dataset, snp_file, scores, "--top-n-snp", "1") == 0
+    assert evaluate(monkeypatch, dataset, snp_file, scores, "--top-n", "1") == 0
     assert len(list(csv.DictReader(open(scores)))) == len(PLANTED)
 
 
@@ -101,10 +100,10 @@ def test_an_existing_score_file_is_backed_up(monkeypatch, dataset, tmp_path):
 def test_a_missing_input_file_exits_non_zero(monkeypatch, dataset, tmp_path):
     status = run(
         monkeypatch, "extract",
-        "--groupfile", dataset.groups_csv,
-        "--hcfile", dataset.hc_yaml,
-        "--fastafile", str(tmp_path / "absent.fasta"),
-        "--reference-file", dataset.reference,
+        "--genome-map", dataset.genome_map,
+        "--hierarchy", dataset.hierarchy,
+        "--alignment", str(tmp_path / "absent.fasta"),
+        "--reference", dataset.reference,
         "-o", str(tmp_path / "snps.tsv"),
     )
     assert status == 1
@@ -115,10 +114,10 @@ def test_a_reference_that_is_not_the_aligned_one_exits_two(monkeypatch, dataset,
     other.write_text(">c1\n" + "A" * 1000 + "\n")
     monkeypatch.setattr("sys.argv", [
         "CanSNPCreator", "extract",
-        "--groupfile", dataset.groups_csv,
-        "--hcfile", dataset.hc_yaml,
-        "--fastafile", dataset.alignment,
-        "--reference-file", str(other),
+        "--genome-map", dataset.genome_map,
+        "--hierarchy", dataset.hierarchy,
+        "--alignment", dataset.alignment,
+        "--reference", str(other),
         "-o", str(tmp_path / "snps.tsv"),
     ])
     assert main() == 2, "the inputs are inconsistent, so nothing is written"

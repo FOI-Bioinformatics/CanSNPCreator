@@ -11,9 +11,8 @@ from conftest import CLUSTERS, PLANTED, SNPS, cli_run, edit, write_fasta
 from cansnpscorer.cansnp_audit import PROBLEM, audit_scheme
 from cansnpscorer.cansnp_audit import main as audit_main
 from cansnpscorer.helpers.file_utils import (
-    HCParser,
     read_alignment,
-    recognize_group_file_format,
+    read_genome_map,
     reference_parser,
 )
 from cansnpscorer.scheme import read_scheme
@@ -21,8 +20,8 @@ from cansnpscorer.scheme import read_scheme
 
 def audit(outdir, dataset, alignment_path=None, group_path=None, **arguments):
     alignment = read_alignment(alignment_path or dataset.alignment)
-    group_path = group_path or dataset.groups_csv
-    clusters = HCParser(group_path, recognize_group_file_format(group_path)).isolates
+    group_path = group_path or dataset.genome_map
+    clusters = read_genome_map(group_path)
     return audit_scheme(read_scheme(outdir), reference_parser(dataset.reference),
                         alignment=alignment, clusters=clusters, **arguments)
 
@@ -46,9 +45,9 @@ def changed_alignment(dataset, tmp_path, changes):
 
 
 def write_groups(tmp_path, placements):
-    path = tmp_path / "groups.csv"
-    path.write_text("Strain,Group\n" + "".join(
-        f"{genome},{node}\n" for node, genomes in placements.items() for genome in genomes))
+    path = tmp_path / "genome_map.tsv"
+    path.write_text("".join(
+        f"{genome}\t{node}\n" for node, genomes in placements.items() for genome in genomes))
     return str(path)
 
 
@@ -177,12 +176,11 @@ def test_a_clade_needs_enough_genomes_and_snps_to_be_reported(written, dataset, 
 # -- the inputs RepGenR2 writes ----------------------------------------------
 
 
-def test_a_repgenr2_genome_map_places_the_genomes(written, dataset, tmp_path):
+def test_genomes_named_by_file_name_are_matched_to_records(written, dataset, tmp_path):
     genome_map = tmp_path / "genomes_map.tsv"
     genome_map.write_text("".join(
         f"{genome}.fna.gz\t{node}\n" for node, genomes in CLUSTERS.items()
         for genome in genomes))
-    assert recognize_group_file_format(str(genome_map)) == "genome_map"
     findings = audit(written[0], dataset, group_path=str(genome_map))
     assert [finding for finding in findings if finding.severity == PROBLEM] == []
 
@@ -204,8 +202,8 @@ def test_a_projected_alignment_is_read_as_reference_coordinates(written, dataset
     assert len(of(findings, "single-site")) == len(PLANTED) - 1
 
     snp_file = str(tmp_path / "snps.tsv")
-    assert cli_run("extract", "--groupfile", dataset.groups_csv, "--hcfile", dataset.hc_yaml,
-                   "--fastafile", path, "--reference-file", dataset.reference,
+    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
+                   "--alignment", path, "--reference", dataset.reference,
                    "-o", snp_file) == 0
     with open(snp_file) as handle:
         rows = [line.split("\t") for line in handle.read().splitlines()[1:]]
@@ -220,29 +218,29 @@ def test_a_projected_alignment_is_read_as_reference_coordinates(written, dataset
 def test_the_genomes_are_checked_from_the_command_line(written, dataset, tmp_path):
     outdir, _scores = written
     report = tmp_path / "findings.tsv"
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference-file", dataset.reference,
-                   "--fastafile", dataset.alignment, "--groupfile", dataset.groups_csv,
+    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+                   "--alignment", dataset.alignment, "--genome-map", dataset.genome_map,
                    "-o", str(report)) == 0
     assert "single-site" in report.read_text()
 
 
 def test_an_alignment_needs_a_group_file_and_a_reference(written, dataset):
     outdir, _scores = written
-    assert audit_main(outdir, fastafile=dataset.alignment) == 1
-    assert audit_main(outdir, fastafile=dataset.alignment,
-                      reference_file=dataset.reference) == 1
-    assert audit_main(outdir, groupfile=dataset.groups_csv,
-                      reference_file=dataset.reference) == 1
+    assert audit_main(outdir, alignment=dataset.alignment) == 1
+    assert audit_main(outdir, alignment=dataset.alignment,
+                      reference=dataset.reference) == 1
+    assert audit_main(outdir, genome_map=dataset.genome_map,
+                      reference=dataset.reference) == 1
 
 
 def test_a_recommendation_alone_exits_zero(written, dataset):
     outdir, _scores = written
     # The planted data leaves only recommendations: single sites, the
     # incongruent site, the ungrouped reference and the shallow nodes.
-    assert audit_main(outdir, reference_file=dataset.reference, fastafile=dataset.alignment,
-                      groupfile=dataset.groups_csv) == 0
-    assert audit_main(outdir, reference_file=dataset.reference, fastafile=dataset.alignment,
-                      groupfile=dataset.groups_csv, strict=True) == 2
+    assert audit_main(outdir, reference=dataset.reference, alignment=dataset.alignment,
+                      genome_map=dataset.genome_map) == 0
+    assert audit_main(outdir, reference=dataset.reference, alignment=dataset.alignment,
+                      genome_map=dataset.genome_map, strict=True) == 2
 
 
 # -- without an outgroup -----------------------------------------------------

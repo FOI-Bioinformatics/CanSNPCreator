@@ -84,8 +84,8 @@ def test_a_lower_requirement_leaves_nothing_to_extend(written, dataset):
 
 def test_the_exit_status_separates_problems_from_recommendations(written, dataset, tmp_path):
     outdir, _scores = written
-    assert audit_main(outdir, reference_file=dataset.reference) == 0
-    assert audit_main(outdir, reference_file=dataset.reference, strict=True) == 2
+    assert audit_main(outdir, reference=dataset.reference) == 0
+    assert audit_main(outdir, reference=dataset.reference, strict=True) == 2
 
     report = tmp_path / "findings.tsv"
     assert audit_main(outdir, output=str(report)) == 0
@@ -235,12 +235,12 @@ def test_a_node_the_score_file_does_not_hold_is_reported(written, dataset, tmp_p
 
 def test_the_audit_runs_with_a_score_file(written, dataset):
     outdir, scores = written
-    assert audit_main(outdir, reference_file=dataset.reference, score_file=scores) == 0
+    assert audit_main(outdir, reference=dataset.reference, scores=scores) == 0
 
 
 def test_a_score_file_without_a_reference_is_refused(written, dataset):
     outdir, scores = written
-    assert audit_main(outdir, score_file=scores) == 1
+    assert audit_main(outdir, scores=scores) == 1
 
 
 # -- the command line --------------------------------------------------------
@@ -250,7 +250,7 @@ def test_the_audit_runs_from_the_command_line(written, dataset, tmp_path):
     outdir, _scores = written
     report = tmp_path / "findings.tsv"
     assert cli_run("audit", "--scheme-dir", outdir, "--organism", "testus_organismus",
-                   "--reference-file", dataset.reference, "-o", str(report)) == 0
+                   "--reference", dataset.reference, "-o", str(report)) == 0
     assert "min-required-hits" in report.read_text()
 
 
@@ -258,7 +258,7 @@ def test_a_broken_scheme_exits_two_from_the_command_line(written, dataset):
     outdir, _scores = written
     edit(outdir, SNPS, "\tG\tC\n", "\t/\tC\n")
     assert cli_run("audit", "--scheme-dir", outdir,
-                   "--reference-file", dataset.reference) == 2
+                   "--reference", dataset.reference) == 2
 
 
 # -- against a published scheme ----------------------------------------------

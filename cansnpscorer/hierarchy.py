@@ -1,17 +1,14 @@
 """The hierarchy of a canSNP scheme.
 
-A scheme is a rooted tree whose leaves are clusters of isolates and whose
-internal nodes are the branches a canSNP marks. The hierarchy arrives in one of
-several shapes, and the tools used to treat them differently: the nested form
-was walked recursively so that an internal node received the isolates of
-everything below it, while the child and parent table was handed straight to
-that walker, which could not read it and left every internal node empty. No
-canSNP could then be assigned to a branch, which is what the tools exist to do.
+A scheme is a rooted tree of named nodes, each the branch one canSNP marks.
+Which genomes sit at which node is a separate file, the genome map, as NCBI
+Taxonomy keeps nodes.dmp apart from its accession table and FlexTaxD keeps its
+taxonomy apart from --genomeid2taxid: a node may hold no genome yet, and a
+genome may sit at an internal node.
 
-``Hierarchy`` is the one representation they all become.
+``Hierarchy`` is built from a child and parent table or from Newick.
 """
 
-import json
 import re
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
@@ -154,39 +151,6 @@ class Hierarchy:
             (child, parent if parent and str(parent).strip() else None)
             for child, parent in pairs
         ])
-
-    @classmethod
-    def from_nested(cls, data) -> "Hierarchy":
-        """Build from the nested form, as the YAML and JSON files hold it.
-
-        A mapping is a node with its children below it; a sequence holds
-        siblings; a bare value is a leaf. A node with nothing below it, written
-        either as ``name`` or as ``name:``, is a leaf.
-        """
-        pairs: List[Tuple[str, Optional[str]]] = []
-
-        def walk(node, parent: Optional[str]) -> None:
-            if isinstance(node, Mapping):
-                for name, below in node.items():
-                    pairs.append((name, parent))
-                    walk(below, name)
-            elif isinstance(node, (list, tuple, set)):
-                for item in node:
-                    walk(item, parent)
-            elif node is not None:
-                pairs.append((node, parent))
-
-        walk(data, None)
-        if not pairs:
-            raise HierarchyError("the hierarchy holds no nodes")
-        return cls(pairs)
-
-    @classmethod
-    def from_json(cls, text: str) -> "Hierarchy":
-        try:
-            return cls.from_nested(json.loads(text))
-        except json.JSONDecodeError as error:
-            raise HierarchyError(f"the hierarchy is not valid JSON: {error}") from None
 
     @classmethod
     def from_newick(cls, text: str, support_labels: bool = False) -> "Hierarchy":

@@ -6,68 +6,77 @@ from dataclasses import dataclass
 from operator import itemgetter
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from ruamel.yaml import YAML
-
 from cansnpscorer.helpers.names import strip_fasta_suffix
 from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 
+HIERARCHY_FORMATS = ("table", "newick")
 
-def read_hc_file(file_path: str, file_format: Optional[str] = None) -> Hierarchy:
-    """
-    Read the hierarchy of a scheme, whichever of the supported shapes it is in.
 
-    Parameters:
-        file_path: Path to the hierarchy file.
-        file_format: One of 'yaml', 'json', 'newick' or 'repgenr'. Recognized
-            from the file itself when not given.
+def hierarchy_format(path: str) -> str:
+    """Tell a Newick tree from a child and parent table by their first character.
 
     Returns:
-        The hierarchy as a rooted tree.
+        'newick' or 'table'.
 
     Raises:
-        HierarchyError: If the format is not supported, or the file does not
-            describe a single rooted tree.
+        HierarchyError: If the file is empty or is neither.
+    """
+    with open(path) as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("("):
+                return "newick"
+            columns = stripped.split("\t")
+            if "child" in columns and "parent" in columns:
+                return "table"
+            raise HierarchyError(
+                f"{path}: is neither a Newick tree nor a tab separated table with 'child' and "
+                f"'parent' columns; its first line is '{stripped[:60]}'")
+    raise HierarchyError(f"{path}: is empty")
+
+
+def read_hierarchy(path: str) -> Hierarchy:
+    """
+    Read the hierarchy of a scheme: which node lies under which.
+
+    Two formats are read. A tab separated table with a header naming 'child'
+    and 'parent' columns holds one row per node; the root's parent is empty,
+    or the root is the one node named only as a parent. This is the layout of
+    FlexTaxD's taxonomy and RepGenR2's tree2tax.tsv, and other columns, such as
+    tree2tax's rank, are ignored. A Newick tree names its nodes in its labels;
+    every label is read as a name, so a node called 2.1 stays 2.1.
+
+    Raises:
+        HierarchyError: If the file is in neither format, or the nodes do not
+            form a single rooted tree.
         OSError: If the file cannot be read.
     """
-    if file_format is None:
-        file_format = recognize_hc_file_format(file_path)
+    file_format = hierarchy_format(path)
+    logging.info(f"Reading the hierarchy in {path} as a {file_format}")
 
-    logging.info(f"Reading the {file_format} hierarchy in {file_path}")
-
-    if file_format == 'yaml':
-        yaml = YAML(typ='safe')
-        with open(file_path) as handle:
-            documents = list(yaml.load_all(handle))
-        if not documents or documents[0] is None:
-            raise HierarchyError(f"{file_path}: holds no YAML document")
-        hierarchy = Hierarchy.from_nested(documents[0])
-
-    elif file_format == 'json':
-        with open(file_path) as handle:
-            hierarchy = Hierarchy.from_json(handle.read())
-
-    elif file_format == 'newick':
-        with open(file_path) as handle:
+    if file_format == "newick":
+        with open(path) as handle:
             hierarchy = Hierarchy.from_newick(handle.read())
-
-    elif file_format == 'repgenr':
-        with open(file_path) as handle:
-            reader = csv.DictReader(handle, delimiter='\t')
-            if not reader.fieldnames or not {'child', 'parent'} <= set(reader.fieldnames):
-                raise HierarchyError(
-                    f"{file_path}: a repgenr hierarchy needs 'child' and 'parent' columns, "
-                    f"found {reader.fieldnames}")
-            pairs = [(row['child'], row['parent']) for row in reader if row.get('child')]
-        if not pairs:
-            raise HierarchyError(f"{file_path}: holds no hierarchy rows")
-        hierarchy = Hierarchy.from_child_parent(pairs)
-
     else:
-        raise HierarchyError(
-            f"{file_path}: unsupported hierarchy format '{file_format}'; "
-            f"use YAML, JSON, Newick or the repgenr child and parent table")
+        pairs = []
+        with open(path, newline="") as handle:
+            lines = [line.rstrip("\r\n") for line in handle
+                     if line.strip() and not line.startswith("#")]
+        header = lines[0].split("\t")
+        child_at, parent_at = header.index("child"), header.index("parent")
+        for number, line in enumerate(lines[1:], 2):
+            fields = line.split("\t")
+            if len(fields) <= child_at or not fields[child_at].strip():
+                raise HierarchyError(f"{path}: row {number} names no child")
+            parent = fields[parent_at] if len(fields) > parent_at else ""
+            pairs.append((fields[child_at], parent))
+        if not pairs:
+            raise HierarchyError(f"{path}: holds no rows below its header")
+        hierarchy = Hierarchy.from_child_parent(pairs)
 
     logging.info(
         f"Read a hierarchy of {len(hierarchy)} nodes rooted at '{hierarchy.root}', "
@@ -197,114 +206,51 @@ def read_alignment(alignment_file: str) -> Dict[str, str]:
 
 
 
-class HCParser:
+def read_genome_map(path: str) -> Dict[str, List[str]]:
     """
-    The isolates of each cluster, read from a group file.
+    Read which genomes sit at each node: two tab separated columns, genome and
+    node, and no header.
 
-    A group file names the leaves of the scheme and the isolates in each of
-    them. How those leaves nest is the hierarchy's business, and combining the
-    two is ``Hierarchy.isolates``.
+    This is the layout of FlexTaxD's --genomeid2taxid file and of RepGenR2's
+    genomes_map.tsv. A genome may sit at an internal node. Genome names are
+    kept as written and matched to alignment records later, so a name may be
+    a file name, a record ID or an assembly accession. Lines beginning with
+    '#' are comments.
+
+    Returns:
+        The genomes at each node, in file order.
+
+    Raises:
+        ValueError: If a line does not hold exactly a genome and a node, or a
+            genome is placed at two nodes.
+        OSError: If the file cannot be read.
     """
-
-    def __init__(self, group_data: str, data_format: str = 'csv') -> None:
-        """
-        Read a group file.
-
-        Args:
-            group_data: The path to the file naming the clusters and their isolates.
-            data_format: 'csv' or 'repgenr_group'.
-        """
-        logging.info(f"Reading the {data_format} group file {group_data}")
-        self.group_label = "Group"
-        self.strain_label = "Strain"
-        self.isolates: Dict[str, List[str]] = {}
-        if data_format == 'csv':
-            self._group_handler(group_data)
-        elif data_format == 'repgenr_group':
-            self._repgenr_group_handler(group_data)
-        elif data_format == 'genome_map':
-            self._genome_map_handler(group_data)
-        else:
-            raise ValueError(
-                f"unknown group file format '{data_format}'; use 'csv', 'repgenr_group' or "
-                f"'genome_map'")
-        logging.info(
-            f"Read {sum(len(names) for names in self.isolates.values())} isolates in "
-            f"{len(self.isolates)} clusters")
-
-    def _repgenr_group_handler(self, repgenr_group_data_file: str) -> None:
-        """
-        Read a repgenr group file, in which each row places one isolate in the
-        cluster of its representative.
-        """
-        with open(repgenr_group_data_file) as file:
-            reader = csv.DictReader(file, delimiter='\t')
-            required = {'representative', 'contained', 'is_self'}
-            if not reader.fieldnames or not required <= set(reader.fieldnames):
+    logging.info(f"Reading the genome map {path}")
+    clusters: Dict[str, List[str]] = {}
+    placed: Dict[str, str] = {}
+    with open(path, newline="") as handle:
+        for number, line in enumerate(handle, 1):
+            line = line.rstrip("\r\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if len(fields) != 2 or not fields[0].strip() or not fields[1].strip():
                 raise ValueError(
-                    f"{repgenr_group_data_file}: a repgenr group file needs the columns "
-                    f"{', '.join(sorted(required))}, found {reader.fieldnames}")
-            for row in reader:
-                # The representative names a cluster, which must read exactly as
-                # the hierarchy names it; the contained value names a genome,
-                # which must match the cleaned names of the alignment.
-                representative = row['representative'].strip()
-                contained = strip_fasta_suffix(row['contained'].strip())
-                self.isolates.setdefault(representative, [])
-                if contained not in self.isolates[representative]:
-                    self.isolates[representative].append(contained)
-
-    def _genome_map_handler(self, path: str) -> None:
-        """
-        Read a genome map: two tab separated columns, genome and node, no header.
-
-        This is the genomes_map.tsv that RepGenR2's tree2tax writes for
-        FlexTaxD, which places each genome at a node of the tree. With
-        --include-dereplicated it also places every genome a representative
-        stands for, which is what checking a canSNP needs.
-        """
-        with open(path) as handle:
-            for number, line in enumerate(handle, 1):
-                line = line.rstrip("\n").rstrip("\r")
-                if not line.strip() or line.startswith("#"):
-                    continue
-                fields = line.split("\t")
-                if len(fields) != 2 or not fields[0].strip() or not fields[1].strip():
-                    raise ValueError(
-                        f"{path}: line {number} should hold a genome and a node separated by "
-                        f"one tab")
-                genome = strip_fasta_suffix(fields[0].strip())
-                node = fields[1].strip()
-                if genome not in self.isolates.setdefault(node, []):
-                    self.isolates[node].append(genome)
-
-    def _group_handler(self, csv_file: str) -> None:
-        """
-        Read a group file with Strain and Group columns, in either order.
-        """
-        with open(csv_file) as csvfile:
-            reader = csv.reader(csvfile)
-            for index, row in enumerate(reader):
-                if not row:
-                    continue
-                if index == 0:
-                    if self.group_label not in row or self.strain_label not in row:
-                        raise ValueError(
-                            f"{csv_file}: needs '{self.strain_label}' and '{self.group_label}' "
-                            f"columns, found {row}")
-                    self.group_index = row.index(self.group_label)
-                    self.strain_index = row.index(self.strain_label)
-                    continue
-                if len(row) <= max(self.group_index, self.strain_index):
-                    raise ValueError(
-                        f"{csv_file}: row {index + 1} has {len(row)} fields, too few to hold "
-                        f"both a strain and a group")
-                group = row[self.group_index].strip()
-                strain = row[self.strain_index].strip()
-                if not group or not strain:
-                    raise ValueError(
-                        f"{csv_file}: row {index + 1} leaves the strain or the group empty")
-                self.isolates.setdefault(group, []).append(strain)
+                    f"{path}: line {number} should hold a genome and a node separated by one "
+                    f"tab, with no header line")
+            genome = strip_fasta_suffix(fields[0].strip())
+            node = fields[1].strip()
+            if genome in placed and placed[genome] != node:
+                raise ValueError(
+                    f"{path}: line {number} places {genome} at {node}, but it is already "
+                    f"placed at {placed[genome]}")
+            if genome not in placed:
+                placed[genome] = node
+                clusters.setdefault(node, []).append(genome)
+    if not clusters:
+        raise ValueError(f"{path}: places no genome")
+    logging.info(f"Read {len(placed)} genomes placed at {len(clusters)} nodes")
+    return clusters
 
 
 #: The columns of the SNP file the extractor writes.
@@ -630,83 +576,3 @@ def cansnp_file_writer(rows: Sequence[Sequence[Union[str, int]]], output_filepat
         out_file.write("\t".join(SNP_HEADER) + "\n")
         for row in rows:
             out_file.write("\t".join("" if field is None else str(field) for field in row) + "\n")
-
-def recognize_group_file_format(file_path: str) -> str:
-    """
-    Recognize the file format by inspecting the first few lines.
-
-    Args:
-        file_path (str): The path to the file to inspect.
-
-    Returns:
-        str: The recognized file format ('csv' or 'repgenr_group').
-    """
-    with open(file_path) as file:
-        lines = [line.strip() for line in file.readlines()[:5]]
-
-    for line in lines:
-        if {'Strain', 'Group'} <= set(field.strip() for field in line.split(',')):
-            logging.info(f"{file_path} is a Strain and Group table")
-            return 'csv'
-        if {'representative', 'contained', 'is_self'} <= set(line.split('\t')):
-            logging.info(f"{file_path} is a repgenr group file")
-            return 'repgenr_group'
-
-    content = [line for line in lines if line and not line.startswith("#")]
-    headers = ({"child", "parent"}, {"representative", "member"})
-    looks_like_header = content and any(
-        names <= set(content[0].split("\t")) for names in headers)
-    if content and not looks_like_header and all(len(line.split("\t")) == 2 for line in content):
-        logging.info(f"{file_path} is a genome map of genome and node")
-        return 'genome_map'
-
-    raise ValueError(
-        f"{file_path}: cannot tell which group file format this is; it needs either "
-        f"'Strain' and 'Group' columns separated by commas, the repgenr columns "
-        f"'representative', 'contained' and 'is_self' separated by tabs, or two tab "
-        f"separated columns of genome and node without a header, as RepGenR2 writes "
-        f"genomes_map.tsv")
-
-def recognize_hc_file_format(file_path: str) -> str:
-    """
-    Recognize which of the supported hierarchy formats a file is in.
-
-    The checks are ordered so that a format is only guessed once the more
-    specific ones have been ruled out: a repgenr table is recognized by its
-    columns, and a Newick string by its structure rather than by a stray
-    semicolon.
-
-    Returns:
-        'repgenr', 'json', 'newick' or 'yaml'.
-
-    Raises:
-        HierarchyError: If the file is empty or matches none of them.
-    """
-    logging.info(f"Recognizing the format of {file_path}")
-
-    with open(file_path) as handle:
-        lines = [line.strip() for line in handle.readlines()[:20]]
-
-    content = [line for line in lines if line and not line.startswith("#")]
-    if not content:
-        raise HierarchyError(f"{file_path}: is empty, or holds only comments")
-    first_line = content[0]
-
-    if "\t" in first_line and "child" in first_line and "parent" in first_line:
-        recognized = "repgenr"
-    elif first_line.startswith(("{", "[")):
-        recognized = "json"
-    elif ";" in "".join(content) and "(" in "".join(content):
-        recognized = "newick"
-    elif ":" in first_line or first_line.startswith("- "):
-        recognized = "yaml"
-    else:
-        raise HierarchyError(
-            f"{file_path}: cannot tell which hierarchy format this is from its first line "
-            f"'{first_line}'; supported are YAML, JSON, Newick and the repgenr child and "
-            f"parent table")
-
-    logging.info(f"{file_path} is in {recognized} format")
-    return recognized
-
-

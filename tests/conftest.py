@@ -32,7 +32,8 @@ sys.path.insert(0, REPO)
 
 GENOMES = ["ref", "s1", "s1b", "s2", "s3", "s4"]
 CLUSTERS = {"A.1": ["s1", "s1b"], "A.2": ["s2"], "B.1": ["s3"], "B.2": ["s4"]}
-HIERARCHY = [{"root": [{"A": ["A.1", "A.2"]}, {"B": ["B.1", "B.2"]}]}]
+# The hierarchy as child and parent; the root is named only as a parent.
+EDGES = [("A", "root"), ("B", "root"), ("A.1", "A"), ("A.2", "A"), ("B.1", "B"), ("B.2", "B")]
 
 ALIGNMENT_LENGTH = 1000
 CONTIGS = [("c1", 0, 700), ("c2", 700, 1000)]
@@ -116,10 +117,9 @@ class Dataset:
     directory: str
     alignment: str
     reference: str
-    groups_csv: str
-    groups_repgenr: str
-    hc_yaml: str
-    hc_repgenr: str
+    hierarchy: str
+    hierarchy_newick: str
+    genome_map: str
     gff: str
     trf: str
     sequences: Dict[str, str] = field(default_factory=dict)
@@ -152,45 +152,23 @@ def dataset(tmp_path) -> Dataset:
          for name, start, end in CONTIGS],
     )
 
-    groups_csv = os.path.join(directory, "groups.csv")
-    with open(groups_csv, "w") as handle:
-        handle.write("Strain,Group\n")
+    # The genome map places each genome at a node, as FlexTaxD's
+    # --genomeid2taxid and RepGenR2's genomes_map.tsv do: no header.
+    genome_map = os.path.join(directory, "genome_map.tsv")
+    with open(genome_map, "w") as handle:
         for cluster, isolates in CLUSTERS.items():
             for isolate in isolates:
-                handle.write(f"{isolate},{cluster}\n")
+                handle.write(f"{isolate}\t{cluster}\n")
 
-    groups_repgenr = os.path.join(directory, "groups_repgenr.tsv")
-    with open(groups_repgenr, "w") as handle:
-        handle.write("representative\tcontained\tis_self\n")
-        for cluster, isolates in CLUSTERS.items():
-            handle.write(f"{cluster}\t{isolates[0]}.fasta\tTrue\n")
-            for isolate in isolates[1:]:
-                handle.write(f"{cluster}\t{isolate}.fasta\tFalse\n")
-
-    hc_yaml = os.path.join(directory, "hc.yaml")
-    with open(hc_yaml, "w") as handle:
-        handle.write(
-            "- root:\n"
-            "  - A:\n"
-            "    - A.1\n"
-            "    - A.2\n"
-            "  - B:\n"
-            "    - B.1\n"
-            "    - B.2\n"
-        )
-
-    hc_repgenr = os.path.join(directory, "hc_repgenr.tsv")
-    with open(hc_repgenr, "w") as handle:
+    hierarchy = os.path.join(directory, "hierarchy.tsv")
+    with open(hierarchy, "w") as handle:
         handle.write("child\tparent\n")
-        for child, parent in [
-            ("A", "root"),
-            ("B", "root"),
-            ("A.1", "A"),
-            ("A.2", "A"),
-            ("B.1", "B"),
-            ("B.2", "B"),
-        ]:
+        for child, parent in EDGES:
             handle.write(f"{child}\t{parent}\n")
+
+    hierarchy_newick = os.path.join(directory, "hierarchy.nwk")
+    with open(hierarchy_newick, "w") as handle:
+        handle.write("((A.1,A.2)A,(B.1,B.2)B)root;\n")
 
     gff = os.path.join(directory, "genes.gff")
     with open(gff, "w") as handle:
@@ -219,10 +197,9 @@ def dataset(tmp_path) -> Dataset:
         directory=directory,
         alignment=alignment,
         reference=reference,
-        groups_csv=groups_csv,
-        groups_repgenr=groups_repgenr,
-        hc_yaml=hc_yaml,
-        hc_repgenr=hc_repgenr,
+        hierarchy=hierarchy,
+        hierarchy_newick=hierarchy_newick,
+        genome_map=genome_map,
         gff=gff,
         trf=trf,
         sequences=sequences,
@@ -233,10 +210,10 @@ def dataset(tmp_path) -> Dataset:
 @pytest.fixture
 def isolates_by_node(dataset):
     """The isolates below each node of the dataset's hierarchy."""
-    from cansnpscorer.helpers.file_utils import HCParser, read_hc_file
+    from cansnpscorer.helpers.file_utils import read_genome_map, read_hierarchy
 
-    hierarchy = read_hc_file(dataset.hc_yaml)
-    return hierarchy.isolates(HCParser(dataset.groups_csv, data_format="csv").isolates)
+    hierarchy = read_hierarchy(dataset.hierarchy)
+    return hierarchy.isolates(read_genome_map(dataset.genome_map))
 
 
 @pytest.fixture
@@ -288,7 +265,7 @@ METADATA = dict(
     organism="testus_organismus",
     genome="TEST1",
     strain="testus",
-    reference_label="Sjodin2026",
+    citation="Sjodin2026",
     genbank_id="GCA_000007125.1",
     refseq_id="GCF_000007125.1",
     assembly_name="ASM712v1",
@@ -316,16 +293,16 @@ def written(dataset, tmp_path):
     snp_file = str(tmp_path / "snps.tsv")
     scores = str(tmp_path / "scores.csv")
     outdir = str(tmp_path / "scheme")
-    assert cli_run("extract", "--groupfile", dataset.groups_csv, "--hcfile", dataset.hc_yaml,
-                   "--fastafile", dataset.alignment, "--reference-file", dataset.reference,
+    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
+                   "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", snp_file) == 0
-    assert cli_run("evaluate", "--snp-file", snp_file, "--reference-file", dataset.reference,
-                   "--gff-file", dataset.gff, "--trf-file", dataset.trf,
-                   "--hcfile", dataset.hc_yaml, "--output-file", scores,
-                   "--cutoff-value", "0") == 0
+    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
+                   "--genes", dataset.gff, "--repeats", dataset.trf,
+                   "--hierarchy", dataset.hierarchy, "-o", scores,
+                   "--cutoff", "0") == 0
     from cansnpscorer.cansnp_export import main as export_main
 
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
     return outdir, scores
 
 

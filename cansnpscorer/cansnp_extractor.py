@@ -7,11 +7,10 @@ from typing import List
 
 from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
 from cansnpscorer.helpers.file_utils import (
-    HCParser,
     cansnp_file_writer,
     read_alignment,
-    read_hc_file,
-    recognize_group_file_format,
+    read_genome_map,
+    read_hierarchy,
     reference_parser,
 )
 from cansnpscorer.helpers.names import resolve_clusters
@@ -25,44 +24,44 @@ from cansnpscorer.validate import (
 )
 
 
-def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output=None) -> int:
+def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output=None) -> int:
     """Extract canSNPs from an alignment. Returns a process exit status."""
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(
-        f"Parameters: groupfile={groupfile}, hcfile={hcfile}, fastafile={fastafile}, "
-        f"referencefile={referencefile}, output={output}")
+        f"Parameters: alignment={alignment}, reference={reference}, hierarchy={hierarchy}, "
+        f"genome_map={genome_map}, output={output}")
 
-    missing = [path for path in (groupfile, hcfile, fastafile, referencefile)
+    missing = [path for path in (alignment, reference, hierarchy, genome_map)
                if not os.path.isfile(path)]
     if missing:
         logging.error(f"These input files do not exist: {', '.join(missing)}")
         return 1
 
     try:
-        hierarchy = read_hc_file(hcfile)
-        clusters = HCParser(groupfile, data_format=recognize_group_file_format(groupfile)).isolates
-        alignment = read_alignment(fastafile)
-        reference = reference_parser(referencefile)
+        tree = read_hierarchy(hierarchy)
+        clusters = read_genome_map(genome_map)
+        aligned = read_alignment(alignment)
+        genome = reference_parser(reference)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
 
     # Report everything inconsistent between the files before doing any work.
-    problems, warnings = check_alignment_against_reference(alignment, reference)
-    clusters, unmatched, ambiguous = resolve_clusters(clusters, list(alignment))
+    problems, warnings = check_alignment_against_reference(aligned, genome)
+    clusters, unmatched, ambiguous = resolve_clusters(clusters, list(aligned))
     problems += unresolved_genomes(unmatched, ambiguous)
-    found = check_groups(alignment, clusters, hierarchy, next(iter(alignment)))
+    found = check_groups(aligned, clusters, tree, next(iter(aligned)))
     problems, warnings = problems + found[0], warnings + found[1]
     if not report(problems, warnings):
         return 2
 
     try:
-        isolates = hierarchy.isolates(clusters)
-        # The alignment's reference row carries the aligner's gaps, so the
-        # column of a SNP is not its position in the reference genome.
-        mapping = AlignmentMap(next(iter(alignment.values())), reference)
-        snps = snp_extractor(alignment)
-        cansnps = canSNP_extractor(alignment, isolates, snps)
+        isolates = tree.isolates(clusters)
+        # The aligned's genome row carries the aligner's gaps, so the
+        # column of a SNP is not its position in the genome genome.
+        mapping = AlignmentMap(next(iter(aligned.values())), genome)
+        snps = snp_extractor(aligned)
+        cansnps = canSNP_extractor(aligned, isolates, snps)
     except (ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -72,8 +71,8 @@ def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output
     for cansnp in cansnps:
         placed = mapping.locate(cansnp.column)
         if placed is None:
-            # The reference is gapped in this column, so the SNP has no
-            # position in the reference genome and no assay can target it.
+            # The genome is gapped in this column, so the SNP has no
+            # position in the genome genome and no assay can target it.
             gapped += 1
             continue
         contig, position = placed
@@ -82,15 +81,15 @@ def main(groupfile=None, hcfile=None, fastafile=None, referencefile=None, output
 
     if gapped:
         logging.warning(
-            f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
+            f"{gapped} SNPs sit in columns where the genome is gapped and were left out")
 
     cansnp_file_writer(rows, output)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
-    without = sorted(set(hierarchy.nodes) - {cansnp.node for cansnp in cansnps if cansnp.node})
+    without = sorted(set(tree.nodes) - {cansnp.node for cansnp in cansnps if cansnp.node})
     if without:
         logging.warning(
-            f"{len(without)} of {len(hierarchy)} nodes have no canSNP: {', '.join(without)}")
+            f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")
     logging.info(f"Wrote {len(rows)} SNPs, of which {found} are canonical")
 
     logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

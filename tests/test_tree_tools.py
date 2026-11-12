@@ -9,10 +9,9 @@ from conftest import CLUSTERS, PLANTED, cli_run
 from cansnpscorer.cansnp_audit import audit_scheme
 from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
 from cansnpscorer.helpers.file_utils import (
-    HCParser,
     read_alignment,
-    read_hc_file,
-    recognize_group_file_format,
+    read_genome_map,
+    read_hierarchy,
     reference_parser,
 )
 from cansnpscorer.helpers.names import resolve_names
@@ -46,7 +45,7 @@ def test_a_schemes_numeric_node_names_stay_names(tmp_path):
     # A hierarchy is a scheme's, whose labels are names: 2 and 3 are nodes.
     path = tmp_path / "scheme.nwk"
     path.write_text("((2.1,2.2)2,(3.1,3.2)3)root;")
-    assert set(read_hc_file(str(path)).nodes) == {"root", "2", "3", "2.1", "2.2", "3.1", "3.2"}
+    assert set(read_hierarchy(str(path)).nodes) == {"root", "2", "3", "2.1", "2.2", "3.1", "3.2"}
     # The same text read as a genome tree takes them for support values.
     assert set(read_genome_tree(str(path)).support.values()) == {0.02, 0.03}
 
@@ -176,9 +175,8 @@ def test_the_written_files_are_read_back_by_extract(tmp_path):
     tree = Hierarchy.from_newick(PLANTED_TREE, support_labels=True)
     result = rename(collapse(tree, outgroups=["ref"]), "T")
     hierarchy_path, genomes_path, nodes_path = write_collapsed(result, tree, str(tmp_path), "t")
-    assert read_hc_file(hierarchy_path).root == "T"
-    assert recognize_group_file_format(genomes_path) == "genome_map"
-    clusters = HCParser(genomes_path, "genome_map").isolates
+    assert read_hierarchy(hierarchy_path).root == "T"
+    clusters = read_genome_map(genomes_path)
     assert clusters["T.1.1"] == ["s1", "s1b"]
     assert "0.97" in open(nodes_path).read()
 
@@ -192,9 +190,9 @@ def test_a_scheme_is_extracted_from_a_collapsed_tree(dataset, tmp_path):
     assert cli_run("collapse", "--tree", str(tree_file), "--outgroup", "ref",
                    "--rename", "T", "--outdir", str(tmp_path), "--prefix", "t") == 0
     snps = tmp_path / "snps.tsv"
-    assert cli_run("extract", "--groupfile", str(tmp_path / "t_genomes.tsv"),
-                   "--hcfile", str(tmp_path / "t_hierarchy.tsv"),
-                   "--fastafile", dataset.alignment, "--reference-file", dataset.reference,
+    assert cli_run("extract", "--genome-map", str(tmp_path / "t_genomes.tsv"),
+                   "--hierarchy", str(tmp_path / "t_hierarchy.tsv"),
+                   "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", str(snps)) == 0
     rows = [line.split("\t") for line in snps.read_text().splitlines()[1:]]
     found = {row[2]: int(row[1]) for row in rows if row[2] != "None"}
@@ -306,16 +304,16 @@ def test_place_and_audit_by_tree_from_the_command_line(written, dataset, tmp_pat
     genome_map = tmp_path / "placed.tsv"
     report = tmp_path / "report.tsv"
     assert cli_run("place", "--scheme-dir", outdir, "--tree", str(tree_file),
-                   "--fastafile", dataset.alignment, "--reference-file", dataset.reference,
+                   "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", str(genome_map), "--report", str(report)) == 0
     assert "s1\tA.1" in genome_map.read_text()
     assert report.read_text().splitlines()[0].startswith("node\ttree_node\tside")
 
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference-file", dataset.reference,
-                   "--fastafile", dataset.alignment, "--tree", str(tree_file)) == 0
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference-file", dataset.reference,
-                   "--fastafile", dataset.alignment, "--tree", str(tree_file),
-                   "--groupfile", dataset.groups_csv) == 1, "one or the other"
+    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+                   "--alignment", dataset.alignment, "--tree", str(tree_file)) == 0
+    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+                   "--alignment", dataset.alignment, "--tree", str(tree_file),
+                   "--genome-map", dataset.genome_map) == 1, "one or the other"
 
 
 def test_collapse_reports_a_missing_file(tmp_path):

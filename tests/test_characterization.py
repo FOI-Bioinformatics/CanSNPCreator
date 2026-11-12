@@ -6,7 +6,7 @@ Tests for the defects being fixed live beside them, one file per area.
 """
 
 import pytest
-from conftest import CLUSTERS, GENOMES, INCONGRUENT, PLANTED, node_isolates
+from conftest import GENOMES, INCONGRUENT, PLANTED, node_isolates
 
 from cansnpscorer.helpers.data_utils import (
     codon_comparer,
@@ -19,11 +19,8 @@ from cansnpscorer.helpers.data_utils import (
     summarize_scores,
 )
 from cansnpscorer.helpers.file_utils import (
-    HCParser,
     fasta_parser,
     read_gff3,
-    recognize_group_file_format,
-    recognize_hc_file_format,
     score_file_writer,
     snp_file_parser,
     trf_parser,
@@ -51,13 +48,6 @@ def test_clean_name_keeps_only_alphanumeric():
     assert clean_name("GCA_000007125.1 ASM712v1") == "GCA0000071251ASM712v1"
 
 
-def test_format_recognition(dataset):
-    assert recognize_group_file_format(dataset.groups_csv) == "csv"
-    assert recognize_group_file_format(dataset.groups_repgenr) == "repgenr_group"
-    assert recognize_hc_file_format(dataset.hc_yaml) == "yaml"
-    assert recognize_hc_file_format(dataset.hc_repgenr) == "repgenr"
-
-
 def test_gff3_genes_and_cds_are_read_per_sequence_zero_based(dataset):
     model = read_gff3(dataset.gff)
     assert sorted(model.genes) == ["c1", "c2"]
@@ -70,13 +60,6 @@ def test_trf_parser_reports_intervals_per_sequence_zero_based(dataset):
     # TRF reports 1-based positions, as a GFF does, and both are read into the
     # same 0-based inclusive intervals; they used to differ by one.
     assert trf_parser(dataset.trf) == {"c1": [(59, 94)], "c2": [(119, 159)]}
-
-
-def test_group_files_describe_the_same_clusters(dataset):
-    from_csv = HCParser(dataset.groups_csv, data_format="csv").isolates
-    from_repgenr = HCParser(dataset.groups_repgenr, data_format="repgenr_group").isolates
-    assert from_csv == CLUSTERS
-    assert from_repgenr == CLUSTERS
 
 
 # -- extraction --------------------------------------------------------------

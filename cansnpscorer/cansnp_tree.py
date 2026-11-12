@@ -18,14 +18,14 @@ from cansnpscorer.tree_tools import (
 )
 
 
-def collapse_main(tree_file=None, nodes_file=None, genome_map=None, min_support=None,
+def collapse_main(tree_file=None, nodes_file=None, members=None, min_support=None,
                   min_genomes=2, min_length=None, prefix_names=None, outdir=".",
                   prefix="collapsed", outgroups=()) -> int:
     """Collapse a genome tree into a scheme's hierarchy. Returns an exit status."""
     try:
         tree = read_genome_tree(tree_file, nodes_file)
-        members = read_members(genome_map, tree) if genome_map else None
-        collapsed = collapse(tree, min_support, min_genomes, min_length, members, outgroups)
+        folded = read_members(members, tree) if members else None
+        collapsed = collapse(tree, min_support, min_genomes, min_length, folded, outgroups)
         if prefix_names:
             collapsed = rename(collapsed, prefix_names)
         written = write_collapsed(collapsed, tree, outdir, prefix)
@@ -57,17 +57,17 @@ def collapse_main(tree_file=None, nodes_file=None, genome_map=None, min_support=
     return 0
 
 
-def place_main(scheme_dir=None, organism=None, tree_file=None, fastafile=None,
-               reference_file=None, genome=None, genome_map=None, min_match=0.5, output=None,
+def place_main(scheme_dir=None, organism=None, tree_file=None, alignment=None,
+               reference=None, genome=None, members=None, min_match=0.5, output=None,
                report=None) -> int:
     """Place the genomes of a tree on an existing scheme. Returns an exit status."""
     try:
         scheme = read_scheme(scheme_dir, organism)
         tree = read_genome_tree(tree_file)
-        members = read_members(genome_map, tree) if genome_map else None
-        alignment = read_alignment(fastafile)
-        reference = reference_parser(reference_file)
-        placement = place(scheme, tree, alignment, reference, genome, min_match, members)
+        folded = read_members(members, tree) if members else None
+        aligned = read_alignment(alignment)
+        sequence = reference_parser(reference)
+        placement = place(scheme, tree, aligned, sequence, genome, min_match, folded)
         write_placement(placement, output, report)
     except (OSError, ValueError, HierarchyError, SchemeError, ReferenceError) as error:
         logging.error(error)

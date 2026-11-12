@@ -22,7 +22,7 @@ METADATA = dict(
     organism="testus_organismus",
     genome="TEST1",
     strain="testus",
-    reference_label="Sjodin2026",
+    citation="Sjodin2026",
     genbank_id="GCA_000007125.1",
     refseq_id="GCF_000007125.1",
     assembly_name="ASM712v1",
@@ -39,13 +39,13 @@ def scheme(dataset, tmp_path):
     """Run extract and evaluate, then return where a scheme can be written."""
     snp_file = str(tmp_path / "snps.tsv")
     scores = str(tmp_path / "scores.csv")
-    assert cli_run("extract", "--groupfile", dataset.groups_csv, "--hcfile", dataset.hc_yaml,
-                   "--fastafile", dataset.alignment, "--reference-file", dataset.reference,
+    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
+                   "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", snp_file) == 0
-    assert cli_run("evaluate", "--snp-file", snp_file, "--reference-file", dataset.reference,
-                   "--gff-file", dataset.gff, "--trf-file", dataset.trf,
-                   "--hcfile", dataset.hc_yaml, "--output-file", scores,
-                   "--cutoff-value", "0") == 0
+    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
+                   "--genes", dataset.gff, "--repeats", dataset.trf,
+                   "--hierarchy", dataset.hierarchy, "-o", scores,
+                   "--cutoff", "0") == 0
     return scores, str(tmp_path / "scheme")
 
 
@@ -84,7 +84,7 @@ def test_a_tie_is_broken_by_contig_and_position():
 
 def test_the_scheme_is_written_and_is_complete(dataset, scheme):
     scores, outdir = scheme
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
 
     tree = read(os.path.join(outdir, "testus_organismus_tree.txt"))
     snp = read(os.path.join(outdir, "testus_organismus_snp.txt"))
@@ -109,7 +109,7 @@ def test_positions_are_counted_over_the_concatenated_genome(dataset, scheme):
     # The SNP file has no contig column, so a SNP on the second contig is
     # offset by the length of the first, as the published schemes do it.
     scores, outdir = scheme
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
     positions = {}
     for line in read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]:
         fields = line.split("\t")
@@ -122,7 +122,7 @@ def test_positions_are_counted_over_the_concatenated_genome(dataset, scheme):
 
 def test_the_polarity_survives_the_round_trip(dataset, scheme):
     scores, outdir = scheme
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
     for line in read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]:
         node, _strain, _reference, _genome, _position, derived, ancestral = line.split("\t")
         planted_ancestral, planted_derived = PLANTED[node][1], PLANTED[node][2]
@@ -140,7 +140,7 @@ def test_a_node_without_a_cansnp_refuses_the_scheme(dataset, scheme, tmp_path, c
     trimmed = tmp_path / "fewer.csv"
     trimmed.write_text("\n".join(line for line in lines if not line.startswith("c1,601")) + "\n")
 
-    assert export_main(str(trimmed), dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 2
+    assert export_main(str(trimmed), dataset.hierarchy, dataset.reference, outdir, **METADATA) == 2
     assert "nodes have no canSNP" in caplog.text
     assert not os.path.exists(os.path.join(outdir, "testus_organismus_tree.txt"))
 
@@ -151,7 +151,7 @@ def test_pruning_leaves_those_nodes_out(dataset, scheme, tmp_path):
     trimmed = tmp_path / "fewer.csv"
     trimmed.write_text("\n".join(line for line in lines if not line.startswith("c1,201")) + "\n")
 
-    assert export_main(str(trimmed), dataset.hc_yaml, dataset.reference, outdir,
+    assert export_main(str(trimmed), dataset.hierarchy, dataset.reference, outdir,
                        prune=True, **METADATA) == 0
     tree = read(os.path.join(outdir, "testus_organismus_tree.txt"))
     assert "\tA\t" not in tree, "the node without a canSNP is gone"
@@ -164,7 +164,7 @@ def test_a_root_without_a_cansnp_cannot_be_pruned(dataset, scheme, tmp_path, cap
     trimmed = tmp_path / "fewer.csv"
     trimmed.write_text("\n".join(line for line in lines if not line.startswith("c1,101")) + "\n")
 
-    assert export_main(str(trimmed), dataset.hc_yaml, dataset.reference, outdir,
+    assert export_main(str(trimmed), dataset.hierarchy, dataset.reference, outdir,
                        prune=True, **METADATA) == 2
     assert "has no canSNP, and a scheme cannot be written" in caplog.text
 
@@ -180,7 +180,7 @@ def test_metadata_that_breaks_the_rules_is_refused(dataset, scheme, field, value
                                                    caplog):
     scores, outdir = scheme
     metadata = {**METADATA, field: value}
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **metadata) == 2
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **metadata) == 2
     assert expected in caplog.text
 
 
@@ -188,7 +188,7 @@ def test_a_score_file_from_another_tool_is_refused(dataset, scheme, tmp_path):
     scores, outdir = scheme
     wrong = tmp_path / "wrong.csv"
     wrong.write_text("position,group\n100,A.1\n")
-    assert export_main(str(wrong), dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 1
+    assert export_main(str(wrong), dataset.hierarchy, dataset.reference, outdir, **METADATA) == 1
 
 
 # -- against the real validator ----------------------------------------------
@@ -203,7 +203,7 @@ CANSNPER2_DATA = os.path.join(
                     reason="CanSNPer2-data is not checked out beside this repository")
 def test_the_exported_scheme_passes_the_cansnper2_data_validator(dataset, scheme, tmp_path):
     scores, outdir = scheme
-    assert export_main(scores, dataset.hc_yaml, dataset.reference, outdir, **METADATA) == 0
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
 
     # That script takes the repository layout from its own location, so give it
     # one holding nothing but the exported scheme.
