@@ -12,6 +12,7 @@ converts an alignment column into a position in the reference genome, and
 refuses to do so unless the alignment and the reference agree base for base.
 """
 
+from array import array
 from bisect import bisect_right
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -137,33 +138,61 @@ class Reference:
 class AlignmentMap:
     """Alignment columns mapped onto positions in the reference genome.
 
-    The alignment's reference row carries the gaps the aligner introduced, so a
-    column number is not a reference position. Building the map also checks
-    that the row, with its gaps removed, is the reference genome.
+    Two layouts of whole genome alignment are accepted, and told apart from the
+    reference row itself:
+
+    - **gapped**: the reference row carries the gaps the aligner introduced, so
+      a column is not a reference position, and the row with its gaps removed
+      is the whole reference genome. progressiveMauve's own output, turned into
+      FASTA column by column, has this layout.
+    - **projected**: every row has been projected onto reference coordinates,
+      so column i is position i of the concatenated reference. Columns where
+      the reference was not aligned at all are gaps in the reference row too,
+      and the row may stop short of the reference's end. The x2fa conversion
+      used by CanSNPer, RepGenR and CRSP, and the whole genome alignments of
+      snippy and RepGenR2's simple SNP typer, have this layout.
+
+    Either way, building the map checks the alignment against the reference
+    base for base, since a mismatch would move every position reported.
     """
 
     def __init__(self, aligned_reference: str, reference: Reference, examples: int = 3) -> None:
         self.reference = reference
-        self._positions: List[Optional[int]] = []
-        position = 0
-        for base in aligned_reference:
-            if base in GAP_CHARACTERS:
-                self._positions.append(None)
-            else:
-                self._positions.append(position)
-                position += 1
-
-        observed = ungap(aligned_reference).upper()
         expected = reference.sequence.upper()
-        if len(observed) != len(expected):
+        observed = ungap(aligned_reference).upper()
+
+        if len(observed) == len(expected):
+            self.projected = False
+            positions = array("q")
+            position = 0
+            for base in aligned_reference:
+                if base in GAP_CHARACTERS:
+                    positions.append(-1)
+                else:
+                    positions.append(position)
+                    position += 1
+            mismatches = [
+                index for index, (left, right) in enumerate(zip(observed, expected))
+                if left != right
+            ]
+        elif len(aligned_reference) <= len(expected):
+            self.projected = True
+            positions = array("q", range(len(aligned_reference)))
+            mismatches = []
+            for index, base in enumerate(aligned_reference):
+                if base in GAP_CHARACTERS:
+                    positions[index] = -1
+                elif base.upper() != expected[index]:
+                    mismatches.append(index)
+            observed = aligned_reference.upper()
+        else:
             raise ReferenceError(
                 f"the alignment's reference row holds {len(observed)} bases once its gaps "
-                f"are removed, but the reference genome holds {len(expected)}"
+                f"are removed, but the reference genome holds {len(expected)}. The first "
+                f"record of the alignment must be the reference genome, and the reference file "
+                f"must hold the contigs the alignment concatenates, in that order"
             )
 
-        mismatches = [
-            index for index, (left, right) in enumerate(zip(observed, expected)) if left != right
-        ]
         if mismatches:
             shown = []
             for index in mismatches[:examples]:
@@ -177,15 +206,40 @@ class AlignmentMap:
                 f"{len(mismatches)} positions: " + "; ".join(shown)
             )
 
+        self._positions = positions
+        self._columns: Optional[array] = None
+
     @property
     def columns(self) -> int:
         return len(self._positions)
+
+    @property
+    def unaligned(self) -> int:
+        """Reference positions that no column of the alignment covers."""
+        covered = sum(1 for position in self._positions if position >= 0)
+        return self.reference.length - covered
 
     def to_reference(self, column: int) -> Optional[int]:
         """The 0-based global position for a column, or None if the reference is gapped there."""
         if not 0 <= column < self.columns:
             raise ReferenceError(f"column {column} is outside the alignment")
-        return self._positions[column]
+        position = self._positions[column]
+        return None if position < 0 else position
+
+    def to_column(self, position: int) -> Optional[int]:
+        """The column holding a 0-based global position, or None if no column does."""
+        if not 0 <= position < self.reference.length:
+            raise ReferenceError(
+                f"position {position + 1} is outside the reference of "
+                f"{self.reference.length} bases")
+        if self._columns is None:
+            columns = array("q", [-1]) * self.reference.length
+            for column, found in enumerate(self._positions):
+                if found >= 0:
+                    columns[found] = column
+            self._columns = columns
+        column = self._columns[position]
+        return None if column < 0 else column
 
     def locate(self, column: int) -> Optional[Tuple[Contig, int]]:
         """The contig and 1-based position for a column, or None if the reference is gapped."""

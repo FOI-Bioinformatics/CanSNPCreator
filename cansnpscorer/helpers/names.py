@@ -11,6 +11,16 @@ import logging
 import re
 
 NOT_ALPHANUMERIC = re.compile("[^A-Za-z0-9]+")
+FASTA_SUFFIX = re.compile(r"\.(fasta|fna|fa|fas|ffn)(\.gz)?$", re.IGNORECASE)
+
+
+def strip_fasta_suffix(name: str) -> str:
+    """Remove a FASTA file suffix, so that a file name reads as its genome.
+
+    RepGenR2 names each record and leaf by the genome file name without its
+    FASTA suffix, so ``x.fna.gz`` and ``x`` are the same genome.
+    """
+    return FASTA_SUFFIX.sub("", name)
 
 
 def clean_name(name: str) -> str:

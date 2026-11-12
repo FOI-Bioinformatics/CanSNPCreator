@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from ruamel.yaml import YAML
 
-from cansnpscorer.helpers.names import clean_name
+from cansnpscorer.helpers.names import clean_name, strip_fasta_suffix
 from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
@@ -218,9 +218,12 @@ class HCParser:
             self._group_handler(group_data)
         elif data_format == 'repgenr_group':
             self._repgenr_group_handler(group_data)
+        elif data_format == 'genome_map':
+            self._genome_map_handler(group_data)
         else:
             raise ValueError(
-                f"unknown group file format '{data_format}'; use 'csv' or 'repgenr_group'")
+                f"unknown group file format '{data_format}'; use 'csv', 'repgenr_group' or "
+                f"'genome_map'")
         logging.info(
             f"Read {sum(len(names) for names in self.isolates.values())} isolates in "
             f"{len(self.isolates)} clusters")
@@ -246,6 +249,30 @@ class HCParser:
                 self.isolates.setdefault(representative, [])
                 if contained not in self.isolates[representative]:
                     self.isolates[representative].append(contained)
+
+    def _genome_map_handler(self, path: str) -> None:
+        """
+        Read a genome map: two tab separated columns, genome and node, no header.
+
+        This is the genomes_map.tsv that RepGenR2's tree2tax writes for
+        FlexTaxD, which places each genome at a node of the tree. With
+        --include-dereplicated it also places every genome a representative
+        stands for, which is what checking a canSNP needs.
+        """
+        with open(path) as handle:
+            for number, line in enumerate(handle, 1):
+                line = line.rstrip("\n").rstrip("\r")
+                if not line.strip() or line.startswith("#"):
+                    continue
+                fields = line.split("\t")
+                if len(fields) != 2 or not fields[0].strip() or not fields[1].strip():
+                    raise ValueError(
+                        f"{path}: line {number} should hold a genome and a node separated by "
+                        f"one tab")
+                genome = clean_name(strip_fasta_suffix(fields[0].strip()))
+                node = fields[1].strip()
+                if genome not in self.isolates.setdefault(node, []):
+                    self.isolates[node].append(genome)
 
     def _group_handler(self, csv_file: str) -> None:
         """
@@ -611,10 +638,20 @@ def recognize_group_file_format(file_path: str) -> str:
             logging.info(f"{file_path} is a repgenr group file")
             return 'repgenr_group'
 
+    content = [line for line in lines if line and not line.startswith("#")]
+    headers = ({"child", "parent"}, {"representative", "member"})
+    looks_like_header = content and any(
+        names <= set(content[0].split("\t")) for names in headers)
+    if content and not looks_like_header and all(len(line.split("\t")) == 2 for line in content):
+        logging.info(f"{file_path} is a genome map of genome and node")
+        return 'genome_map'
+
     raise ValueError(
         f"{file_path}: cannot tell which group file format this is; it needs either "
-        f"'Strain' and 'Group' columns separated by commas, or the repgenr columns "
-        f"'representative', 'contained' and 'is_self' separated by tabs")
+        f"'Strain' and 'Group' columns separated by commas, the repgenr columns "
+        f"'representative', 'contained' and 'is_self' separated by tabs, or two tab "
+        f"separated columns of genome and node without a header, as RepGenR2 writes "
+        f"genomes_map.tsv")
 
 def recognize_hc_file_format(file_path: str) -> str:
     """

@@ -48,7 +48,7 @@ def test_a_reference_of_the_same_length_but_other_sequence_is_a_problem(pieces, 
     other.write_text(">c1\n" + "A" * reference.length + "\n")
     problems, _warnings = check_alignment_against_reference(
         alignment, reference_parser(str(other)))
-    assert any("not the same sequence" in problem for problem in problems)
+    assert any("differs from the reference genome" in problem for problem in problems)
 
 
 def test_gaps_in_the_reference_row_are_a_warning(dataset, tmp_path):

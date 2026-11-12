@@ -114,10 +114,46 @@ def test_a_gap_in_the_reference_row_shifts_the_columns_after_it():
     assert (contig.name, position) == ("c1", 10), "reported 1-based"
 
 
-def test_a_reference_row_of_the_wrong_length_is_refused():
+def test_a_reference_row_longer_than_the_reference_is_refused():
     reference = Reference.from_records([("c1", "ACGTACGTAC")])
     with pytest.raises(ReferenceError, match="once its gaps are removed"):
-        AlignmentMap("ACGTACGT", reference)
+        AlignmentMap("ACGTACGTACGT", reference)
+
+
+# -- alignments projected onto reference coordinates -------------------------
+#
+# x2fa, snippy and RepGenR2 write every row in reference coordinates. Where the
+# reference was not aligned the reference row holds a gap at the same column,
+# and the row may stop before the reference ends.
+
+
+def test_a_projected_row_maps_each_column_onto_its_own_position():
+    reference = Reference.from_records([("c1", "ACGTA"), ("c2", "CGTAC")])
+    mapping = AlignmentMap("AC--ACG-A", reference)
+    assert mapping.projected
+    assert [mapping.to_reference(column) for column in range(9)] == [
+        0, 1, None, None, 4, 5, 6, None, 8]
+    assert mapping.locate(5) == (reference.contig("c2"), 1)
+    assert mapping.unaligned == 4, "two gaps, one more, and the last base"
+
+
+def test_a_position_is_found_in_either_layout():
+    reference = Reference.from_records([("c1", "ACGTACGTAC")])
+    gapped = AlignmentMap("AC--GTACGTAC", reference)
+    projected = AlignmentMap("AC-TACGT", reference)
+    assert not gapped.projected and projected.projected
+    assert gapped.to_column(2) == 4
+    assert projected.to_column(2) is None, "that position is not aligned"
+    assert projected.to_column(3) == 3
+    assert projected.to_column(9) is None, "past the end of the row"
+    with pytest.raises(ReferenceError):
+        projected.to_column(10)
+
+
+def test_a_projected_row_of_another_genome_is_refused():
+    reference = Reference.from_records([("c1", "ACGTACGTAC")])
+    with pytest.raises(ReferenceError, match="c1:2 has G in the alignment"):
+        AlignmentMap("AGG-A", reference)
 
 
 def test_an_alignment_of_another_genome_is_refused():

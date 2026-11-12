@@ -17,7 +17,7 @@ import logging
 from typing import Dict, List, Mapping, Sequence, Tuple
 
 from cansnpscorer.hierarchy import Hierarchy
-from cansnpscorer.model import Reference, ungap
+from cansnpscorer.model import AlignmentMap, Reference, ReferenceError, ungap
 
 Report = Tuple[List[str], List[str]]
 
@@ -32,24 +32,25 @@ def check_alignment_against_reference(alignment: Mapping[str, str],
         return ["the alignment holds no genomes"], warnings
 
     name, aligned = next(iter(alignment.items()))
-    ungapped = ungap(aligned)
 
-    if len(ungapped) != reference.length:
-        problems.append(
-            f"the alignment's first record '{name}' holds {len(ungapped)} bases once its gaps "
-            f"are removed, but the reference genome holds {reference.length}. The first record "
-            f"of the alignment must be the reference genome, and the reference file must hold "
-            f"the contigs the alignment concatenates, in that order")
-    elif ungapped.upper() != reference.sequence.upper():
-        problems.append(
-            f"the alignment's first record '{name}' is the same length as the reference genome "
-            f"but not the same sequence")
+    try:
+        mapping = AlignmentMap(aligned, reference)
+    except ReferenceError as error:
+        problems.append(f"the alignment's first record '{name}' is not the reference: {error}")
+        return problems, warnings
 
-    gaps = len(aligned) - len(ungapped)
-    if gaps:
-        warnings.append(
-            f"the alignment's reference row carries {gaps} gaps, so {gaps} columns have no "
-            f"position in the reference genome and any SNP in them is left out")
+    if mapping.projected:
+        if mapping.unaligned:
+            warnings.append(
+                f"the alignment is projected onto reference coordinates, and "
+                f"{mapping.unaligned} positions of the reference are covered by no aligned "
+                f"block, so no SNP can be found there")
+    else:
+        gaps = len(aligned) - len(ungap(aligned))
+        if gaps:
+            warnings.append(
+                f"the alignment's reference row carries {gaps} gaps, so {gaps} columns have no "
+                f"position in the reference genome and any SNP in them is left out")
 
     return problems, warnings
 
