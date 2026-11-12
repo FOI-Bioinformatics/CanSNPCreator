@@ -148,6 +148,6 @@ def report(problems: Sequence[str], warnings: Sequence[str], description: str = 
         return False
 
     logging.info(
-        f"The {description} are consistent"
+        f"No problems found in the {description}"
         + (f", with {len(warnings)} warnings" if warnings else ""))
     return True

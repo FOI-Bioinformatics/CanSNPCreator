@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from ruamel.yaml import YAML
 
-from cansnpscorer.helpers.scoring_methods import ScoredSnp
+from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 
@@ -580,6 +580,53 @@ def score_file_writer(scores: Sequence[ScoredSnp], output_file_path: str) -> Non
         csv_writer = csv.writer(out_file, delimiter=',')
         csv_writer.writerow(ScoredSnp.HEADER)
         csv_writer.writerows(score.row() for score in scores)
+
+
+def read_score_file(path: str) -> List[ScoredSnp]:
+    """
+    Read a score file written by the evaluate subcommand.
+
+    Args:
+        path: The path to the CSV file.
+
+    Returns:
+        The scored canSNPs in file order.
+
+    Raises:
+        ValueError: If the file does not carry the expected columns, or holds no rows.
+        OSError: If the file cannot be read.
+    """
+    logging.info(f"Reading scores from {path}")
+    scores: List[ScoredSnp] = []
+
+    with open(path, newline="") as handle:
+        reader = csv.DictReader(handle)
+        missing = [column for column in ScoredSnp.HEADER if column not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(
+                f"{path}: is missing the columns {', '.join(missing)}; it should be the output "
+                f"of the evaluate subcommand")
+
+        for line_number, row in enumerate(reader, 2):
+            try:
+                scores.append(ScoredSnp(
+                    contig=row["Contig"],
+                    position=int(row["Position"]),
+                    node=row["Group"],
+                    total=int(row["Score"]),
+                    terms={term: int(row[column]) for term, column
+                           in zip(TERMS, ScoredSnp.HEADER[6:])},
+                    derived=row["Derived"] or None,
+                    ancestral=row["Ancestral"] or None,
+                ))
+            except (TypeError, ValueError):
+                logging.error(f"{path}: cannot read line {line_number}")
+
+    if not scores:
+        raise ValueError(f"{path}: holds no readable score rows")
+
+    logging.info(f"Read {len(scores)} scores from {path}")
+    return scores
 
 
 def check_files_exist(files: List[str]) -> bool:

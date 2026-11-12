@@ -2,7 +2,13 @@ import argparse
 import logging
 import sys
 
-from cansnpscorer import __version__, cansnp_evaluator, cansnp_extractor, cansnp_trf
+from cansnpscorer import (
+    __version__,
+    cansnp_evaluator,
+    cansnp_export,
+    cansnp_extractor,
+    cansnp_trf,
+)
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, TERMS
 
 
@@ -74,6 +80,34 @@ def main():
                                       f"{', '.join(f'{k}={v:g}' for k, v in DEFAULT_WEIGHTS.items())}.")
     parser_evaluate.add_argument('--version', action='version', version=f'%(prog)s {__version__}', help="Show the current version of the script.")
 
+    # Create the parser for the "export" command
+    parser_export = subparsers.add_parser(
+        'export', help="Write a scored scheme as CanSNPer2-data source files.")
+    parser_export.add_argument("--score-file", required=True,
+                               help="The CSV file the evaluate subcommand wrote.")
+    parser_export.add_argument("--hcfile", required=True,
+                               help="Path to the input Hierarchical Clustering (HC) file.")
+    parser_export.add_argument("--reference-file", required=True,
+                               help="The reference genome, whose contig lengths turn positions "
+                                    "into the concatenated coordinates the SNP file uses.")
+    parser_export.add_argument("--organism", required=True,
+                               help="Names the three files, as in francisella_tularensis.")
+    parser_export.add_argument("--genome", required=True,
+                               help="The short name of the reference genome, as the SNP file "
+                                    "refers to it. It may not hold an underscore.")
+    parser_export.add_argument("--strain", required=True, help="The strain column of both files.")
+    parser_export.add_argument("--reference", dest="reference_label", required=True,
+                               help="What the SNPs are cited as, as in Svensson2009.")
+    parser_export.add_argument("--genbank-id", required=True, help="As in GCA_000007125.1.")
+    parser_export.add_argument("--refseq-id", required=True, help="As in GCF_000007125.1.")
+    parser_export.add_argument("--assembly-name", required=True, help="As in ASM712v1.")
+    parser_export.add_argument("--outdir", default=".", help="Where to write the files.")
+    parser_export.add_argument("--prune", action="store_true",
+                               help="Leave out nodes that have no canSNP, instead of refusing to "
+                                    "write a scheme. Their children then hang from the nearest "
+                                    "node that has one.")
+    parser_export.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+
     # Create the parser for the "trf" command
     parser_trf = subparsers.add_parser('trf', help='Perform TRF on canSNPs')
     parser_trf.add_argument('--input', required=True, help='Input file for TRF')
@@ -108,6 +142,12 @@ def main():
             args.snp_file, args.reference_file, args.gff_file, args.trf_file, args.hcfile,
             args.output_file, args.tandem_limit, args.gene_limit, args.gc_goal,
             args.cutoff_value, args.top_n_snp, weights)
+    elif args.command == 'export':
+        logging.info("Writing the scheme")
+        return cansnp_export.main(
+            args.score_file, args.hcfile, args.reference_file, args.outdir, args.organism,
+            args.genome, args.strain, args.reference_label, args.genbank_id, args.refseq_id,
+            args.assembly_name, args.prune)
     elif args.command == 'trf':
         logging.info("Starting canSNP TRF")
         return cansnp_trf.run_trf(
