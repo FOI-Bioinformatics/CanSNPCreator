@@ -247,6 +247,13 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         for context in contexts
         if context.node != "None"
     ]
+    missing = {(snp.contig, snp.position): snp.missing for snp in parsed}
+    for score in scores:
+        score.missing = missing.get((score.contig, score.position), 0)
+    incomplete = sum(1 for score in scores if score.missing)
+    if incomplete:
+        logging.info(f"{incomplete} canSNPs lack a base in some genomes; within a node they "
+                     f"are ranked after those called in every genome")
     # A canSNP in a masked region, such as a recombinant one, is marked before
     # the others are ranked, so that it does not take a place among the best.
     for score in scores:

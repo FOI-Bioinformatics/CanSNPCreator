@@ -1,4 +1,5 @@
 import logging
+import math
 from bisect import bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -146,17 +147,28 @@ def codon_complement(codon: str) -> str:
     return "".join([translation[nucleotide] for nucleotide in codon])
 
 
-def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, int]]]]:
+def called_needed(total: int, min_called: float) -> int:
+    """The number of genomes out of ``total`` that ``min_called`` asks for."""
+    return max(1, math.ceil(min_called * total - 1e-9))
+
+
+def snp_extractor(fasta: Dict[str, str],
+                  min_called: float = 1.0) -> List[Dict[str, Union[int, Dict[str, int]]]]:
     """
     Extract Single Nucleotide Polymorphisms (SNPs) from genomic alignments.
 
     Args:
         fasta (Dict[str, str]): A dictionary where keys are sequence names and values are genomic sequences.
+        min_called: The fraction of genomes that must carry a base (A, C, G or
+            T) in a column for it to count. With 1.0 a single gap or N in any
+            genome leaves the column out; below it the column is a SNP when
+            the genomes that are called carry exactly two bases.
 
     Returns:
         List[Dict[str, Union[int, Dict[str, int]]]]: A list of dictionaries. Each dictionary contains:
             - 'index': The position of the SNP in the reference sequence.
             - 'variants': A dictionary with the nucleotide variants at that position and their counts.
+            - 'missing': The number of genomes without a base in the column.
 
     Example:
         Return value might look like:
@@ -178,12 +190,19 @@ def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, 
     # zip walks the columns in C, one tuple per column, which is several times
     # faster than indexing every genome in Python, and the counts include the
     # reference row as the first element.
+    needed = called_needed(len(rows), min_called)
     for index, column in enumerate(zip(*rows)):
         if column[0] not in nucleotides:
             continue
         counts = Counter(column)
         if len(counts) == 2 and nucleotides.issuperset(counts):
-            snps.append({'index': index, 'variants': dict(counts)})
+            snps.append({'index': index, 'variants': dict(counts), 'missing': 0})
+        elif needed < len(rows):
+            called = {base: n for base, n in counts.items() if base in nucleotides}
+            total = sum(called.values())
+            if len(called) == 2 and total >= needed:
+                snps.append({'index': index, 'variants': called,
+                             'missing': len(rows) - total})
         if (index + 1) % step == 0:
             logging.info(f"Processed {index + 1}/{total_length} positions "
                          f"({round(100 * (index + 1) / total_length)}%)")
@@ -254,6 +273,8 @@ class CanSnp:
     ancestral: Optional[str] = None
     also_matched: Tuple[str, ...] = ()
     """Further nodes separated by the same column, which makes it ambiguous."""
+    missing: int = 0
+    """Genomes without a base (gap or N) in the column."""
 
     @property
     def is_canonical(self) -> bool:
@@ -261,13 +282,19 @@ class CanSnp:
 
 
 def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
-                     snps: List[Dict[str, Union[int, Dict[str, int]]]]) -> List[CanSnp]:
+                     snps: List[Dict[str, Union[int, Dict[str, int]]]],
+                     min_called: float = 1.0) -> List[CanSnp]:
     """
     Find which of the SNPs separate exactly the isolates below one node.
 
     A SNP is canonical for a node when every isolate below that node carries
     the same base and no genome outside it does. The base they carry is the
     derived one, so the polarity of the SNP follows from the node it marks.
+
+    In a column with missing bases (``min_called`` below 1.0) only the genomes
+    with a base are compared: at least ``min_called`` of the node's isolates
+    must be called, all of them with the derived base, and no called genome
+    outside the node may carry it.
 
     Args:
         alignment: The aligned sequences, keyed by name.
@@ -314,16 +341,28 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
         counts = snp['variants']
         bases = tuple(counts)
 
+        missing = snp.get('missing', 0)
         matches: List[Tuple[str, str]] = []
         for node, isolates in members.items():
-            shared = alignment[isolates[0]][column]
-            if any(alignment[isolate][column] != shared for isolate in isolates[1:]):
+            if not missing:
+                shared = alignment[isolates[0]][column]
+                if any(alignment[isolate][column] != shared for isolate in isolates[1:]):
+                    continue
+                if counts.get(shared, 0) == len(isolates):
+                    matches.append((node, shared))
                 continue
-            if counts.get(shared, 0) == len(isolates):
+            called = [alignment[isolate][column] for isolate in isolates]
+            called = [base for base in called if base in counts]
+            if len(called) < called_needed(len(isolates), min_called):
+                continue
+            shared = called[0]
+            if any(base != shared for base in called[1:]):
+                continue
+            if counts.get(shared, 0) == len(called):
                 matches.append((node, shared))
 
         if not matches:
-            cansnps.append(CanSnp(column=column, bases=bases))
+            cansnps.append(CanSnp(column=column, bases=bases, missing=missing))
             continue
 
         node, derived = matches[0]
@@ -336,6 +375,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
                 derived=derived,
                 ancestral=other[0] if other else None,
                 also_matched=tuple(name for name, _base in matches[1:]),
+                missing=missing,
             )
         )
         canonical += 1
@@ -362,9 +402,10 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
 
 
 def ranking(score):
-    """The order SNPs of a node are taken in: best total first, then by contig
-    and position, so that the same scores always give the same choice."""
-    return (-score.total, score.contig, score.position)
+    """The order SNPs of a node are taken in: those with fewer genomes missing
+    a base first, then the best total, then by contig and position, so that
+    the same scores always give the same choice."""
+    return (getattr(score, "missing", 0), -score.total, score.contig, score.position)
 
 
 def select_per_node(scores, top=None, spacing=0):

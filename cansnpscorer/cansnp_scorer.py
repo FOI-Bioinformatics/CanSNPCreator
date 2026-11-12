@@ -57,6 +57,14 @@ def fraction(text: str) -> float:
     return value
 
 
+def called_fraction(text: str) -> float:
+    """A fraction above 0 and at most 1."""
+    value = fraction(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be above 0")
+    return value
+
+
 def non_negative_float(text: str) -> float:
     try:
         value = float(text)
@@ -168,6 +176,12 @@ def main():
     add_reference(extract)
     add_hierarchy(extract)
     add_genome_map(extract)
+    extract.add_argument("--min-called", type=called_fraction, default=1.0, metavar="FRACTION",
+                         help="The fraction of genomes, overall and among a node's genomes, "
+                              "that must have a base (not a gap or N) at a SNP. Default 1.0: "
+                              "a column with any missing base is left out. Below 1.0 the "
+                              "genomes without a base are ignored when the node is judged, "
+                              "INFO/MISSING counts them, and export prefers SNPs with fewer.")
     extract.add_argument("-o", "--output", required=True, help="The SNPs to write.")
     add_version(extract)
 
@@ -398,7 +412,7 @@ def run(args, parser, evaluate) -> int:
     if args.command == "extract":
         return cansnp_extractor.main(
             alignment=args.alignment, reference=args.reference, hierarchy=args.hierarchy,
-            genome_map=args.genome_map, output=args.output)
+            genome_map=args.genome_map, output=args.output, min_called=args.min_called)
     if args.command == "evaluate":
         try:
             weights = score_weights(args.score_weight)

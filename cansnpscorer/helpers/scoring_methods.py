@@ -213,6 +213,8 @@ class ScoredSnp:
     ancestral: Optional[str] = None
     filters: List[str] = field(default_factory=list)
     """The FILTER codes it failed: LowScore, NotTop or Masked. Empty when it passed."""
+    missing: int = 0
+    """Genomes of the alignment without a base at the SNP; fewer is ranked first."""
 
     @property
     def passed(self) -> bool:

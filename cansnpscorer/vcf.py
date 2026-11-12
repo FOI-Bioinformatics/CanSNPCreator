@@ -108,6 +108,10 @@ NEAREST = Info("NEAREST", "1", "Integer",
                f"scheme carry different bases, a third allele or a partly missing column "
                f"included, up to {NEAREST_CAP}")
 
+MISSING = Info("MISSING", "1", "Integer",
+               "Number of genomes of the alignment without a base (gap or N) at the SNP; "
+               "0 unless extract was run with --min-called below 1")
+
 
 @dataclass
 class Record:
@@ -394,11 +398,18 @@ class Snp:
     ancestral: str
     nearest: Optional[int] = None
     """Distance to the nearest variation among the scheme's genomes, when known."""
+    missing: int = 0
+    """Genomes of the alignment without a base at the SNP."""
 
 
 def nearest_of(record: Record) -> Optional[int]:
     value = record.info.get("NEAREST")
     return int(value) if value not in (None, "") else None
+
+
+def missing_of(record: Record) -> int:
+    value = record.info.get("MISSING")
+    return int(value) if value not in (None, "") else 0
 
 
 def read_snps(path: str, reference: Reference) -> List[Snp]:
@@ -417,10 +428,10 @@ def read_snps(path: str, reference: Reference) -> List[Snp]:
                     f"{path}: {record.chrom}:{record.pos} gives the ancestral allele "
                     f"{record.ancestral}, which is neither REF nor ALT")
             snps.append(Snp(record.chrom, record.pos, record.node, record.derived,
-                            record.ancestral, nearest_of(record)))
+                            record.ancestral, nearest_of(record), missing_of(record)))
         else:
             snps.append(Snp(record.chrom, record.pos, None, record.alt, record.ref,
-                            nearest_of(record)))
+                            nearest_of(record), missing_of(record)))
     if not snps:
         raise VcfError(f"{path}: holds no SNPs")
     return snps
@@ -438,12 +449,13 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str, c
         record.info["SCORE"] = str(score.total)
         for term in TERMS:
             record.info[INFO_KEYS[term]] = str(score.terms[term])
+        record.info["MISSING"] = str(getattr(score, "missing", 0))
         record.filters = list(score.filters)
         records.append(record)
 
     weighting = ",".join(f"{term}={weights.get(term, 1.0):g}" for term in TERMS)
     header = header_lines(reference, reference_path, "evaluate",
-                          [NODE, ANCESTRAL, SCORE, *term_infos()],
+                          [NODE, ANCESTRAL, SCORE, *term_infos(), MISSING],
                           score_filters(cutoff, top),
                           [f"##CanSNPCreatorWeights={weighting}"])
     return write(path, header, records)
@@ -472,7 +484,7 @@ def read_scores(path: str, reference: Optional[Reference] = None):
                 total=int(record.info["SCORE"]),
                 terms={term: int(record.info[key]) for term, key in INFO_KEYS.items()},
                 derived=record.derived, ancestral=record.ancestral,
-                filters=list(record.filters)))
+                filters=list(record.filters), missing=missing_of(record)))
         except (KeyError, TypeError, ValueError):
             raise VcfError(
                 f"{path}: {record.chrom}:{record.pos} lacks a whole number score") from None

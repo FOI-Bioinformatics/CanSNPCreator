@@ -100,6 +100,8 @@ both as VCF 4.3:
   the genomes placed in the scheme differ, capped at 1000. It counts every such
   column, also those the strict core leaves out (a third base, or a genome
   without a base), and leaves the outgroup out.
+- `INFO/MISSING` is the number of genomes without a base at the SNP, which is
+  0 unless `extract --min-called` is below 1.
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
   `GENE`, `MUTATION`), and records the weights in a `##CanSNPCreatorWeights`
   line.
@@ -149,6 +151,17 @@ CanSNPCreator export \
 core): a genome with no base at a site, as an accessory region or a gap gives,
 leaves the site out, so a large set of draft genomes leaves fewer sites than a
 small set of complete ones.
+
+`--min-called FRACTION` relaxes this. A site is kept when at least that
+fraction of the genomes have a base and those genomes carry exactly two bases.
+A node is marked when at least the same fraction of its own genomes have a
+base, all of them the derived one, and no genome with a base outside the node
+carries it. `INFO/MISSING` gives the number of genomes without a base, and
+`evaluate` and `export` take, within a node, SNPs with fewer missing genomes
+before better-scoring ones with more. With `--min-called 0.9`, a node of two
+genomes still needs both, so the relaxation helps mainly the larger nodes and
+sites where a genome outside the node lacks a base. The default, 1.0, keeps
+the strict core.
 
 ### Scores
 

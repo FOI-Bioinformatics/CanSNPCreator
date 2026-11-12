@@ -29,12 +29,13 @@ from cansnpscorer.validate import (
 )
 
 
-def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output=None) -> int:
+def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output=None,
+         min_called=1.0) -> int:
     """Extract canSNPs from an alignment. Returns a process exit status."""
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(
         f"Parameters: alignment={alignment}, reference={reference}, hierarchy={hierarchy}, "
-        f"genome_map={genome_map}, output={output}")
+        f"genome_map={genome_map}, output={output}, min_called={min_called}")
 
     missing = [path for path in (alignment, reference, hierarchy, genome_map)
                if not os.path.isfile(path)]
@@ -66,13 +67,13 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         # The aligned's genome row carries the aligner's gaps, so the
         # column of a SNP is not its position in the genome genome.
         mapping = AlignmentMap(next(iter(aligned.values())), genome)
-        snps = snp_extractor(aligned)
+        snps = snp_extractor(aligned, min_called)
         # The flank of an assay is spoiled by any difference among the genomes
         # it will type, not only by canonical SNPs, so every column where the
         # scheme's genomes differ is found, and the outgroup's are left out.
         placed = sorted({name for names in clusters.values() for name in names})
         flank_columns = variable_columns(aligned, placed)
-        cansnps = canSNP_extractor(aligned, isolates, snps)
+        cansnps = canSNP_extractor(aligned, isolates, snps, min_called)
     except (ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -93,6 +94,7 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
                                           cansnp.node, cansnp.ancestral))
         else:
             records.append(vcf.snp_record(genome, contig.name, position, cansnp.bases))
+        records[-1].info["MISSING"] = str(cansnp.missing)
 
     if gapped:
         logging.warning(
@@ -114,7 +116,7 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
                  f"scheme, which gives each SNP the distance to its nearest variation")
 
     header = vcf.header_lines(genome, reference, "extract",
-                              [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST])
+                              [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST, vcf.MISSING])
     written = vcf.write(output, header, records)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
@@ -123,6 +125,11 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         logging.warning(
             f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")
     logging.info(f"Wrote {written} SNPs to {output}, of which {found} are canonical")
+    if min_called < 1.0:
+        partial = sum(1 for cansnp in cansnps if cansnp.is_canonical and cansnp.missing)
+        logging.info(f"{partial} of the canonical SNPs lie in columns where some genomes have "
+                     f"no base (at least {min_called:g} of the genomes called); INFO/MISSING "
+                     f"gives the number")
 
     logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     return 0
