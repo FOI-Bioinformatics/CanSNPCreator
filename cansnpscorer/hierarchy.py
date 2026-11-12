@@ -15,11 +15,63 @@ import json
 import re
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-NEWICK_TOKEN = re.compile(r"[(),;]|[^(),;:\s]+(?::[^(),;\s]+)?")
+SUPPORT_LABEL = re.compile(r"^\d+(\.\d+)?(/\d+(\.\d+)?)*$")
 
 
 class HierarchyError(ValueError):
     """The hierarchy cannot be read, or is not a tree."""
+
+
+def _newick_tokens(text: str) -> List[str]:
+    """Split Newick text into brackets, commas, the closing semicolon, labels
+    and branch lengths, the latter kept with their leading colon."""
+    tokens: List[str] = []
+    index = 0
+    text = text.strip()
+    while index < len(text):
+        character = text[index]
+        if character.isspace():
+            index += 1
+        elif character in "(),;":
+            tokens.append(character)
+            index += 1
+        elif character == "'":
+            end = index + 1
+            label = []
+            while end < len(text):
+                if text[end] == "'" and end + 1 < len(text) and text[end + 1] == "'":
+                    label.append("'")
+                    end += 2
+                    continue
+                if text[end] == "'":
+                    break
+                label.append(text[end])
+                end += 1
+            else:
+                raise HierarchyError("the Newick string holds an unclosed quoted label")
+            tokens.append("".join(label))
+            index = end + 1
+        elif character == "[":
+            end = text.find("]", index)
+            if end < 0:
+                raise HierarchyError("the Newick string holds an unclosed comment")
+            index = end + 1
+        else:
+            end = index
+            if character == ":":
+                end += 1
+            while end < len(text) and text[end] not in "(),;:'[" and not text[end].isspace():
+                end += 1
+            tokens.append(text[index:end])
+            index = end
+    return tokens
+
+
+def _support_value(label: str) -> Optional[float]:
+    """The support a numeric internal label carries, or None for a name."""
+    if not SUPPORT_LABEL.match(label):
+        return None
+    return float(label.split("/")[-1])
 
 
 class Hierarchy:
@@ -34,6 +86,10 @@ class Hierarchy:
         self.parents: Dict[str, Optional[str]] = {}
         self.children: Dict[str, List[str]] = {}
         self.order: List[str] = []
+        # Read from a tree that carries them: the support of each internal
+        # node as a fraction, and the length of the branch above each node.
+        self.support: Dict[str, float] = {}
+        self.lengths: Dict[str, float] = {}
 
         for child, parent in pairs:
             child = str(child).strip()
@@ -134,56 +190,92 @@ class Hierarchy:
 
     @classmethod
     def from_newick(cls, text: str) -> "Hierarchy":
-        """Build from a Newick string whose internal nodes are named.
+        """Build from a Newick string.
 
-        Branch lengths are accepted and discarded. Unnamed internal nodes are
-        given a generated name, since a canSNP scheme addresses its branches by
-        name.
+        Branch lengths are kept in ``lengths``. An internal label that is a
+        number, or numbers separated by slashes as IQ-TREE writes SH-aLRT and
+        ultrafast bootstrap together, is a support value rather than a name: it
+        is kept in ``support``, as a fraction, from the last number of the
+        label. Unnamed internal nodes are given a generated name, since a canSNP
+        scheme addresses its branches by name. Single-quoted labels may hold
+        any character.
         """
-        tokens = NEWICK_TOKEN.findall(text.strip())
+        tokens = _newick_tokens(text)
         if not tokens:
             raise HierarchyError("the Newick string holds no nodes")
 
         pairs: List[Tuple[str, Optional[str]]] = []
+        support: Dict[str, float] = {}
+        lengths: Dict[str, float] = {}
         generated = 0
-
-        def name_of(token: str) -> str:
-            return token.split(":")[0].strip()
-
         position = 0
+
+        def peek() -> Optional[str]:
+            return tokens[position] if position < len(tokens) else None
 
         def parse_node() -> str:
             nonlocal position, generated
             children: List[str] = []
-            if position < len(tokens) and tokens[position] == "(":
+            if peek() == "(":
                 position += 1
                 while True:
                     children.append(parse_node())
-                    if position >= len(tokens):
-                        raise HierarchyError("the Newick string ends inside a group")
-                    if tokens[position] == ",":
+                    if peek() == ",":
                         position += 1
                         continue
-                    if tokens[position] == ")":
+                    if peek() == ")":
                         position += 1
                         break
-                    raise HierarchyError(f"unexpected '{tokens[position]}' in the Newick string")
+                    if peek() is None:
+                        raise HierarchyError("the Newick string ends inside a group")
+                    raise HierarchyError(f"unexpected '{peek()}' in the Newick string")
 
-            name = ""
-            if position < len(tokens) and tokens[position] not in {"(", ")", ",", ";"}:
-                name = name_of(tokens[position])
+            label = ""
+            if peek() is not None and peek() not in {"(", ")", ",", ";"} \
+                    and not peek().startswith(":"):
+                label = tokens[position]
                 position += 1
+            length = None
+            if peek() is not None and peek().startswith(":"):
+                try:
+                    length = float(tokens[position][1:])
+                except ValueError:
+                    raise HierarchyError(
+                        f"'{tokens[position][1:]}' is not a branch length") from None
+                position += 1
+
+            value = _support_value(label) if children else None
+            name = label if value is None else ""
             if not name:
+                if not children:
+                    raise HierarchyError("the Newick string holds a leaf without a name")
                 generated += 1
                 name = f"node{generated}"
+            if value is not None:
+                support[name] = value
+            if length is not None:
+                lengths[name] = length
 
             for child in children:
                 pairs.append((child, name))
             return name
 
         root = parse_node()
+        if peek() == ";":
+            position += 1
+        if peek() is not None:
+            raise HierarchyError(
+                "the Newick string holds more than one tree, or text after its ';'")
         pairs.append((root, None))
-        return cls(pairs)
+
+        hierarchy = cls(pairs)
+        # Supports written as percentages are read as fractions, so that a
+        # threshold means the same whichever the tree builder wrote.
+        if any(value > 1.0 for value in support.values()):
+            support = {name: value / 100.0 for name, value in support.items()}
+        hierarchy.support = support
+        hierarchy.lengths = lengths
+        return hierarchy
 
     # -- questions about the tree -------------------------------------------
 

@@ -277,6 +277,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
     cansnps: List[CanSnp] = []
     canonical = 0
     ambiguous = 0
+    complementary = 0
 
     for snp in snps:
         column = snp['index']
@@ -309,12 +310,22 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
         )
         canonical += 1
         if len(matches) > 1:
-            ambiguous += 1
+            first = set(members[matches[0][0]])
+            if any(set(members[other]) == first for other, _base in matches[1:]):
+                ambiguous += 1
+            else:
+                complementary += 1
 
     if ambiguous:
         logging.warning(
             f"{ambiguous} canSNPs separate more than one node, because those nodes hold the "
             "same isolates; each is reported against the first of them")
+    if complementary:
+        logging.warning(
+            f"{complementary} canSNPs separate two nodes whose isolates together are every "
+            f"genome of the alignment, so which side carries the derived base cannot be told "
+            f"without a genome outside both; each is reported against the first of them. An "
+            f"outgroup genome in the alignment, placed at no node, settles it")
     logging.info(f"Found {canonical} canSNPs")
 
     return cansnps

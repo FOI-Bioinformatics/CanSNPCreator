@@ -138,6 +138,82 @@ A node with no canSNP refuses the scheme, because every node of a CanSNPer2
 scheme carries one. `--prune` leaves those nodes out instead, re-parenting
 their children to the nearest node that has one.
 
+### Start from a genome tree
+
+A genome tree, such as RepGenR2's `tree/tree.nwk` or `tree2tax.tsv`, has a node
+for every split the tree builder found: far more than a scheme has, and many of
+them weakly supported. `collapse` removes the internal nodes below a threshold,
+joining each into its parent, and places every genome at the deepest node that
+remains:
+
+```sh
+CanSNPCreator collapse \
+    --tree tree.nwk \
+    --outgroup Coxiella_sp_GCF_000000000.1 \
+    --min-support 0.95 --min-genomes 3 \
+    --rename Cb --outdir scheme_draft --prefix coxiella
+```
+
+| Option | Removes an internal node when |
+| ------ | ----------------------------- |
+| `--min-support` | its support is lower, as a fraction; a tree written in percentages is read as fractions |
+| `--min-branch-length` | the branch above it is shorter, in the tree's units |
+| `--min-genomes` | fewer genomes lie below it (default 2) |
+
+A Newick tree carries its own support values and branch lengths; for
+`tree2tax.tsv`, `--nodes-file tree2tax_nodes.tsv` supplies them. Both keep
+RepGenR2's outgroup as a leaf unless `tree2tax --remove-outgroup` was given;
+its accession is in `outgroup_accession.txt`.
+
+A node that would hold exactly its parent's genomes is joined into the parent
+as well, since no SNP could tell the two apart. `--outgroup` names a leaf that
+is placed at no node: it stays in the alignment as a genome outside every node,
+which is what lets `extract` find the root's canSNP and tell which side of each
+split is derived. Without one, `extract` warns that the two sides of the root
+cannot be told apart. `--genome-map` reads RepGenR2's `genomes_map.tsv`, so that
+genomes folded into a representative by dereplication count towards their
+node and are placed with it. `--rename Cb` names the nodes `Cb`, `Cb.1`,
+`Cb.1.2` and so on, largest first, in place of the tree's hashes.
+
+It writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv`, which are the
+`--hcfile` and `--groupfile` of `extract`, and `PREFIX_nodes.tsv`, which gives
+each node's genome count, support, branch length and name in the tree.
+
+Tree leaves, group files and alignment records are matched by name once
+non-alphanumeric characters are removed, and an assembly accession such as
+`GCF_000007765.2` matches the one record whose name contains it, since RepGenR2
+names records `Family_Genus_species_Accession` but lists accessions alone in
+`genomes_map.tsv`.
+
+### Place genomes on an existing scheme
+
+Checking a scheme against genomes needs each genome placed at a node of the
+scheme. Typing the genomes with the scheme places them by the SNPs under test,
+so a genome that lacks the derived base of its own branch is typed elsewhere
+and is never seen to lack it. `place` instead uses each SNP of the scheme only
+to identify which clade of a genome tree the node means, and places the
+genomes by the tree:
+
+```sh
+CanSNPCreator place \
+    --scheme-dir CanSNPer2-data/source --organism coxiella_burnetii \
+    --tree tree.nwk --fastafile alignment.fasta --reference-file RSA493.fasta \
+    -o placed.tsv --report placement.tsv
+```
+
+Each node is matched to the side of a branch whose genomes best agree with the
+genomes carrying its derived base, by Jaccard index, counting only genomes
+with a base at the site. Both sides of every branch are considered, so a tree
+rooted at its midpoint, inside a clade of the scheme, is matched as well as one
+rooted on an outgroup. A genome is placed at the deepest node whose match
+holds it. `--min-match` (default 0.5) sets the lowest index accepted, and the
+report gives each node's match, its index and the genomes on either side of
+the disagreement. A node with one or two genomes is matched less reliably
+than one with many: in a clade of two in which one genome lacks the derived
+base, the other genome alone matches as well as the clade.
+
+`audit --tree tree.nwk` places the genomes this way in place of `--groupfile`.
+
 ### Audit an existing scheme
 
 ```sh
@@ -161,7 +237,7 @@ formed; this answers whether it can be typed with. The checks are:
 | spacing | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
 | reference base | with `--reference-file`, a position whose reference base is neither allele, and, when most of them are, a scheme whose coordinates were taken against another version of the assembly |
 | better SNPs | with `--score-file` and `--reference-file`, a node where a higher scoring candidate is available, or one the score file does not cover |
-| genomes | with `--fastafile`, `--groupfile` and `--reference-file`, the checks below |
+| genomes | with `--fastafile`, `--reference-file`, and `--groupfile` or `--tree`, the checks below |
 
 The last group is the only one that tests what defines a canSNP: that every
 isolate below the node carries the derived base and no other genome does. Given

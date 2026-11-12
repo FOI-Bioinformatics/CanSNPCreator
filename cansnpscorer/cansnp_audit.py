@@ -51,8 +51,10 @@ from cansnpscorer.helpers.file_utils import (
     reference_parser,
 )
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
+from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
+from cansnpscorer.tree_tools import place, read_genome_tree, read_members
 
 BASES = frozenset("ACGT")
 
@@ -441,7 +443,7 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
 def main(scheme_dir=None, organism=None, reference_file=None, score_file=None, genome=None,
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
          strict=False, fastafile=None, groupfile=None, min_clade_size=2,
-         min_clade_snps=1) -> int:
+         min_clade_snps=1, tree=None, genome_map=None) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
@@ -461,25 +463,40 @@ def main(scheme_dir=None, organism=None, reference_file=None, score_file=None, g
             "contig and the scheme counts them over the concatenated genome")
         return 1
 
-    if bool(fastafile) != bool(groupfile) or (fastafile and reference is None):
+    placed_by = groupfile or tree
+    if (groupfile and tree) or bool(fastafile) != bool(placed_by) \
+            or (fastafile and reference is None):
         logging.error(
-            "checking the scheme against the genomes needs --fastafile, --groupfile and "
-            "--reference-file together: the alignment, where its genomes sit in the scheme, "
-            "and the reference genome the alignment is against")
+            "checking the scheme against the genomes needs --fastafile and --reference-file, "
+            "and either --groupfile or --tree to say where the genomes sit in the scheme")
         return 1
 
     alignment = clusters = None
+    placement_findings: List[Finding] = []
     if fastafile:
         try:
             alignment = read_alignment(fastafile)
-            clusters = HCParser(groupfile,
-                                data_format=recognize_group_file_format(groupfile)).isolates
-        except (OSError, ValueError) as error:
+            if groupfile:
+                clusters = HCParser(groupfile,
+                                    data_format=recognize_group_file_format(groupfile)).isolates
+            else:
+                genome_tree = read_genome_tree(tree)
+                members = read_members(genome_map, genome_tree) if genome_map else None
+                placement = place(scheme, genome_tree, alignment, reference, genome,
+                                  members=members)
+                clusters = placement.clusters
+                placement_findings = placement.findings
+        except (OSError, ValueError, HierarchyError, ReferenceError) as error:
             logging.error(error)
             return 1
 
     findings = audit_scheme(scheme, reference, scores, genome, min_required_hits, proximity,
                             alignment, clusters, min_clade_size, min_clade_snps)
+    if placement_findings:
+        order = {PROBLEM: 0, RECOMMENDATION: 1}
+        findings = sorted(findings + placement_findings,
+                          key=lambda finding: (order[finding.severity], finding.category,
+                                               finding.node))
 
     for finding in findings:
         if finding.severity == PROBLEM:

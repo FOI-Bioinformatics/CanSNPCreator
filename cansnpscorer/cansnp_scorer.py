@@ -8,6 +8,7 @@ from cansnpscorer import (
     cansnp_evaluator,
     cansnp_export,
     cansnp_extractor,
+    cansnp_tree,
     cansnp_trf,
 )
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
@@ -150,6 +151,13 @@ def main():
                                    "and Group CSV, a repgenr group file, or two tab separated "
                                    "columns of genome and node, as RepGenR2's genomes_map.tsv. "
                                    "A genome may be placed at an internal node.")
+    parser_audit.add_argument("--tree", default=None,
+                              help="Instead of --groupfile: a rooted genome tree whose leaves are "
+                                   "the alignment's genomes. The genomes are placed on the "
+                                   "scheme by the tree, as the place subcommand does, rather "
+                                   "than by typing them with the SNPs under test.")
+    parser_audit.add_argument("--genome-map", default=None,
+                              help="With --tree: RepGenR2's genomes_map.tsv.")
     parser_audit.add_argument("--min-clade-size", type=int, default=2,
                               help="Report a clade the scheme does not resolve only when it "
                                    "holds at least this many genomes. Default: 2.")
@@ -162,6 +170,69 @@ def main():
                               help="Exit 2 for a recommendation as well as for a problem, for "
                                    "use in continuous integration.")
     parser_audit.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+
+    # Create the parser for the "collapse" command
+    parser_collapse = subparsers.add_parser(
+        'collapse', help="Reduce a genome tree to the nodes of a scheme, and place its genomes.")
+    parser_collapse.add_argument("--tree", required=True,
+                                 help="A rooted genome tree whose leaves are genomes: Newick, "
+                                      "or a child and parent table such as RepGenR2's "
+                                      "tree2tax.tsv.")
+    parser_collapse.add_argument("--nodes-file", default=None,
+                                 help="RepGenR2's tree2tax_nodes.tsv, for the support and "
+                                      "branch length of each node. A Newick tree carries both.")
+    parser_collapse.add_argument("--genome-map", default=None,
+                                 help="RepGenR2's genomes_map.tsv, so that genomes folded into a "
+                                      "representative by dereplication are placed with it.")
+    parser_collapse.add_argument("--min-support", type=float, default=None,
+                                 help="Remove internal nodes with a lower support, as a fraction; "
+                                      "percentages in the tree are read as fractions.")
+    parser_collapse.add_argument("--min-genomes", type=int, default=2,
+                                 help="Remove internal nodes with fewer genomes below them. "
+                                      "Default: 2.")
+    parser_collapse.add_argument("--min-branch-length", type=float, default=None,
+                                 help="Remove internal nodes whose branch is shorter, in the "
+                                      "tree's units.")
+    parser_collapse.add_argument("--outgroup", action="append", default=[], metavar="LEAF",
+                                 help="A leaf of the tree that is an outgroup: it is placed at "
+                                      "no node, and stays in the alignment as a genome outside "
+                                      "every node, which gives the root a polarity. Repeatable.")
+    parser_collapse.add_argument("--rename", default=None, metavar="PREFIX",
+                                 help="Name the nodes PREFIX, PREFIX.1, PREFIX.1.2 and so on, "
+                                      "largest first, instead of the tree's own names.")
+    parser_collapse.add_argument("--outdir", default=".", help="Where to write the files.")
+    parser_collapse.add_argument("--prefix", default="collapsed",
+                                 help="Names the three files: PREFIX_hierarchy.tsv, "
+                                      "PREFIX_genomes.tsv and PREFIX_nodes.tsv.")
+    parser_collapse.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+
+    # Create the parser for the "place" command
+    parser_place = subparsers.add_parser(
+        'place', help="Place the genomes of a tree on the nodes of an existing scheme.")
+    parser_place.add_argument("--scheme-dir", required=True,
+                              help="The directory holding the scheme's three source files.")
+    parser_place.add_argument("--organism", default=None, help="Which scheme to read.")
+    parser_place.add_argument("--tree", required=True,
+                              help="A rooted genome tree whose leaves are the alignment's "
+                                   "genomes, preferably rooted on an outgroup.")
+    parser_place.add_argument("--fastafile", required=True,
+                              help="The whole genome alignment, reference first.")
+    parser_place.add_argument("--reference-file", required=True,
+                              help="The reference genome the scheme is annotated against.")
+    parser_place.add_argument("--genome", default=None,
+                              help="Which of the scheme's reference genomes that is, when it "
+                                   "names more than one.")
+    parser_place.add_argument("--genome-map", default=None,
+                              help="RepGenR2's genomes_map.tsv, so that genomes folded into a "
+                                   "leaf are placed with it.")
+    parser_place.add_argument("--min-match", type=float, default=0.5,
+                              help="The lowest Jaccard index between a node's derived genomes "
+                                   "and a clade that counts as a match. Default: 0.5.")
+    parser_place.add_argument("-o", "--output", required=True,
+                              help="The genome map to write: genome and node, tab separated.")
+    parser_place.add_argument("--report", default=None,
+                              help="Also write how each node was matched to the tree.")
+    parser_place.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
 
     # Create the parser for the "trf" command
     parser_trf = subparsers.add_parser('trf', help='Perform TRF on canSNPs')
@@ -208,7 +279,18 @@ def main():
         return cansnp_audit.main(
             args.scheme_dir, args.organism, args.reference_file, args.score_file, args.genome,
             args.min_required_hits, args.proximity, args.output, args.strict,
-            args.fastafile, args.groupfile, args.min_clade_size, args.min_clade_snps)
+            args.fastafile, args.groupfile, args.min_clade_size, args.min_clade_snps,
+            args.tree, args.genome_map)
+    elif args.command == 'collapse':
+        logging.info("Collapsing the genome tree")
+        return cansnp_tree.collapse_main(
+            args.tree, args.nodes_file, args.genome_map, args.min_support, args.min_genomes,
+            args.min_branch_length, args.rename, args.outdir, args.prefix, args.outgroup)
+    elif args.command == 'place':
+        logging.info("Placing the genomes on the scheme")
+        return cansnp_tree.place_main(
+            args.scheme_dir, args.organism, args.tree, args.fastafile, args.reference_file,
+            args.genome, args.genome_map, args.min_match, args.output, args.report)
     elif args.command == 'trf':
         logging.info("Starting canSNP TRF")
         return cansnp_trf.run_trf(
