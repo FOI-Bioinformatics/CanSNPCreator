@@ -1,13 +1,11 @@
 
-import csv
 import logging
 from collections import Counter
 from dataclasses import dataclass
 from operator import itemgetter
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 from cansnpscorer.helpers.names import strip_fasta_suffix
-from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 
@@ -149,26 +147,6 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     return records
 
 
-def fasta_parser(fasta_file: str, output_format: str = 'list') -> Union[List[str], List[Tuple[str, str]], Dict[str, str]]:
-    """
-    Parse a FASTA file.
-
-    Args:
-        fasta_file: Path to the FASTA file.
-        output_format: Output format ('list', 'dict', 'named_list').
-
-    Returns:
-        Parsed genomes in the requested output format.
-    """
-    records = read_fasta(fasta_file)
-
-    if output_format == 'dict':
-        return dict(records)
-    if output_format == 'named_list':
-        return records
-    return [sequence for _name, sequence in records]
-
-
 def read_alignment(alignment_file: str) -> Dict[str, str]:
     """
     Read a whole genome alignment, with the reference genome as its first record.
@@ -252,99 +230,6 @@ def read_genome_map(path: str) -> Dict[str, List[str]]:
     logging.info(f"Read {len(placed)} genomes placed at {len(clusters)} nodes")
     return clusters
 
-
-#: The columns of the SNP file the extractor writes.
-SNP_HEADER = ("contig", "position", "node", "derived_base", "ancestral_base")
-
-
-@dataclass
-class ParsedSnp:
-    """One row of a SNP file.
-
-    A SNP from the current format is addressed by contig and 1-based position.
-    One from the older format carries a position in the concatenated genome
-    instead, counted from zero, and no polarity.
-    """
-
-    node: str
-    alleles: Tuple[str, ...]
-    contig: Optional[str] = None
-    position: Optional[int] = None
-    global_position: Optional[int] = None
-
-    @property
-    def derived(self) -> Optional[str]:
-        return self.alleles[0] if self.contig is not None and self.alleles else None
-
-    @property
-    def ancestral(self) -> Optional[str]:
-        return self.alleles[1] if self.contig is not None and len(self.alleles) > 1 else None
-
-
-def snp_file_parser(snpfile: str) -> List[ParsedSnp]:
-    """
-    Read a SNP file written by the extract subcommand.
-
-    Both the current tab separated format, which names the contig and gives a
-    1-based position, and the older space separated format, which gives a
-    position in the concatenated genome counted from zero, are accepted. The
-    older format is reported once as what it is, since its positions cannot be
-    checked against a contig and carry no polarity.
-
-    Args:
-        snpfile: The path to the SNP file.
-
-    Returns:
-        The SNPs in file order.
-
-    Raises:
-        ValueError: If the file holds no readable rows.
-        OSError: If the file cannot be read.
-    """
-    logging.info(f"Reading SNPs from {snpfile}")
-
-    snps: List[ParsedSnp] = []
-    legacy = 0
-    unreadable = 0
-
-    with open(snpfile) as handle:
-        for line_number, line in enumerate(handle, 1):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            if line.split("\t")[0:1] == [SNP_HEADER[0]]:
-                continue
-
-            fields = line.split("\t") if "\t" in line else line.split(" ")
-            fields = [field for field in fields if field]
-
-            try:
-                if "\t" in line:
-                    contig, position, node, *bases = fields
-                    snps.append(ParsedSnp(node=node, alleles=tuple(bases), contig=contig,
-                                          position=int(position)))
-                else:
-                    position, node, *bases = fields
-                    legacy += 1
-                    snps.append(ParsedSnp(node=node, alleles=tuple(bases),
-                                          global_position=int(position)))
-            except ValueError:
-                unreadable += 1
-                logging.error(f"{snpfile}: cannot read line {line_number}: {line}")
-
-    if unreadable:
-        logging.warning(f"Skipped {unreadable} unreadable rows in {snpfile}")
-    if legacy:
-        logging.warning(
-            f"{legacy} rows of {snpfile} are in the older format, which counts positions over "
-            "the whole genome from zero and records no derived or ancestral base. Re-run "
-            "extract to get positions by contig.")
-    if not snps:
-        raise ValueError(f"{snpfile}: holds no readable SNP rows")
-
-    logging.info(f"Read {len(snps)} SNPs from {snpfile}")
-    return snps
 
 def reference_parser(reference: str) -> Reference:
     """
@@ -497,82 +382,3 @@ def trf_parser(trf_file_path: str) -> Dict[str, List[Tuple[int, int]]]:
         f"Read {sum(len(found) for found in intervals.values())} repeats over "
         f"{len(intervals)} sequences from {trf_file_path}")
     return intervals
-
-
-def score_file_writer(scores: Sequence[ScoredSnp], output_file_path: str) -> None:
-    """
-    Write scored canSNPs to a CSV file.
-
-    Args:
-        scores: The scored canSNPs to write.
-        output_file_path: Where to write the file.
-    """
-    logging.info(f"Writing {len(scores)} scored canSNPs to {output_file_path}")
-
-    with open(output_file_path, 'w', newline='') as out_file:
-        csv_writer = csv.writer(out_file, delimiter=',')
-        csv_writer.writerow(ScoredSnp.HEADER)
-        csv_writer.writerows(score.row() for score in scores)
-
-
-def read_score_file(path: str) -> List[ScoredSnp]:
-    """
-    Read a score file written by the evaluate subcommand.
-
-    Args:
-        path: The path to the CSV file.
-
-    Returns:
-        The scored canSNPs in file order.
-
-    Raises:
-        ValueError: If the file does not carry the expected columns, or holds no rows.
-        OSError: If the file cannot be read.
-    """
-    logging.info(f"Reading scores from {path}")
-    scores: List[ScoredSnp] = []
-
-    with open(path, newline="") as handle:
-        reader = csv.DictReader(handle)
-        missing = [column for column in ScoredSnp.HEADER if column not in (reader.fieldnames or [])]
-        if missing:
-            raise ValueError(
-                f"{path}: is missing the columns {', '.join(missing)}; it should be the output "
-                f"of the evaluate subcommand")
-
-        for line_number, row in enumerate(reader, 2):
-            try:
-                scores.append(ScoredSnp(
-                    contig=row["Contig"],
-                    position=int(row["Position"]),
-                    node=row["Group"],
-                    total=int(row["Score"]),
-                    terms={term: int(row[column]) for term, column
-                           in zip(TERMS, ScoredSnp.HEADER[6:])},
-                    derived=row["Derived"] or None,
-                    ancestral=row["Ancestral"] or None,
-                ))
-            except (TypeError, ValueError):
-                logging.error(f"{path}: cannot read line {line_number}")
-
-    if not scores:
-        raise ValueError(f"{path}: holds no readable score rows")
-
-    logging.info(f"Read {len(scores)} scores from {path}")
-    return scores
-
-
-def cansnp_file_writer(rows: Sequence[Sequence[Union[str, int]]], output_filepath: str) -> None:
-    """
-    Write the extracted SNPs as a tab separated file with a header.
-
-    Args:
-        rows: One row per SNP, following SNP_HEADER.
-        output_filepath: Where to write the file.
-    """
-    logging.info(f"Writing {len(rows)} SNPs to {output_filepath}")
-
-    with open(output_filepath, 'w') as out_file:
-        out_file.write("\t".join(SNP_HEADER) + "\n")
-        for row in rows:
-            out_file.write("\t".join("" if field is None else str(field) for field in row) + "\n")

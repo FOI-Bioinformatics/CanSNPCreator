@@ -169,15 +169,19 @@ def mutation_score(context: SnpContext) -> float:
     return codon_comparer(codons, "+")
 
 
+#: The INFO key each term is written under.
+INFO_KEYS = {
+    "neighbour_score": "NEIGHBOUR",
+    "gc_score": "GC",
+    "tandem_score": "TANDEM",
+    "gene_score": "GENE",
+    "mutation_score": "MUTATION",
+}
+
+
 @dataclass
 class ScoredSnp:
-    """One scored SNP, addressed by contig and 1-based position."""
-
-    HEADER = (
-        "Contig", "Position", "Group", "Derived", "Ancestral", "Score",
-        "NeighborDistanceScore", "GCContentScore", "TandemRepeatProximityScore",
-        "GeneProximityScore", "MutationTypeScore",
-    )
+    """One scored canSNP, addressed by contig and 1-based position."""
 
     contig: str
     position: int
@@ -186,11 +190,12 @@ class ScoredSnp:
     terms: Dict[str, int]
     derived: Optional[str] = None
     ancestral: Optional[str] = None
+    filters: List[str] = field(default_factory=list)
+    """The FILTER codes it failed: LowScore, NotTop or Masked. Empty when it passed."""
 
-    def row(self) -> List:
-        """The record as it is written to the score file, following HEADER."""
-        return [self.contig, self.position, self.node, self.derived or "", self.ancestral or "",
-                self.total, *(self.terms[term] for term in TERMS)]
+    @property
+    def passed(self) -> bool:
+        return not self.filters
 
 
 def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,

@@ -4,11 +4,10 @@ These go through cansnp_scorer.main, so they cover argument handling, the exit
 status of each subcommand and the files they leave behind.
 """
 
-import csv
 import os
 
 import pytest
-from conftest import PLANTED
+from conftest import PLANTED, vcf_lines, vcf_records
 
 from cansnpscorer.cansnp_scorer import main, score_weights
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS
@@ -49,44 +48,64 @@ def evaluate(monkeypatch, dataset, snp_file, output, *extra):
 
 @pytest.mark.parametrize("which", ["table", "newick"])
 def test_extract_then_evaluate(monkeypatch, dataset, tmp_path, which):
-    snp_file = str(tmp_path / "snps.tsv")
-    scores = str(tmp_path / "scores.csv")
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
 
     hierarchy = dataset.hierarchy if which == "table" else dataset.hierarchy_newick
     assert extract(monkeypatch, dataset, snp_file, hierarchy, dataset.genome_map) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores) == 0
 
-    rows = list(csv.DictReader(open(scores)))
-    assert {row["Group"] for row in rows} == set(PLANTED)
+    records = vcf_records(scores)
+    assert {record.node for record in records} == set(PLANTED)
 
     # Every planted canSNP is reported on its own contig, at its 1-based
-    # position, with the polarity it was planted with.
-    for row in rows:
-        column, ancestral, derived = PLANTED[row["Group"]]
+    # position, with the polarity it was planted with, and REF is the
+    # reference's base.
+    for record in records:
+        column, ancestral, derived = PLANTED[record.node]
         contig, position = dataset.contig_of(column)
-        assert (row["Contig"], int(row["Position"])) == (contig, position)
-        assert (row["Derived"], row["Ancestral"]) == (derived, ancestral)
+        assert (record.chrom, record.pos) == (contig, position)
+        assert (record.derived, record.ancestral) == (derived, ancestral)
+        assert record.ref == dataset.sequences["ref"][column]
+        assert record.passed
 
 
-def test_the_snp_file_has_a_header_and_one_row_per_snp(monkeypatch, dataset, tmp_path):
-    snp_file = str(tmp_path / "snps.tsv")
+def test_the_snps_are_written_as_vcf(monkeypatch, dataset, tmp_path):
+    snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
-    lines = open(snp_file).read().splitlines()
-    assert lines[0] == "contig\tposition\tnode\tderived_base\tancestral_base"
-    assert len(lines) == len(PLANTED) + 2, "the planted canSNPs, one incongruent SNP, a header"
+    header, records = vcf_lines(snp_file)
+    assert header[0] == "##fileformat=VCFv4.3"
+    assert "##contig=<ID=c1,length=700>" in header and "##contig=<ID=c2,length=300>" in header
+    assert any(line.startswith("##INFO=<ID=AA,") for line in header)
+    assert header[-1] == "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"
+    assert len(records) == len(PLANTED) + 1, "the planted canSNPs and one incongruent SNP"
+    nodes = [record.node for record in vcf_records(snp_file)]
+    assert nodes.count(None) == 1, "the incongruent SNP marks no node and carries no AA"
 
 
 def test_the_evaluation_can_be_narrowed_to_the_best_snp_per_node(monkeypatch, dataset, tmp_path):
-    snp_file = str(tmp_path / "snps.tsv")
-    scores = str(tmp_path / "scores.csv")
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores, "--top-n", "1") == 0
-    assert len(list(csv.DictReader(open(scores)))) == len(PLANTED)
+    assert sum(record.passed for record in vcf_records(scores)) == len(PLANTED)
+
+
+def test_failing_canSNPs_are_kept_with_a_filter(monkeypatch, dataset, tmp_path):
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
+    assert extract(monkeypatch, dataset, snp_file) == 0
+    assert evaluate(monkeypatch, dataset, snp_file, scores, "--cutoff", "600") == 0
+    records = vcf_records(scores)
+    assert len(records) == len(PLANTED), "nothing is dropped"
+    assert all(record.filters == ["LowScore"] for record in records)
+    header, _records = vcf_lines(scores)
+    assert any("cutoff of 600" in line for line in header if line.startswith("##FILTER"))
 
 
 def test_an_existing_score_file_is_backed_up(monkeypatch, dataset, tmp_path):
-    snp_file = str(tmp_path / "snps.tsv")
-    scores = str(tmp_path / "scores.csv")
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores) == 0
     assert evaluate(monkeypatch, dataset, snp_file, scores) == 0
@@ -104,7 +123,7 @@ def test_a_missing_input_file_exits_non_zero(monkeypatch, dataset, tmp_path):
         "--hierarchy", dataset.hierarchy,
         "--alignment", str(tmp_path / "absent.fasta"),
         "--reference", dataset.reference,
-        "-o", str(tmp_path / "snps.tsv"),
+        "-o", str(tmp_path / "snps.vcf"),
     )
     assert status == 1
 
@@ -118,23 +137,27 @@ def test_a_reference_that_is_not_the_aligned_one_exits_two(monkeypatch, dataset,
         "--hierarchy", dataset.hierarchy,
         "--alignment", dataset.alignment,
         "--reference", str(other),
-        "-o", str(tmp_path / "snps.tsv"),
+        "-o", str(tmp_path / "snps.vcf"),
     ])
     assert main() == 2, "the inputs are inconsistent, so nothing is written"
-    assert not os.path.exists(tmp_path / "snps.tsv")
+    assert not os.path.exists(tmp_path / "snps.vcf")
 
 
-def test_a_snp_file_from_another_reference_exits_non_zero(monkeypatch, dataset, tmp_path):
-    # Neither allele is the base the reference carries there, which is what a
-    # SNP file produced against something else looks like.
-    rows = []
-    for position in (1, 2):
-        others = [base for base in "ACGT" if base != dataset.sequences["ref"][position - 1]]
-        rows.append(f"c1\t{position}\tA.1\t{others[0]}\t{others[1]}")
+def test_snps_from_another_reference_are_refused(monkeypatch, dataset, tmp_path):
+    # The ##contig lines record the reference the SNPs were found against.
+    snp_file = str(tmp_path / "snps.vcf")
+    assert extract(monkeypatch, dataset, snp_file) == 0
+    text = open(snp_file).read().replace("##contig=<ID=c2,length=300>",
+                                         "##contig=<ID=c2,length=301>")
+    other = tmp_path / "other.vcf"
+    other.write_text(text)
+    assert evaluate(monkeypatch, dataset, str(other), str(tmp_path / "scores.vcf")) == 1
+
+
+def test_a_file_that_is_not_vcf_is_refused(monkeypatch, dataset, tmp_path):
     snp_file = tmp_path / "snps.tsv"
-    snp_file.write_text(
-        "contig\tposition\tnode\tderived_base\tancestral_base\n" + "\n".join(rows) + "\n")
-    assert evaluate(monkeypatch, dataset, str(snp_file), str(tmp_path / "scores.csv")) == 1
+    snp_file.write_text("contig\tposition\tnode\tderived_base\tancestral_base\n")
+    assert evaluate(monkeypatch, dataset, str(snp_file), str(tmp_path / "scores.vcf")) == 1
 
 
 def test_no_subcommand_prints_help_and_exits_two(monkeypatch, capsys):
@@ -164,15 +187,15 @@ def test_a_non_numeric_weight_is_refused():
 
 
 def test_weighting_the_gene_term_once_lowers_the_total(monkeypatch, dataset, tmp_path):
-    snp_file = str(tmp_path / "snps.tsv")
-    doubled = str(tmp_path / "doubled.csv")
-    plain = str(tmp_path / "plain.csv")
+    snp_file = str(tmp_path / "snps.vcf")
+    doubled = str(tmp_path / "doubled.vcf")
+    plain = str(tmp_path / "plain.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
     assert evaluate(monkeypatch, dataset, snp_file, doubled) == 0
     assert evaluate(monkeypatch, dataset, snp_file, plain, "--score-weight", "gene_score=1") == 0
 
     def totals(path):
-        return {row["Group"]: int(row["Score"]) for row in csv.DictReader(open(path))}
+        return {record.node: int(record.info["SCORE"]) for record in vcf_records(path)}
 
     for node, total in totals(plain).items():
         assert total <= totals(doubled)[node]

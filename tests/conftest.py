@@ -229,14 +229,14 @@ def cansnps(dataset, isolates_by_node):
 @pytest.fixture
 def parsed_snps(dataset, cansnps):
     """The canSNPs as the SNP file records them, by contig and 1-based position."""
-    from cansnpscorer.helpers.file_utils import ParsedSnp
+    from cansnpscorer.vcf import Snp
 
     parsed = []
     for cansnp in cansnps:
         contig, position = dataset.contig_of(cansnp.column)
-        bases = (cansnp.derived, cansnp.ancestral) if cansnp.is_canonical else cansnp.bases
-        parsed.append(ParsedSnp(node=cansnp.node or "None", alleles=tuple(bases),
-                                contig=contig, position=position))
+        derived, ancestral = ((cansnp.derived, cansnp.ancestral) if cansnp.is_canonical
+                              else cansnp.bases)
+        parsed.append(Snp(contig, position, cansnp.node, derived, ancestral))
     return parsed
 
 
@@ -290,8 +290,8 @@ def cli_run(*arguments):
 @pytest.fixture
 def written(dataset, tmp_path):
     """A scheme written from the planted dataset, and its directory."""
-    snp_file = str(tmp_path / "snps.tsv")
-    scores = str(tmp_path / "scores.csv")
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
     outdir = str(tmp_path / "scheme")
     assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
                    "--alignment", dataset.alignment, "--reference", dataset.reference,
@@ -313,3 +313,39 @@ def edit(directory, name, replace, with_text):
     assert replace in text, replace
     with open(path, "w") as handle:
         handle.write(text.replace(replace, with_text))
+
+
+# -- VCF helpers -------------------------------------------------------------
+
+
+def vcf_records(path):
+    """The records of a VCF file this tool wrote."""
+    from cansnpscorer import vcf
+
+    return vcf.read(path).records
+
+
+def vcf_lines(path):
+    """The header and the record lines of a VCF file, as two lists."""
+    with open(path) as handle:
+        lines = handle.read().splitlines()
+    return ([line for line in lines if line.startswith("#")],
+            [line for line in lines if not line.startswith("#")])
+
+
+def vcf_rewrite(path, out, keep=lambda fields: True, change=lambda fields: fields):
+    """Copy a VCF file, dropping or changing record lines given as field lists."""
+    header, records = vcf_lines(path)
+    kept = []
+    for line in records:
+        fields = line.split("\t")
+        if keep(fields):
+            kept.append("\t".join(change(fields)))
+    with open(out, "w") as handle:
+        handle.write("\n".join(header + kept) + "\n")
+    return str(out)
+
+
+def info_of(fields):
+    """The INFO column of a record line as a dictionary."""
+    return dict(item.partition("=")[::2] for item in fields[7].split(";"))

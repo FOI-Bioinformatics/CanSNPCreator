@@ -5,9 +5,9 @@ import os
 from datetime import datetime
 from typing import List
 
+from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
 from cansnpscorer.helpers.file_utils import (
-    cansnp_file_writer,
     read_alignment,
     read_genome_map,
     read_hierarchy,
@@ -66,31 +66,36 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         logging.error(error)
         return 1
 
-    rows: List[List] = []
+    records: List[vcf.Record] = []
     gapped = 0
     for cansnp in cansnps:
         placed = mapping.locate(cansnp.column)
         if placed is None:
-            # The genome is gapped in this column, so the SNP has no
-            # position in the genome genome and no assay can target it.
+            # The reference is gapped in this column, so the SNP has no
+            # position in the reference genome and no assay can target it.
             gapped += 1
             continue
         contig, position = placed
-        bases = (cansnp.derived, cansnp.ancestral) if cansnp.is_canonical else cansnp.bases
-        rows.append([contig.name, position, cansnp.node or "None", *bases])
+        if cansnp.is_canonical:
+            records.append(vcf.snp_record(genome, contig.name, position,
+                                          (cansnp.derived, cansnp.ancestral),
+                                          cansnp.node, cansnp.ancestral))
+        else:
+            records.append(vcf.snp_record(genome, contig.name, position, cansnp.bases))
 
     if gapped:
         logging.warning(
-            f"{gapped} SNPs sit in columns where the genome is gapped and were left out")
+            f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
 
-    cansnp_file_writer(rows, output)
+    header = vcf.header_lines(genome, reference, "extract", [vcf.NODE, vcf.ANCESTRAL])
+    written = vcf.write(output, header, records)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
     without = sorted(set(tree.nodes) - {cansnp.node for cansnp in cansnps if cansnp.node})
     if without:
         logging.warning(
             f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")
-    logging.info(f"Wrote {len(rows)} SNPs, of which {found} are canonical")
+    logging.info(f"Wrote {written} SNPs to {output}, of which {found} are canonical")
 
     logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     return 0

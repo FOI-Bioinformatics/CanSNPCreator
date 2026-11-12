@@ -4,7 +4,7 @@ genomes on an existing scheme by the tree rather than by typing."""
 import logging
 
 import pytest
-from conftest import CLUSTERS, PLANTED, cli_run
+from conftest import CLUSTERS, PLANTED, cli_run, vcf_records
 
 from cansnpscorer.cansnp_audit import audit_scheme
 from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
@@ -189,13 +189,12 @@ def test_a_scheme_is_extracted_from_a_collapsed_tree(dataset, tmp_path):
     tree_file.write_text(PLANTED_TREE)
     assert cli_run("collapse", "--tree", str(tree_file), "--outgroup", "ref",
                    "--rename", "T", "--outdir", str(tmp_path), "--prefix", "t") == 0
-    snps = tmp_path / "snps.tsv"
+    snps = tmp_path / "snps.vcf"
     assert cli_run("extract", "--genome-map", str(tmp_path / "t_genomes.tsv"),
                    "--hierarchy", str(tmp_path / "t_hierarchy.tsv"),
                    "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", str(snps)) == 0
-    rows = [line.split("\t") for line in snps.read_text().splitlines()[1:]]
-    found = {row[2]: int(row[1]) for row in rows if row[2] != "None"}
+    found = {record.node: record.pos for record in vcf_records(str(snps)) if record.node}
     # T is the planted root, T.1 is A, T.1.1 is A.1, T.2 is B.
     assert found["T"] == PLANTED["root"][0] + 1
     assert found["T.1"] == PLANTED["A"][0] + 1

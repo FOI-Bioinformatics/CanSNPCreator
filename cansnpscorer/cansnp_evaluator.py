@@ -6,17 +6,15 @@ import shutil
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from cansnpscorer.helpers.data_utils import filter_scores_by_cutoff, summarize_scores
+from cansnpscorer import vcf
+from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
 from cansnpscorer.helpers.file_utils import (
-    ParsedSnp,
     read_gff3,
     read_hierarchy,
     reference_parser,
-    score_file_writer,
-    snp_file_parser,
     trf_parser,
 )
-from cansnpscorer.helpers.scoring_methods import contexts_for, score_snp
+from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, contexts_for, score_snp
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
 from cansnpscorer.validate import check_annotations, report
@@ -59,61 +57,41 @@ def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference
     return {name: annotations.get(name, []) for name in reference.names}
 
 
-def locate_snps(snps: Sequence[ParsedSnp], reference: Reference,
+def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
                 examples: int = 3) -> List[Tuple[Contig, int, str, Sequence[str]]]:
-    """Place each SNP on a contig and check it against the reference base.
+    """Place each SNP on its contig, as (contig, 0-based position, node, alleles).
 
-    The reference base at a SNP must be one of the alleles reported for it.
-    When it is not, the positions were produced against something other than
-    this reference, and every score computed from them would be meaningless.
+    The alleles are (derived, ancestral) for a canSNP. A SNP that marks no node
+    gets the node 'None'; it is kept, because it is still a neighbour of the
+    canSNPs around it.
 
     Raises:
-        ValueError: If any SNP falls outside the reference or disagrees with it.
+        ValueError: If a SNP falls outside its contig or disagrees with the
+            reference base.
     """
     located: List[Tuple[Contig, int, str, Sequence[str]]] = []
-    outside: List[str] = []
-    disagreeing: List[str] = []
-    unknown = 0
-
+    problems: List[str] = []
     for snp in snps:
-        node, alleles = snp.node, tuple(snp.alleles)
-
-        if snp.contig is not None:
-            try:
-                contig = reference.contig(snp.contig)
-            except ReferenceError as error:
-                raise ValueError(str(error)) from None
-            local_position = snp.position - 1
-            if not 0 <= local_position < contig.length:
-                outside.append(f"{snp.contig}:{snp.position}")
-                continue
-        else:
-            if not 0 <= snp.global_position < reference.length:
-                outside.append(str(snp.global_position + 1))
-                continue
-            contig, local_position = reference.locate(snp.global_position)
-
+        try:
+            contig = reference.contig(snp.contig)
+        except ReferenceError as error:
+            raise ValueError(str(error)) from None
+        local_position = snp.position - 1
+        if not 0 <= local_position < contig.length:
+            problems.append(f"{snp.contig}:{snp.position} is outside the contig")
+            continue
+        alleles = (snp.derived, snp.ancestral)
         base = contig.base(local_position)
-        if base not in NUCLEOTIDES:
-            unknown += 1
-        elif base not in alleles:
-            disagreeing.append(
-                f"{contig.name}:{local_position + 1} is {base} in the reference but the "
-                f"SNP reports {'/'.join(alleles)}")
-        located.append((contig, local_position, node, alleles))
-
-    if outside:
+        if base in NUCLEOTIDES and base not in alleles:
+            problems.append(
+                f"{contig.name}:{snp.position} is {base} in the reference but the SNP reports "
+                f"{'/'.join(alleles)}")
+            continue
+        located.append((contig, local_position, snp.node or "None", alleles))
+    if problems:
         raise ValueError(
-            f"{len(outside)} SNPs fall outside the reference of {reference.length} bases "
-            f"over {len(reference)} contigs, the first at {outside[0]}")
-    if disagreeing:
-        raise ValueError(
-            f"{len(disagreeing)} of {len(snps)} SNPs disagree with the reference genome: "
-            + "; ".join(disagreeing[:examples])
-            + ". The SNP file was not produced against this reference")
-    if unknown:
-        logging.warning(f"{unknown} SNPs sit where the reference is not a plain base")
-
+            f"{len(problems)} of {len(snps)} SNPs do not fit the reference genome: "
+            + "; ".join(problems[:examples]))
     return located
 
 
@@ -130,10 +108,11 @@ def back_up_existing(output: str) -> None:
 def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
          weights: Optional[Dict[str, float]] = None) -> int:
-    """Score the canSNPs in a SNP file. Returns a process exit status."""
+    """Score the canSNPs extract found. Returns a process exit status."""
+    weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
     try:
-        parsed = snp_file_parser(snps)
         genome = reference_parser(reference)
+        parsed = vcf.read_snps(snps, genome)
         model = read_gff3(genes)
         gene_intervals = annotations_by_contig(model.genes, genome, "gene")
         cds = annotations_by_contig(model.cds, genome, "CDS") if model.cds else {}
@@ -154,27 +133,29 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         logging.error(error)
         return 1
 
-    # Neighbouring SNPs matter whether or not they are canonical, so the
-    # contexts are built from every SNP and only then narrowed to the canonical
-    # ones, which are the candidate assay targets.
     if not cds:
         logging.warning(
             "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
             "scores 0 for the mutation term")
+    # Neighbouring SNPs matter whether or not they are canonical, so the
+    # contexts are built from every SNP and only then narrowed to the canonical
+    # ones, which are the candidate assay targets.
     contexts = contexts_for(located, gene_intervals, repeat_intervals, cds)
     scores = [
         score_snp(context, tandem_limit, gene_limit, gc_goal, weights)
         for context in contexts
         if context.node != "None"
     ]
-    logging.info(f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs")
-
-    filtered = filter_scores_by_cutoff(scores, cutoff, top_n)
-    logging.info(f"{len(filtered)} canSNPs passed the cutoff of {cutoff}")
+    apply_filters(scores, cutoff, top_n)
+    passing = [score for score in scores if score.passed]
+    logging.info(
+        f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs; {len(passing)} pass the "
+        f"cutoff of {cutoff}" + (f" and the best {top_n} per node" if top_n else ""))
 
     if tree is not None:
-        summarize_scores(tree.nodes, filtered)
+        summarize_scores(tree.nodes, passing)
 
     back_up_existing(output)
-    score_file_writer(filtered, output)
+    written = vcf.write_scores(output, scores, genome, reference, cutoff, top_n, weights)
+    logging.info(f"Wrote {written} scored canSNPs to {output}")
     return 0

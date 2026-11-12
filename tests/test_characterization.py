@@ -9,9 +9,9 @@ import pytest
 from conftest import GENOMES, INCONGRUENT, PLANTED, node_isolates
 
 from cansnpscorer.helpers.data_utils import (
+    apply_filters,
     codon_comparer,
     codon_complement,
-    filter_scores_by_cutoff,
     gc_content,
     neighbour_distance,
     search,
@@ -19,10 +19,8 @@ from cansnpscorer.helpers.data_utils import (
     summarize_scores,
 )
 from cansnpscorer.helpers.file_utils import (
-    fasta_parser,
+    read_alignment,
     read_gff3,
-    score_file_writer,
-    snp_file_parser,
     trf_parser,
 )
 from cansnpscorer.helpers.genetic_code import codon_table
@@ -32,16 +30,10 @@ from cansnpscorer.helpers.scoring_methods import MAXIMUM_SCORE, TERMS, ScoredSnp
 # -- parsers -----------------------------------------------------------------
 
 
-def test_fasta_parser_output_formats(dataset):
-    as_dict = fasta_parser(dataset.alignment, "dict")
-    assert list(as_dict) == GENOMES
-    assert as_dict["ref"] == dataset.sequences["ref"]
-
-    as_named = fasta_parser(dataset.alignment, "named_list")
-    assert [name for name, _ in as_named] == GENOMES
-
-    as_list = fasta_parser(dataset.alignment, "list")
-    assert as_list[0] == dataset.sequences["ref"]
+def test_the_alignment_is_read_in_file_order(dataset):
+    alignment = read_alignment(dataset.alignment)
+    assert list(alignment) == GENOMES
+    assert alignment["ref"] == dataset.sequences["ref"]
 
 
 def test_clean_name_keeps_only_alphanumeric():
@@ -66,7 +58,7 @@ def test_trf_parser_reports_intervals_per_sequence_zero_based(dataset):
 
 
 def test_snp_extractor_finds_the_biallelic_columns(dataset):
-    snps = snp_extractor(fasta_parser(dataset.alignment, "dict"))
+    snps = snp_extractor(read_alignment(dataset.alignment))
     found = [snp["index"] for snp in snps]
     expected = sorted([column for column, _, _ in PLANTED.values()] + [INCONGRUENT[0]])
     assert found == expected, "the tri-allelic and gapped columns must be left out"
@@ -150,46 +142,16 @@ def make_score(position, node, total):
                      terms=dict.fromkeys(TERMS, 0))
 
 
-def test_filter_scores_by_cutoff():
+def test_failing_scores_are_marked_and_kept():
     scores = [make_score(1, "A", 300), make_score(2, "A", 100), make_score(3, "B", 400)]
-    assert [entry.position for entry in filter_scores_by_cutoff(scores, 150)] == [1, 3]
-    top = filter_scores_by_cutoff(scores, 50, top=1)
-    assert sorted(entry.position for entry in top) == [1, 3]
+    apply_filters(scores, 150)
+    assert [entry.filters for entry in scores] == [[], ["LowScore"], []]
+
+    scores = [make_score(1, "A", 300), make_score(2, "A", 200), make_score(3, "B", 400)]
+    apply_filters(scores, 50, top=1)
+    assert [entry.filters for entry in scores] == [[], ["NotTop"], []]
 
 
 def test_summarize_scores_counts_snps_per_node():
     scores = [make_score(1, "A", 300), make_score(2, "A", 300), make_score(3, "B", 300)]
     assert summarize_scores(["A", "B", "C"], scores) == {"A": 2, "B": 1}
-
-
-def test_score_file_writer_columns(tmp_path, scored):
-    output = str(tmp_path / "scores.csv")
-    score_file_writer(scored, output)
-    lines = open(output).read().splitlines()
-    assert lines[0] == (
-        "Contig,Position,Group,Derived,Ancestral,Score,NeighborDistanceScore,GCContentScore,"
-        "TandemRepeatProximityScore,GeneProximityScore,MutationTypeScore"
-    )
-    assert len(lines) == len(scored) + 1
-
-
-def test_snp_file_parser_reads_the_extract_output(tmp_path):
-    path = str(tmp_path / "snps.txt")
-    with open(path, "w") as handle:
-        handle.write("contig\tposition\tnode\tderived_base\tancestral_base\n"
-                     "# a comment\n\nc1\t100\tA.1\tG\tC\nc2\t200\tNone\tT\tA\n")
-    first, second = snp_file_parser(path)
-    assert (first.contig, first.position, first.node) == ("c1", 100, "A.1")
-    assert (first.derived, first.ancestral) == ("G", "C")
-    assert (second.contig, second.position, second.node) == ("c2", 200, "None")
-
-
-def test_snp_file_parser_still_reads_the_older_format(tmp_path):
-    # Positions over the whole genome counted from zero, and no polarity.
-    path = str(tmp_path / "old.txt")
-    with open(path, "w") as handle:
-        handle.write("100 A.1 G C\n200 None T A\n")
-    first, second = snp_file_parser(path)
-    assert (first.contig, first.global_position, first.node) == (None, 100, "A.1")
-    assert first.derived is None, "the older format records no polarity"
-    assert second.global_position == 200

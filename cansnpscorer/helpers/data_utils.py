@@ -330,35 +330,40 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
     return cansnps
 
 
-def filter_scores_by_cutoff(scores, cutoff, top=None):
+def apply_filters(scores, cutoff, top=None):
     """
-    Keep the scores above a cutoff, and at most the best few for each node.
+    Mark the scores that fail the cutoff, or are not among the best of their node.
+
+    Nothing is dropped: a score at or below the cutoff gains the FILTER code
+    LowScore, and one that passes it but is not among the ``top`` best of its
+    node gains NotTop, so that the output still shows what was considered.
 
     Args:
-        scores: Scored SNPs, each with a total and a node.
-        cutoff: Only scores above this value are kept.
-        top: How many of the best scores to keep per node. All of them if None.
+        scores: Scored SNPs, each with a total, a node and a list of filters.
+        cutoff: A score must be above this to pass.
+        top: How many of the best scores of each node pass. All of them if None.
 
     Returns:
-        The scores that were kept, in the order they were given.
+        The same scores, in the order given.
     """
-    kept = [score for score in scores if score.total > cutoff]
+    for score in scores:
+        if score.total <= cutoff and "LowScore" not in score.filters:
+            score.filters.append("LowScore")
 
-    if top is None:
-        return kept
+    if top is not None:
+        by_node = defaultdict(list)
+        for position, score in enumerate(scores):
+            if not score.filters:
+                # A min-heap, so the totals are negated to pop the best first; the
+                # position breaks ties without comparing the scores themselves.
+                heapq.heappush(by_node[score.node], (-score.total, position, score))
+        for node_scores in by_node.values():
+            for _ in range(min(len(node_scores), top)):
+                heapq.heappop(node_scores)
+            for _total, _position, score in node_scores:
+                score.filters.append("NotTop")
 
-    by_node = defaultdict(list)
-    for position, score in enumerate(kept):
-        # A min-heap, so the totals are negated to pop the best first; the
-        # position breaks ties without comparing the scores themselves.
-        heapq.heappush(by_node[score.node], (-score.total, position, score))
-
-    selected = set()
-    for node_scores in by_node.values():
-        for _ in range(min(len(node_scores), top)):
-            selected.add(heapq.heappop(node_scores)[1])
-
-    return [score for position, score in enumerate(kept) if position in selected]
+    return scores
 
 
 def summarize_scores(nodes_data, scores):

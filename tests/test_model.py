@@ -10,8 +10,6 @@ import pytest
 
 from cansnpscorer.cansnp_evaluator import annotations_by_contig, locate_snps
 from cansnpscorer.helpers.file_utils import (
-    ParsedSnp,
-    fasta_parser,
     read_alignment,
     read_fasta,
     reference_parser,
@@ -24,6 +22,7 @@ from cansnpscorer.model import (
     reverse_complement,
     ungap,
 )
+from cansnpscorer.vcf import Snp
 
 # -- contigs and references --------------------------------------------------
 
@@ -203,13 +202,6 @@ def test_sequence_before_the_first_header_is_refused(tmp_path):
         read_fasta(path)
 
 
-def test_fasta_parser_keeps_its_three_output_formats(tmp_path):
-    path = write(tmp_path / "a.fasta", ">c1\nACGT\n>c2\nTTTT\n")
-    assert fasta_parser(path, "dict") == {"c1": "ACGT", "c2": "TTTT"}
-    assert fasta_parser(path, "named_list") == [("c1", "ACGT"), ("c2", "TTTT")]
-    assert fasta_parser(path, "list") == ["ACGT", "TTTT"]
-
-
 # -- placing SNPs against the reference --------------------------------------
 
 
@@ -226,38 +218,25 @@ def test_snps_from_another_reference_are_refused(dataset):
     # different reference, or against alignment columns, disagree with the base
     # the reference carries.
     reference = reference_parser(dataset.reference)
-    moved = [ParsedSnp(node="A.1", alleles=("G", "C"), contig="c1", position=position + 7)
-             for position in (100, 200, 300)]
-    with pytest.raises(ValueError, match="disagree with the reference genome"):
+    sequence = dataset.sequences["ref"]
+    moved = []
+    for position in (100, 200, 300):
+        others = [base for base in "ACGT" if base != sequence[position - 1]]
+        moved.append(Snp("c1", position, "A.1", others[0], others[1]))
+    with pytest.raises(ValueError, match="do not fit the reference genome"):
         locate_snps(moved, reference)
 
 
-def test_snps_outside_the_reference_are_refused(dataset):
+def test_snps_outside_the_contig_are_refused(dataset):
     reference = reference_parser(dataset.reference)
-    beyond = ParsedSnp(node="A.1", alleles=("G", "C"), contig="c1", position=10_000)
-    with pytest.raises(ValueError, match="outside the reference"):
-        locate_snps([beyond], reference)
-
-    legacy = ParsedSnp(node="A.1", alleles=("G", "C"), global_position=reference.length)
-    with pytest.raises(ValueError, match="outside the reference"):
-        locate_snps([legacy], reference)
+    with pytest.raises(ValueError, match="outside the contig"):
+        locate_snps([Snp("c1", 10_000, "A.1", "G", "C")], reference)
 
 
 def test_a_snp_on_an_unknown_contig_is_refused(dataset):
     reference = reference_parser(dataset.reference)
-    unknown = ParsedSnp(node="A.1", alleles=("G", "C"), contig="plasmid", position=1)
     with pytest.raises(ValueError, match="no contig 'plasmid'"):
-        locate_snps([unknown], reference)
-
-
-def test_positions_from_the_older_format_are_placed_on_their_contig(dataset, cansnps):
-    # The older format counts over the concatenated genome from zero.
-    reference = reference_parser(dataset.reference)
-    on_second = next(cansnp for cansnp in cansnps if cansnp.column >= 700)
-    legacy = ParsedSnp(node=on_second.node, alleles=on_second.bases,
-                       global_position=on_second.column)
-    contig, local_position, _node, _alleles = locate_snps([legacy], reference)[0]
-    assert (contig.name, local_position) == ("c2", on_second.column - 700)
+        locate_snps([Snp("plasmid", 1, "A.1", "G", "C")], reference)
 
 
 def test_annotations_are_matched_to_contigs_by_name(dataset):

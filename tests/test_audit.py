@@ -9,11 +9,12 @@ the audit names it.
 import os
 
 import pytest
-from conftest import REFERENCES, SNPS, TREE, cli_run, edit
+from conftest import REFERENCES, SNPS, TREE, cli_run, edit, info_of, vcf_lines, vcf_rewrite
 
+from cansnpscorer import vcf
 from cansnpscorer.cansnp_audit import PROBLEM, RECOMMENDATION, audit_scheme
 from cansnpscorer.cansnp_audit import main as audit_main
-from cansnpscorer.helpers.file_utils import read_score_file, reference_parser
+from cansnpscorer.helpers.file_utils import reference_parser
 from cansnpscorer.scheme import SchemeError, read_scheme
 
 
@@ -207,16 +208,20 @@ def test_the_reference_base_is_not_checked_without_a_reference_file(written, dat
 def test_a_better_scoring_candidate_is_offered(written, dataset, tmp_path):
     outdir, scores = written
     # A second candidate for A.1, elsewhere on the contig and scoring higher
-    # than the one the scheme carries.
-    with open(scores) as handle:
-        rows = handle.read().splitlines()
-    current = next(row for row in rows if row.split(",")[2] == "A.1")
-    fields = current.split(",")
-    fields[1], fields[5] = "450", "600"
-    better = tmp_path / "better.csv"
-    better.write_text("\n".join([*rows, ",".join(fields)]) + "\n")
+    # than the one the scheme carries. REF must be the reference's base.
+    header, records = vcf_lines(scores)
+    current = next(line.split("\t") for line in records if info_of(line.split("\t"))
+                   .get("NODE") == "A.1")
+    ref = dataset.sequences["ref"][449]
+    alt = next(base for base in "ACGT" if base != ref)
+    info = ";".join(f"{key}=600" if key == "SCORE" else f"{key}={value}"
+                    for key, value in info_of(current).items() if key != "AA")
+    added = ["c1", "450", ".", ref, alt, ".", "PASS", f"{info};AA={ref}"]
+    better = tmp_path / "better.vcf"
+    better.write_text("\n".join(header + records + ["\t".join(added)]) + "\n")
 
-    findings = findings_of(outdir, dataset, scores=read_score_file(str(better)))
+    reference = reference_parser(dataset.reference)
+    findings = findings_of(outdir, dataset, scores=vcf.read_scores(str(better), reference))
     offered = [finding for finding in findings if finding.category == "better-available"]
     assert [finding.node for finding in offered] == ["A.1"]
     assert "450" in offered[0].detail
@@ -224,12 +229,9 @@ def test_a_better_scoring_candidate_is_offered(written, dataset, tmp_path):
 
 def test_a_node_the_score_file_does_not_hold_is_reported(written, dataset, tmp_path):
     outdir, scores = written
-    with open(scores) as handle:
-        rows = handle.read().splitlines()
-    without = tmp_path / "without.csv"
-    without.write_text("\n".join(row for row in rows if row.split(",")[2] != "A.1") + "\n")
-
-    findings = findings_of(outdir, dataset, scores=read_score_file(str(without)))
+    without = vcf_rewrite(scores, tmp_path / "without.vcf",
+                          keep=lambda fields: info_of(fields).get("NODE") != "A.1")
+    findings = findings_of(outdir, dataset, scores=vcf.read_scores(without))
     assert [finding.node for finding in findings if finding.category == "not-scored"] == ["A.1"]
 
 

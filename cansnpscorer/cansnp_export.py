@@ -22,7 +22,8 @@ import os
 import re
 from typing import Dict, List, Sequence, Tuple
 
-from cansnpscorer.helpers.file_utils import read_hierarchy, read_score_file, reference_parser
+from cansnpscorer import vcf
+from cansnpscorer.helpers.file_utils import read_hierarchy, reference_parser
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
@@ -42,9 +43,10 @@ REFERENCE_COLUMNS = ("genome", "strain", "genbank_id", "refseq_id", "assembly_na
 
 
 def best_per_node(scores: Sequence[ScoredSnp]) -> Dict[str, ScoredSnp]:
-    """The highest scoring SNP of each node.
+    """The highest scoring SNP of each node, among those given.
 
-    A scheme carries exactly one SNP per node. Ties are broken by contig and
+    A scheme carries exactly one SNP per node, and the caller passes only the
+    canSNPs that passed evaluate's filters. Ties are broken by contig and
     position, so that the same input always exports the same scheme.
     """
     def ranking(score: ScoredSnp):
@@ -185,9 +187,9 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
          assembly_name=None, prune=False) -> int:
     """Write a scored scheme as CanSNPer2-data source files. Returns an exit status."""
     try:
-        scored = read_score_file(scores)
         tree = read_hierarchy(hierarchy)
         sequence = reference_parser(reference)
+        scored = [score for score in vcf.read_scores(scores, sequence) if score.passed]
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1

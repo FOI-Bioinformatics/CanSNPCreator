@@ -30,6 +30,7 @@ its default of three required hits.
 import logging
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
+from cansnpscorer import vcf
 from cansnpscorer.alignment_audit import check_against_alignment
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
 from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of this module
@@ -46,7 +47,6 @@ from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
     read_alignment,
     read_genome_map,
-    read_score_file,
     reference_parser,
 )
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
@@ -317,19 +317,23 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
                          reference: Reference) -> List[Finding]:
     """Compare the scheme against scored candidates for the same nodes.
 
-    The score file gives positions by contig; the scheme counts them over the
+    The scores give positions by contig; the scheme counts them over the
     concatenated genome, so the candidates are converted before they are
-    matched.
+    matched. A candidate is offered only if it passed evaluate's filters, but
+    the scheme's own SNP is looked up among all of them.
     """
     findings: List[Finding] = []
 
     best: Dict[str, ScoredSnp] = {}
     global_position: Dict[int, ScoredSnp] = {}
     for score in scores:
+        if score.contig in reference.names:
+            global_position[reference.contig(score.contig).start + score.position] = score
+    for score in scores:
+        if not score.passed:
+            continue
         if score.contig not in reference.names:
             continue
-        position = reference.contig(score.contig).start + score.position
-        global_position[position] = score
         if score.node not in best or score.total > best[score.node].total:
             best[score.node] = score
 
@@ -468,7 +472,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     try:
         scheme = read_scheme(scheme_dir, organism)
         sequence = reference_parser(reference) if reference else None
-        scored = read_score_file(scores) if scores else None
+        scored = vcf.read_scores(scores, sequence) if scores else None
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1

@@ -6,7 +6,7 @@ alignment, the group file or the scheme in one way and asserts what the audit
 says about it.
 """
 
-from conftest import CLUSTERS, PLANTED, SNPS, cli_run, edit, write_fasta
+from conftest import CLUSTERS, PLANTED, SNPS, cli_run, edit, vcf_records, write_fasta
 
 from cansnpscorer.cansnp_audit import PROBLEM, audit_scheme
 from cansnpscorer.cansnp_audit import main as audit_main
@@ -201,13 +201,12 @@ def test_a_projected_alignment_is_read_as_reference_coordinates(written, dataset
     assert [finding for finding in findings if finding.severity == PROBLEM] == []
     assert len(of(findings, "single-site")) == len(PLANTED) - 1
 
-    snp_file = str(tmp_path / "snps.tsv")
+    snp_file = str(tmp_path / "snps.vcf")
     assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
                    "--alignment", path, "--reference", dataset.reference,
                    "-o", snp_file) == 0
-    with open(snp_file) as handle:
-        rows = [line.split("\t") for line in handle.read().splitlines()[1:]]
-    found = {row[2]: (row[0], int(row[1])) for row in rows if row[2] != "None"}
+    found = {record.node: (record.chrom, record.pos) for record in vcf_records(snp_file)
+             if record.node}
     assert found["B.2"] == ("c2", 1)
     assert found["A.1"] == ("c1", PLANTED["A.1"][0] + 1)
 

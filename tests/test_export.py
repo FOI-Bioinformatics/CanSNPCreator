@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 import pytest
-from conftest import PLANTED
+from conftest import PLANTED, vcf_rewrite
 
 from cansnpscorer.cansnp_export import best_per_node
 from cansnpscorer.cansnp_export import main as export_main
@@ -37,8 +37,8 @@ def score(node, contig="c1", position=100, total=500, derived="G", ancestral="C"
 @pytest.fixture
 def scheme(dataset, tmp_path):
     """Run extract and evaluate, then return where a scheme can be written."""
-    snp_file = str(tmp_path / "snps.tsv")
-    scores = str(tmp_path / "scores.csv")
+    snp_file = str(tmp_path / "snps.vcf")
+    scores = str(tmp_path / "scores.vcf")
     assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
                    "--alignment", dataset.alignment, "--reference", dataset.reference,
                    "-o", snp_file) == 0
@@ -136,22 +136,20 @@ def test_a_node_without_a_cansnp_refuses_the_scheme(dataset, scheme, tmp_path, c
     # Every node of a CanSNPer2 scheme carries exactly one SNP, so an
     # incomplete scheme is refused rather than written.
     scores, outdir = scheme
-    lines = read(scores).splitlines()
-    trimmed = tmp_path / "fewer.csv"
-    trimmed.write_text("\n".join(line for line in lines if not line.startswith("c1,601")) + "\n")
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
+                          keep=lambda fields: fields[:2] != ["c1", "601"])
 
-    assert export_main(str(trimmed), dataset.hierarchy, dataset.reference, outdir, **METADATA) == 2
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 2
     assert "nodes have no canSNP" in caplog.text
     assert not os.path.exists(os.path.join(outdir, "testus_organismus_tree.txt"))
 
 
 def test_pruning_leaves_those_nodes_out(dataset, scheme, tmp_path):
     scores, outdir = scheme
-    lines = read(scores).splitlines()
-    trimmed = tmp_path / "fewer.csv"
-    trimmed.write_text("\n".join(line for line in lines if not line.startswith("c1,201")) + "\n")
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
+                          keep=lambda fields: fields[:2] != ["c1", "201"])
 
-    assert export_main(str(trimmed), dataset.hierarchy, dataset.reference, outdir,
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir,
                        prune=True, **METADATA) == 0
     tree = read(os.path.join(outdir, "testus_organismus_tree.txt"))
     assert "\tA\t" not in tree, "the node without a canSNP is gone"
@@ -160,11 +158,10 @@ def test_pruning_leaves_those_nodes_out(dataset, scheme, tmp_path):
 
 def test_a_root_without_a_cansnp_cannot_be_pruned(dataset, scheme, tmp_path, caplog):
     scores, outdir = scheme
-    lines = read(scores).splitlines()
-    trimmed = tmp_path / "fewer.csv"
-    trimmed.write_text("\n".join(line for line in lines if not line.startswith("c1,101")) + "\n")
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
+                          keep=lambda fields: fields[:2] != ["c1", "101"])
 
-    assert export_main(str(trimmed), dataset.hierarchy, dataset.reference, outdir,
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir,
                        prune=True, **METADATA) == 2
     assert "has no canSNP, and a scheme cannot be written" in caplog.text
 
@@ -189,6 +186,18 @@ def test_a_score_file_from_another_tool_is_refused(dataset, scheme, tmp_path):
     wrong = tmp_path / "wrong.csv"
     wrong.write_text("position,group\n100,A.1\n")
     assert export_main(str(wrong), dataset.hierarchy, dataset.reference, outdir, **METADATA) == 1
+
+
+def test_only_canSNPs_that_passed_are_exported(dataset, scheme, tmp_path, caplog):
+    # A canSNP evaluate marked as failing is kept in its output but is not a
+    # candidate for the scheme, so its node is left without one.
+    scores, outdir = scheme
+    failing = vcf_rewrite(scores, tmp_path / "failing.vcf",
+                          change=lambda fields: fields[:6] + (
+                              ["LowScore"] if fields[:2] == ["c1", "601"] else [fields[6]])
+                          + fields[7:])
+    assert export_main(failing, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 2
+    assert "1 nodes have no canSNP: B.1" in caplog.text
 
 
 # -- against the real validator ----------------------------------------------
