@@ -32,7 +32,7 @@ import logging
 from collections.abc import Mapping, Sequence
 
 from cansnpscorer import vcf
-from cansnpscorer.alignment_audit import check_against_alignment
+from cansnpscorer.alignment_audit import GENOME_CONFLICTS, check_against_alignment
 from cansnpscorer.cansnp_evaluator import read_masks
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
 from cansnpscorer.findings import (
@@ -427,8 +427,8 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
                  alignment: Mapping[str, str] | None = None,
                  clusters: Mapping[str, Sequence[str]] | None = None,
                  min_clade_size: int = 2, min_clade_snps: int = 1,
-                 masks: Mapping[str, Sequence[tuple[int, int]]] | None = None
-                 ) -> list[Finding]:
+                 masks: Mapping[str, Sequence[tuple[int, int]]] | None = None,
+                 genome_conflicts: int = GENOME_CONFLICTS) -> list[Finding]:
     """Every check, in one list of findings, problems first.
 
     The checks against the genomes run when an alignment and the clusters
@@ -451,7 +451,8 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
             findings += check_masks(scheme, reference, masks, genome)
         if alignment is not None and clusters is not None:
             findings += check_against_alignment(scheme, alignment, reference, clusters, genome,
-                                                min_clade_size, min_clade_snps)
+                                                min_clade_size, min_clade_snps,
+                                                genome_conflicts)
 
     order = {PROBLEM: 0, RECOMMENDATION: 1}
     return sorted(findings, key=lambda finding: (order[finding.severity], finding.category,
@@ -495,7 +496,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
          min_clade_snps=1, tree=None, members=None, masks=None,
-         masks_concatenated=False, contig_aliases=None) -> int:
+         masks_concatenated=False, contig_aliases=None,
+         genome_conflicts=GENOME_CONFLICTS) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
@@ -591,7 +593,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
             return 1
 
     findings = audit_scheme(scheme, sequence, scored, genome, min_required_hits, proximity,
-                            aligned, clusters, min_clade_size, min_clade_snps, masked)
+                            aligned, clusters, min_clade_size, min_clade_snps, masked,
+                            genome_conflicts)
     if placement_findings:
         order = {PROBLEM: 0, RECOMMENDATION: 1}
         findings = sorted(findings + placement_findings,

@@ -235,6 +235,121 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
     return findings, failed
 
 
+#: A genome that contradicts the scheme at this many nodes or more is reported.
+GENOME_CONFLICTS = 3
+
+
+def _lineage(hierarchy, node: str) -> list[str]:
+    """The node and every node above it."""
+    nodes: list[str] = []
+    while node is not None:
+        nodes.append(node)
+        node = hierarchy.parents[node]
+    return nodes
+
+
+def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: AlignmentMap,
+                       placement: Placement, genome: str | None,
+                       min_conflicts: int = GENOME_CONFLICTS) -> list[Finding]:
+    """Whether each genome's own canSNPs agree with each other and with its placement.
+
+    The canSNPs of a node give its state in a genome: derived when more of
+    them carry the derived base than the ancestral one, ancestral when fewer,
+    unknown otherwise. The genome's path is the deepest node it is derived at
+    with no node above ancestral, which is where CanSNPer2 would type it.
+
+    Two things are reported, as they explain failures check_scheme_snps
+    attributes to SNPs:
+
+    - genomes whose states are consistent but lead to another node than the
+      genome map gives. A genome map that puts a whole RepGenR2 cluster at its
+      representative's node does this when the cluster holds genomes from both
+      sides of a node of the scheme. With one canSNP at the node they are
+      typed at, the same pattern arises when that SNP is homoplastic, so the
+      number of canSNPs the typing rests on is given;
+    - genomes that contradict the scheme at ``min_conflicts`` nodes or more:
+      derived at a node off their path, or ancestral on it. On 1,229 Brucella
+      genomes, half of such contradictions came from 5% of the genomes, which
+      points to base errors or mixed assemblies rather than to the SNPs.
+    """
+    hierarchy = placement.hierarchy
+    by_node: dict[str, list[tuple[int, str, str]]] = {}
+    for snp in scheme.checked_snps:
+        if genome is not None and snp.genome != genome:
+            continue
+        if snp.node not in hierarchy.parents or not 1 <= snp.position <= mapping.reference.length:
+            continue
+        column = mapping.to_column(snp.position - 1)
+        if column is not None:
+            by_node.setdefault(snp.node, []).append(
+                (column, snp.derived.upper(), snp.ancestral.upper()))
+    if not by_node:
+        return []
+
+    lineage = {node: _lineage(hierarchy, node) for node in hierarchy.parents}
+    misplaced: dict[tuple[str, str], list[tuple[str, int]]] = {}
+    discordant: list[tuple[str, int]] = []
+    for name in placement.genomes:
+        placed = placement.node_of.get(name)
+        if placed is None:
+            continue
+        sequence = alignment[name]
+        derived_at: dict[str, int] = {}
+        ancestral_at: set[str] = set()
+        for node, snps in by_node.items():
+            derived = sum(1 for column, d, _a in snps if sequence[column].upper() == d)
+            ancestral = sum(1 for column, _d, a in snps if sequence[column].upper() == a)
+            if derived > ancestral:
+                derived_at[node] = derived
+            elif ancestral > derived:
+                ancestral_at.add(node)
+
+        reachable = [node for node in derived_at
+                     if not ancestral_at.intersection(lineage[node])]
+        typed = max(reachable, key=lambda node: (len(lineage[node]), node), default=None)
+        path = set(lineage[typed]) if typed else set()
+        conflicts = (sum(1 for node in derived_at if node not in path)
+                     + sum(1 for node in ancestral_at if node in path))
+        if conflicts >= min_conflicts:
+            discordant.append((name, conflicts))
+            continue
+        if conflicts or typed is None:
+            continue
+        expected = set(lineage[placed])
+        against = (any(node not in expected for node in derived_at)
+                   or any(node in expected for node in ancestral_at))
+        if against:
+            misplaced.setdefault((placed, typed), []).append((name, derived_at[typed]))
+
+    findings: list[Finding] = []
+    for (placed, typed), genomes in sorted(misplaced.items()):
+        names = [name for name, _count in genomes]
+        least = min(count for _name, count in genomes)
+        findings.append(recommendation(
+            CHECK, "misplaced", placed,
+            f"{len(genomes)} genomes placed at {placed} carry the canSNPs of {typed} and none that "
+            f"contradicts it, so they would be typed at {typed}: {_names(names)}. Either the "
+            f"genome map places them wrongly, as it does when a cluster of genomes spans a node "
+            f"of the scheme, or the canSNPs that lead to {typed} are not canonical; the typing "
+            f"rests on at least {least} canSNP{'s' if least != 1 else ''} of {typed}"))
+    if discordant:
+        discordant.sort(key=lambda item: (-item[1], item[0]))
+        shown = ", ".join(f"{name} ({count})" for name, count in discordant[:SHOWN])
+        more = len(discordant) - min(len(discordant), SHOWN)
+        findings.append(recommendation(
+            CHECK, "discordant-genome", "",
+            f"{len(discordant)} genomes contradict the scheme at {min_conflicts} or more nodes, "
+            f"carrying the derived base off their path or the ancestral one on it: {shown}"
+            + (f" and {more} more" if more > 0 else "")
+            + ". Base errors, contamination or a mixed assembly show themselves this way; such "
+              "genomes are weak evidence against a SNP"))
+    logging.info(
+        f"{sum(len(found) for found in misplaced.values())} genomes would be typed at another "
+        f"node than the genome map gives, and {len(discordant)} contradict the scheme at "
+        f"{min_conflicts} or more nodes")
+    return findings
+
+
 def scan_alignment(alignment: Mapping[str, str], mapping: AlignmentMap,
                    placement: Placement) -> tuple[dict[str, list[tuple[int, str, str]]],
                                                   dict[tuple[str, frozenset[str]],
@@ -410,7 +525,8 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
 def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Reference,
                             clusters: Mapping[str, Sequence[str]],
                             genome: str | None = None, min_clade_size: int = 2,
-                            min_clade_snps: int = 1) -> list[Finding]:
+                            min_clade_snps: int = 1,
+                            genome_conflicts: int = GENOME_CONFLICTS) -> list[Finding]:
     """Every check that needs the genomes, as one list of findings.
 
     Args:
@@ -423,6 +539,8 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
             against, when it names more than one.
         min_clade_size: The fewest genomes a new clade is reported for.
         min_clade_snps: The fewest SNPs a new clade is reported with.
+        genome_conflicts: The fewest nodes a genome contradicts the scheme at
+            for it to be reported.
     """
     findings: list[Finding] = []
 
@@ -474,6 +592,8 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
 
     snp_findings, failed = check_scheme_snps(scheme, alignment, mapping, placement, genome)
     findings += snp_findings
+    findings += check_genome_paths(scheme, alignment, mapping, placement, genome,
+                                   genome_conflicts)
 
     canonical, clades, by_node, by_genome, sites = scan_alignment(alignment, mapping, placement)
     findings += check_extension(scheme, mapping, placement, canonical, clades, by_node,

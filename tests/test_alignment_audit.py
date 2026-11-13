@@ -377,3 +377,55 @@ def test_a_grouping_against_a_better_supported_one_is_not_a_new_clade():
     assert len(conflicting) == 1
     assert "1 of them because they group genomes against a better supported" in (
         conflicting[0].detail)
+
+
+# -- each genome's own path through the scheme -------------------------------
+
+
+def test_a_sound_scheme_has_no_misplaced_or_discordant_genome(written, dataset):
+    findings = audit(written[0], dataset)
+    assert of(findings, "misplaced") == []
+    assert of(findings, "discordant-genome") == []
+
+
+def test_a_genome_placed_on_the_wrong_branch_is_reported_where_it_would_be_typed(
+        written, dataset, tmp_path):
+    # s2 carries the canSNPs of A.2 but the genome map puts it at A.1, as a
+    # cluster spanning the two would.
+    groups = write_groups(tmp_path, {"A.1": ["s1", "s1b", "s2"], "B.1": ["s3"], "B.2": ["s4"]})
+    misplaced = of(audit(written[0], dataset, group_path=groups), "misplaced")
+    assert [finding.node for finding in misplaced] == ["A.1"]
+    assert "s2" in misplaced[0].detail and "typed at A.2" in misplaced[0].detail
+    assert "at least 1 canSNP of A.2" in misplaced[0].detail
+
+
+def test_a_genome_that_contradicts_the_scheme_at_many_nodes_is_reported(
+        written, dataset, tmp_path):
+    changes = {"s4": {PLANTED[node][0]: PLANTED[node][2] for node in ("A", "A.1", "A.2")}}
+    path = changed_alignment(dataset, tmp_path, changes)
+    findings = audit(written[0], dataset, alignment_path=path)
+    discordant = of(findings, "discordant-genome")
+    assert len(discordant) == 1 and "s4 (3)" in discordant[0].detail
+    # It is not also reported as misplaced.
+    assert of(findings, "misplaced") == []
+    assert of(audit(written[0], dataset, alignment_path=path, genome_conflicts=4),
+              "discordant-genome") == []
+
+
+def test_one_homoplastic_site_in_one_genome_is_left_to_the_snp_checks(
+        written, dataset, tmp_path):
+    column, _ancestral, derived = PLANTED["A.1"]
+    path = changed_alignment(dataset, tmp_path, {"s4": {column: derived}})
+    findings = audit(written[0], dataset, alignment_path=path)
+    assert of(findings, "discordant-genome") == [] and of(findings, "misplaced") == []
+    assert [finding.node for finding in of(findings, "homoplasy")] == ["A.1"]
+
+
+def test_the_cli_takes_the_genome_conflicts_threshold(written, dataset, tmp_path):
+    changes = {"s4": {PLANTED[node][0]: PLANTED[node][2] for node in ("A", "A.1")}}
+    path = changed_alignment(dataset, tmp_path, changes)
+    output = tmp_path / "findings.tsv"
+    cli_run("audit", "--scheme-dir", written[0], "--reference", dataset.reference,
+            "--alignment", path, "--genome-map", dataset.genome_map,
+            "--genome-conflicts", "2", "-o", str(output))
+    assert "discordant-genome" in output.read_text()
