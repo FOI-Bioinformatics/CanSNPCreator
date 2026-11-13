@@ -53,7 +53,10 @@ PROFILES: dict[str, tuple[dict[str, float], int | None]] = {
     "typing": (TYPING_WEIGHTS, None),
 }
 
-#: The highest total a SNP can reach with the default weights.
+#: The profile used when none is named.
+DEFAULT_PROFILE = "typing"
+
+#: The highest total a SNP can reach with the weights of the assay profile.
 MAXIMUM_SCORE = round(100 * sum(DEFAULT_WEIGHTS.get(term, 1.0) for term in TERMS))
 
 

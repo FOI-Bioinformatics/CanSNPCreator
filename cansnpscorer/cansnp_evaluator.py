@@ -15,7 +15,12 @@ from cansnpscorer.helpers.file_utils import (
     reference_parser,
 )
 from cansnpscorer.helpers.kmers import DEFAULT_K, copy_numbers
-from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, contexts_for, score_snp
+from cansnpscorer.helpers.scoring_methods import (
+    DEFAULT_PROFILE,
+    PROFILES,
+    contexts_for,
+    score_snp,
+)
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
 from cansnpscorer.typing_report import read_observed
@@ -213,7 +218,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     counted with k-mers of that size, and canSNPs in repeated sequence are
     ranked after the others of their node.
     """
-    weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
+    weights = dict(PROFILES[DEFAULT_PROFILE][0]) if weights is None else weights
     try:
         genome = reference_parser(reference)
         parsed = vcf.read_snps(snps, genome)

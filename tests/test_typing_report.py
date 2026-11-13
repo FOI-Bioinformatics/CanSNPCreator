@@ -208,11 +208,11 @@ def test_evaluate_reads_the_observed_behaviour_into_the_scores(written, dataset,
     assert by_node["B"].info["OBS_DISCORDANT"] == "0"
 
 
-def test_the_typing_profile_drops_the_gc_term_and_the_cutoff(written, dataset, tmp_path):
+def test_the_typing_profile_is_the_default_and_drops_the_gc_term_and_the_cutoff(
+        written, dataset, tmp_path):
     snp_file, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "typing.vcf")
     assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores,
-                   "--profile", "typing") == 0
+                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores) == 0
     records = vcf_records(scores)
     assert records and all(record.info["GC"] == "0" for record in records)
     assert all("LowScore" not in record.filters for record in records)
@@ -222,8 +222,10 @@ def test_the_typing_profile_drops_the_gc_term_and_the_cutoff(written, dataset, t
 def test_the_assay_profile_keeps_its_cutoff_of_500(written, dataset, tmp_path):
     snp_file, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "assay.vcf")
     assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores) == 0
+                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores,
+                   "--profile", "assay") == 0
     records = vcf_records(scores)
+    assert any(int(record.info["GC"]) > 0 for record in records)
     assert all(("LowScore" in record.filters) == (int(record.info["SCORE"]) <= 500)
                for record in records)
 

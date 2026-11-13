@@ -15,7 +15,12 @@ from cansnpscorer import (
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.kmers import DEFAULT_K
-from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, PROFILES, TERMS
+from cansnpscorer.helpers.scoring_methods import (
+    DEFAULT_PROFILE,
+    MAXIMUM_SCORE,
+    PROFILES,
+    TERMS,
+)
 
 
 def at_least(minimum: int):
@@ -77,17 +82,16 @@ def non_negative_float(text: str) -> float:
     return value
 
 
-def score_weights(settings, profile="assay"):
+def score_weights(settings, profile=DEFAULT_PROFILE):
     """Turn --score-weight TERM=FACTOR arguments into a dictionary of weights.
 
-    Without any, the weights are those of the profile. With some, the terms
-    not named keep the weight of 1 for the assay profile, as they always have,
-    and the profile's weight for any other.
+    The weights are those of the profile, with the terms the settings name
+    changed; a term not named keeps the profile's weight.
     """
+    weights = dict(PROFILES[profile][0])
     if not settings:
-        return dict(PROFILES[profile][0])
+        return weights
 
-    weights = {} if profile == "assay" else dict(PROFILES[profile][0])
     for setting in settings:
         term, _, factor = setting.partition("=")
         if term not in TERMS:
@@ -194,7 +198,7 @@ def main():
 
     # evaluate
     evaluate = subparsers.add_parser(
-        "evaluate", help="Score canSNPs for their suitability as assay targets.")
+        "evaluate", help="Score and rank canSNPs for how reliably they can be called.")
     evaluate.add_argument("--snps", required=True, help="The SNPs extract wrote.")
     add_reference(evaluate)
     evaluate.add_argument("--genes", required=True, metavar="GFF3",
@@ -224,13 +228,15 @@ def main():
                           help="How many bases on either side of a canSNP must be free of "
                                "variation among the scheme's genomes, and of a contig end, for "
                                "the full neighbour term. Default: 50.")
-    evaluate.add_argument("--profile", choices=sorted(PROFILES), default="assay",
+    evaluate.add_argument("--profile", choices=sorted(PROFILES), default=DEFAULT_PROFILE,
                           help="What the scheme is for, which sets the weights and the cutoff "
-                               "used unless --score-weight and --cutoff give others. 'assay': "
-                               "every term, the gene term twice, cutoff 500. 'typing', for "
-                               "schemes typed from genome alignments: no GC term, the gene term "
-                               "once, and no cutoff, so that every node keeps the canSNPs it "
-                               "has and they are only ranked. Default: assay.")
+                               "used unless --score-weight and --cutoff give others. 'typing', "
+                               "for schemes typed from genome alignments: no GC term, the gene "
+                               "term once, and no cutoff, so that every node keeps the canSNPs "
+                               "it has and they are only ranked. 'assay', for schemes typed by "
+                               "PCR assays, and the behaviour of versions up to 0.3: every "
+                               f"term, the gene term twice, cutoff 500. Default: "
+                               f"{DEFAULT_PROFILE}.")
     evaluate.add_argument("--cutoff", type=at_least(0), default=None,
                           help=f"Only pass canSNPs scoring above this. The highest reachable "
                                f"total is {MAXIMUM_SCORE} with the assay profile's weights, "
@@ -254,8 +260,13 @@ def main():
                                f"0 turns the count off. Default: {DEFAULT_K}.")
     evaluate.add_argument("--score-weight", action="append", metavar="TERM=FACTOR",
                           help=f"Weight one score term before the terms are summed. Terms: "
-                               f"{', '.join(TERMS)}. Repeatable. Default: "
-                               f"{', '.join(f'{k}={v:g}' for k, v in DEFAULT_WEIGHTS.items())}.")
+                               f"{', '.join(TERMS)}. Repeatable. Terms not named keep the "
+                               f"weight of --profile: "
+                               + "; ".join(
+                                   f"{name}: " + ", ".join(
+                                       f"{term}={weights.get(term, 1.0):g}" for term in TERMS)
+                                   for name, (weights, _cutoff) in sorted(PROFILES.items()))
+                               + ".")
     add_version(evaluate)
 
     # export

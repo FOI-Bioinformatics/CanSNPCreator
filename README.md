@@ -1,7 +1,7 @@
 # CanSNPCreator
 
 CanSNPCreator finds canonical SNPs (canSNPs) in a whole genome alignment,
-scores them for how well they suit a typing assay, and writes the result as the
+ranks them for how reliably they can be called, and writes the result as the
 source files of a [CanSNPer2](https://github.com/FOI-Bioinformatics/CanSNPer2)
 scheme. It also audits a scheme that already exists, reporting where it cannot
 be typed with and how it would be extended or modified.
@@ -179,10 +179,8 @@ Five terms, each 0 to 100 before weighting:
 | `gene_score` | whether the SNP lies in a gene or CDS, where its context is better defined |
 | `mutation_score` | in the frame of the CDS it lies in: 100 if synonymous, 50 if it changes the amino acid, 0 if a stop codon is gained or lost or if it lies outside every CDS |
 
-The gene term counts twice by default, so the highest total is 600;
-`--score-weight gene_score=1` changes that. `--cutoff` defaults to 500, which in
-practice requires the SNP to lie in a gene. The run reports the nodes left
-without a passing canSNP, and those with fewer than the three CanSNPer2 needs
+How the terms are weighted, and whether a cutoff applies, follows `--profile`,
+described below. The run reports the nodes left without a passing canSNP, and those with fewer than the three CanSNPer2 needs
 on a path to call a node.
 
 A SNP file without `INFO/NEAREST`, from an earlier version, is scored by the
@@ -202,13 +200,17 @@ canSNPs are kept, and ranked after those in unique sequence. `--copy-kmer 0`
 leaves the count out. Counting 187,000 candidates on a 3.4 Mbp reference takes
 about five seconds and 0.7 GB of memory.
 
-`--profile` says what the scheme is for. `assay`, the default, uses every term
-with the gene term counted twice and a cutoff of 500, as before. `typing` is
-for schemes typed from genome alignments, as CanSNPer2 types them: the GC term
-is left out, since it matters to a primer and not to an alignment, the gene
-term counts once, and no cutoff is applied, so that every node keeps the
-canSNPs it has and they are only ranked. `--score-weight` and `--cutoff`
-override either.
+`--profile` says what the scheme is for. `typing`, the default, is for schemes
+typed from genome alignments, as CanSNPer2 types them: the GC term is left
+out, since it matters to a primer and not to an alignment, the gene term
+counts once, so the highest total is 400, and no cutoff is applied, so that
+every node keeps the canSNPs it has and they are only ranked. `assay` is for
+schemes typed by PCR assays, and is what versions up to 0.3 did: every term,
+the gene term counted twice, so the highest total is 600, and a cutoff of
+500, which in practice requires the SNP to lie in a gene. `--score-weight`
+and `--cutoff` override either; a term `--score-weight` does not name keeps
+the weight of the profile. To reproduce scores from an earlier version, pass
+`--profile assay`.
 
 Within a node, canSNPs are taken in this order: unique sequence first, then
 fewer genomes in which the SNP disagreed with its node in a typing report
