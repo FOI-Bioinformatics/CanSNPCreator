@@ -227,7 +227,8 @@ def main():
     evaluate.add_argument("--flank", type=at_least(1), default=50,
                           help="How many bases on either side of a canSNP must be free of "
                                "variation among the scheme's genomes, and of a contig end, for "
-                               "the full neighbour term. Default: 50.")
+                               "the full neighbour term. Default: 50. Distances beyond 1000 "
+                               "bases are not recorded by extract.")
     evaluate.add_argument("--profile", choices=sorted(PROFILES), default=DEFAULT_PROFILE,
                           help="What the scheme is for, which sets the weights and the cutoff "
                                "used unless --score-weight and --cutoff give others. 'typing', "

@@ -106,7 +106,10 @@ both as VCF 4.3:
 - `INFO/NEAREST` is the distance, in bases, to the nearest other column where
   the genomes placed in the scheme differ, capped at 1000. It counts every such
   column, also those the strict core leaves out (a third base, or a genome
-  without a base), and leaves the outgroup out.
+  without a base), and leaves the outgroup out. Either end of an insertion or
+  deletion among those genomes counts as well, and a column where the
+  reference has a gap counts at the reference bases on either side of it.
+  1000 means at least 1000.
 - `INFO/MISSING` is the number of genomes without a base at the SNP, which is
   0 unless `extract --min-called` is below 1.
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
@@ -117,7 +120,8 @@ both as VCF 4.3:
   sequence, more in a repeat, 0 when every such k-mer holds a base other than
   A, C, G or T.
 - A canSNP that fails is kept, with a `FILTER` code: `LowScore` (not above
-  `--cutoff`), `NotTop` (not among the `--top-n` best of its node that lie
+  `--cutoff`), `NotTop` (not among the `--top-n` chosen for its node: by
+  reliability first, then by score, from different genes where possible and
   `--min-spacing` apart) or `Masked` (in a region given with `--masks`).
 - `##contig` lines give each contig's ID and length. A VCF read against
   another reference is refused, and so is one whose `REF` disagrees with the
@@ -181,7 +185,7 @@ Five terms, each 0 to 100 before weighting:
 | Term | Meaning |
 | ---- | ------- |
 | `neighbour_score` | distance to the nearest variation among the scheme's genomes (`INFO/NEAREST`), or to a contig end, over `--flank` bases (default 50); variation under a primer or probe interferes with an assay |
-| `gc_score` | how close the GC content of the 100 bases around the SNP is to `--gc-goal`; full marks within `--gc-tolerance` (default 0.1) of it |
+| `gc_score` | how close the GC content of the 100 bases around the SNP, over A, C, G and T only, is to `--gc-goal`; full marks within `--gc-tolerance` (default 0.1) of it |
 | `tandem_score` | distance to the closest tandem repeat |
 | `gene_score` | whether the SNP lies in a gene or CDS, where its context is better defined |
 | `mutation_score` | in the frame of the CDS it lies in: 100 if synonymous, 50 if it changes the amino acid, 0 if a stop codon is gained or lost or if it lies outside every CDS |
@@ -274,8 +278,11 @@ With `--genome-map` and `--alignment` it also writes `<organism>_genomes.txt`,
 the genomes the scheme was made from: each by its versioned assembly
 accession, the node it sits at, and its role, `representative` (its sequence
 was in the alignment), `member` (placed through a representative, as
-dereplication folds it in) or `outgroup` (aligned, at no node). A genome whose
-name holds no accession is left out with a warning. CanSNPer2 does not read
+dereplication folds it in) or `outgroup` (aligned, at no node). A reference
+genome placed at no node is listed as an outgroup, with a warning. The GCA
+and GCF names of one assembly get one row, the representative's, and an
+accession version has one or two digits, as `validate.py` requires. A genome
+whose name holds no accession is left out with a warning. CanSNPer2 does not read
 the file; CanSNPer2-data's `validate.py` checks it, and `audit` uses it, so
 that a published scheme carries what is needed to check it again.
 
@@ -304,7 +311,9 @@ A node holding exactly its parent's genomes is joined into the parent too.
 `--outgroup` names a leaf placed at no node, so that it stays in the alignment
 as a genome outside every node: that is what lets `extract` find the root's
 canSNP and tell which side of each split is derived. Without one, `extract`
-warns that the two sides of the root cannot be told apart. `--members` reads
+warns that the two sides of the root cannot be told apart, and takes the
+base of the reference genome as ancestral, so that such a SNP marks the side
+without the reference. `--members` reads
 RepGenR2's `genomes_map.tsv`, so that genomes dereplication folded into a
 representative count towards its node and are placed with it. `--rename Cb`
 names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first.
