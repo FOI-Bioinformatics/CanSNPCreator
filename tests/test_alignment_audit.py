@@ -199,7 +199,7 @@ def test_a_rank_one_that_is_not_the_snp_file_is_a_problem(written, dataset):
     path = os.path.join(outdir, SNPS.replace("_snp.txt", "_canSNPs.txt"))
     with open(path) as handle:
         text = handle.read()
-    column, ancestral, derived = PLANTED["B.1"]
+    column, _ancestral, _derived = PLANTED["B.1"]
     text = text.replace(f"B.1\t1\t{genome}\t{column + 1}\t", f"B.1\t1\t{genome}\t{column + 2}\t")
     with open(path, "w") as handle:
         handle.write(text)
@@ -348,7 +348,7 @@ def test_a_snp_every_genome_carries_is_reported_as_untested():
     from cansnpscorer.model import Reference
 
     reference = Reference.from_records([("c1", "ACGTACGT")])
-    alignment = {name: "ACGTACGT" for name in ("a1", "a2", "a3", "x1", "y1")}
+    alignment = dict.fromkeys(("a1", "a2", "a3", "x1", "y1"), "ACGTACGT")
     scheme = small_scheme([("root", 1, "A", "C")])
 
     findings = check_against_alignment(scheme, alignment, reference, SMALL_CLUSTERS)

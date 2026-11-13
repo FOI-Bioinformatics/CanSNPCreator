@@ -2,7 +2,7 @@
 
 import logging
 from bisect import bisect_right
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from collections.abc import Sequence
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
@@ -23,8 +23,8 @@ NUCLEOTIDES = frozenset("ACGT")
 
 
 def contig_of(names: Sequence[str], reference: Reference,
-              aliases: Optional[Sequence[Set[str]]] = None,
-              sequences: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+              aliases: Sequence[set[str]] | None = None,
+              sequences: dict[str, str] | None = None) -> dict[str, str]:
     """Which contig of the reference each annotated sequence is.
 
     In order: the sequence's name is a contig ID; an alias of the name is,
@@ -34,12 +34,12 @@ def contig_of(names: Sequence[str], reference: Reference,
     nothing is left out of the result.
     """
     contigs = set(reference.names)
-    by_sequence: Dict[str, List[str]] = {}
+    by_sequence: dict[str, list[str]] = {}
     if sequences:
         for contig in reference:
             by_sequence.setdefault(contig.sequence.upper(), []).append(contig.name)
 
-    found: Dict[str, str] = {}
+    found: dict[str, str] = {}
     for name in names:
         if name in contigs:
             found[name] = name
@@ -60,10 +60,10 @@ def contig_of(names: Sequence[str], reference: Reference,
     return found
 
 
-def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference,
+def annotations_by_contig(annotations: dict[str, Sequence], reference: Reference,
                           description: str,
-                          aliases: Optional[Sequence[Set[str]]] = None,
-                          sequences: Optional[Dict[str, str]] = None) -> Dict[str, Sequence]:
+                          aliases: Sequence[set[str]] | None = None,
+                          sequences: dict[str, str] | None = None) -> dict[str, Sequence]:
     """Attach annotations to the contigs of the reference.
 
     A sequence is matched by its ID, by an alias, or by its own sequence, as
@@ -98,8 +98,8 @@ def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference
             f"Matched {len(renamed)} sequences of the {description} file to contigs by alias "
             f"or sequence: " + ", ".join(f"{a}={b}" for a, b in sorted(renamed.items())[:5]))
 
-    attached: Dict[str, List] = {name: [] for name in reference.names}
-    claimed: Dict[str, str] = {}
+    attached: dict[str, list] = {name: [] for name in reference.names}
+    claimed: dict[str, str] = {}
     for name, contig in found.items():
         if contig in claimed:
             raise ValueError(
@@ -113,7 +113,7 @@ def annotations_by_contig(annotations: Dict[str, Sequence], reference: Reference
 
 
 def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
-                examples: int = 3) -> List[Tuple[Contig, int, str, Sequence[str]]]:
+                examples: int = 3) -> list[tuple[Contig, int, str, Sequence[str]]]:
     """Place each SNP on its contig, as (contig, 0-based position, node, alleles).
 
     The alleles are (derived, ancestral) for a canSNP. A SNP that marks no node
@@ -124,8 +124,8 @@ def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
         ValueError: If a SNP falls outside its contig or disagrees with the
             reference base.
     """
-    located: List[Tuple[Contig, int, str, Sequence[str]]] = []
-    problems: List[str] = []
+    located: list[tuple[Contig, int, str, Sequence[str]]] = []
+    problems: list[str] = []
     for snp in snps:
         try:
             contig = reference.contig(snp.contig)
@@ -150,8 +150,8 @@ def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
     return located
 
 
-def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
-                         reference: Reference) -> Dict[str, List[Tuple[int, int]]]:
+def regions_over_contigs(regions: dict[str, Sequence[tuple[int, int]]],
+                         reference: Reference) -> dict[str, list[tuple[int, int]]]:
     """Place regions given over the whole concatenated reference on its contigs.
 
     Gubbins, run on an alignment in reference coordinates such as RepGenR2's
@@ -162,7 +162,7 @@ def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
     Raises:
         ValueError: If a region extends past the end of the reference.
     """
-    placed: Dict[str, List[Tuple[int, int]]] = {name: [] for name in reference.names}
+    placed: dict[str, list[tuple[int, int]]] = {name: [] for name in reference.names}
     for name, found in regions.items():
         for start, end in found:
             if end >= reference.length:
@@ -179,8 +179,8 @@ def regions_over_contigs(regions: Dict[str, Sequence[Tuple[int, int]]],
 
 
 def read_masks(path: str, reference: Reference, concatenated: bool = False,
-               aliases: Optional[Sequence[Set[str]]] = None
-               ) -> Dict[str, List[Tuple[int, int]]]:
+               aliases: Sequence[set[str]] | None = None
+               ) -> dict[str, list[tuple[int, int]]]:
     """Masked regions by contig, from BED or GFF3 named by contig, or, with
     ``concatenated``, given over the whole concatenated reference."""
     regions = read_intervals(path)
@@ -189,7 +189,7 @@ def read_masks(path: str, reference: Reference, concatenated: bool = False,
     return annotations_by_contig(regions, reference, "mask", aliases)
 
 
-def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
+def in_regions(position: int, regions: Sequence[tuple[int, int]]) -> bool:
     """Whether a 0-based position lies in one of these sorted, joined regions."""
     index = bisect_right(regions, (position, float("inf"))) - 1
     return index >= 0 and regions[index][0] <= position <= regions[index][1]
@@ -197,7 +197,7 @@ def in_regions(position: int, regions: Sequence[Tuple[int, int]]) -> bool:
 
 def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, output=None,
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
-         weights: Optional[Dict[str, float]] = None, masks=None,
+         weights: dict[str, float] | None = None, masks=None,
          masks_concatenated=False, contig_aliases=None, flank=50, gc_tolerance=0.1,
          spacing=1000) -> int:
     """Score the canSNPs extract found. Returns a process exit status."""

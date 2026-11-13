@@ -4,7 +4,6 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from operator import itemgetter
-from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import unquote
 
 from cansnpscorer.helpers.names import strip_fasta_suffix
@@ -14,7 +13,7 @@ from cansnpscorer.model import Reference
 HIERARCHY_FORMATS = ("table", "newick")
 
 
-def open_text(path: str, newline: Optional[str] = None):
+def open_text(path: str, newline: str | None = None):
     """Open a text file for reading, gzip or bgzip compressed or not.
 
     NCBI distributes genomes and annotations gzipped, and VCF is often
@@ -106,7 +105,7 @@ def read_hierarchy(path: str) -> Hierarchy:
 SEQUENCE_CHARACTERS = frozenset("ACGTURYSWKMBDHVN-.~*?")
 
 
-def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
+def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
     """
     Read a FASTA file into (name, sequence) pairs, in file order.
 
@@ -127,9 +126,9 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     """
     logging.info(f"Reading FASTA records from {fasta_file}")
 
-    records: List[Tuple[str, str]] = []
-    name: Optional[str] = None
-    chunks: List[str] = []
+    records: list[tuple[str, str]] = []
+    name: str | None = None
+    chunks: list[str] = []
     masked = 0
 
     with open_text(fasta_file) as handle:
@@ -181,9 +180,9 @@ def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     return records
 
 
-def fasta_ids(path: str) -> List[str]:
+def fasta_ids(path: str) -> list[str]:
     """The record IDs of a FASTA file, in order, without keeping the sequences."""
-    ids: List[str] = []
+    ids: list[str] = []
     with open_text(path) as handle:
         for line in handle:
             if line.startswith(">"):
@@ -193,7 +192,7 @@ def fasta_ids(path: str) -> List[str]:
     return ids
 
 
-def read_alignment(alignment_file: str) -> Dict[str, str]:
+def read_alignment(alignment_file: str) -> dict[str, str]:
     """
     Read a whole genome alignment, with the reference genome as its first record.
 
@@ -230,7 +229,7 @@ def read_alignment(alignment_file: str) -> Dict[str, str]:
 
 
 
-def read_genome_map(path: str) -> Dict[str, List[str]]:
+def read_genome_map(path: str) -> dict[str, list[str]]:
     """
     Read which genomes sit at each node: two tab separated columns, genome and
     node, and no header.
@@ -250,8 +249,8 @@ def read_genome_map(path: str) -> Dict[str, List[str]]:
         OSError: If the file cannot be read.
     """
     logging.info(f"Reading the genome map {path}")
-    clusters: Dict[str, List[str]] = {}
-    placed: Dict[str, str] = {}
+    clusters: dict[str, list[str]] = {}
+    placed: dict[str, str] = {}
     with open_text(path, newline="") as handle:
         for number, line in enumerate(handle, 1):
             line = line.rstrip("\r\n")
@@ -322,12 +321,12 @@ class GeneModel:
     can be matched to the reference's contigs when their names differ.
     """
 
-    genes: Dict[str, List[Tuple[int, int]]]
-    cds: Dict[str, List[Tuple[int, int, str, int]]]
-    sequences: Dict[str, str] = field(default_factory=dict)
+    genes: dict[str, list[tuple[int, int]]]
+    cds: dict[str, list[tuple[int, int, str, int]]]
+    sequences: dict[str, str] = field(default_factory=dict)
 
 
-def gff3_attributes(text: str) -> Dict[str, str]:
+def gff3_attributes(text: str) -> dict[str, str]:
     """The attributes of a GFF3 feature, percent-decoding their values."""
     attributes = {}
     for item in text.strip().split(";"):
@@ -356,9 +355,9 @@ def read_gff3(gff_file: str) -> GeneModel:
         OSError: If the file cannot be read.
     """
     logging.info(f"Reading genes from {gff_file}")
-    genes: Dict[str, List[Tuple[int, int, str]]] = {}
-    cds: Dict[str, List[Tuple[int, int, str, int]]] = {}
-    sequences: Dict[str, List[str]] = {}
+    genes: dict[str, list[tuple[int, int, str]]] = {}
+    cds: dict[str, list[tuple[int, int, str, int]]] = {}
+    sequences: dict[str, list[str]] = {}
     pseudo = 0
     other_code: Counter = Counter()
 
@@ -438,7 +437,7 @@ def read_gff3(gff_file: str) -> GeneModel:
                      sequences={key: "".join(value) for key, value in sequences.items()})
 
 
-def read_contig_aliases(path: str) -> List[Set[str]]:
+def read_contig_aliases(path: str) -> list[set[str]]:
     """
     Read which names denote the same sequence.
 
@@ -455,7 +454,7 @@ def read_contig_aliases(path: str) -> List[Set[str]]:
     Raises:
         ValueError: If the file holds no names.
     """
-    groups: List[Set[str]] = []
+    groups: list[set[str]] = []
     with open_text(path, newline="") as handle:
         lines = [line.rstrip("\r\n") for line in handle]
     ncbi = any(line.startswith("# Sequence-Name") for line in lines)
@@ -478,9 +477,9 @@ def read_contig_aliases(path: str) -> List[Set[str]]:
     return groups
 
 
-def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """Sort intervals and join those that overlap or touch."""
-    merged: List[Tuple[int, int]] = []
+    merged: list[tuple[int, int]] = []
     for start, end in sorted(intervals):
         if merged and start <= merged[-1][1] + 1:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
@@ -489,7 +488,7 @@ def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return merged
 
 
-def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
+def read_intervals(path: str) -> dict[str, list[tuple[int, int]]]:
     """
     Read regions of the reference from BED or GFF3: tandem repeats, or regions
     to mask such as the recombinant regions Gubbins reports.
@@ -508,7 +507,7 @@ def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
         ValueError: If a line is not a well formed region.
         OSError: If the file cannot be read.
     """
-    regions: Dict[str, List[Tuple[int, int]]] = {}
+    regions: dict[str, list[tuple[int, int]]] = {}
     with open_text(path, newline="") as handle:
         lines = [line.rstrip("\r\n") for line in handle]
     is_gff = False

@@ -5,6 +5,7 @@ status of each subcommand and the files they leave behind.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 from conftest import PLANTED, vcf_lines, vcf_records
@@ -162,7 +163,7 @@ def test_snps_from_another_reference_are_refused(monkeypatch, dataset, tmp_path)
     # The ##contig lines record the reference the SNPs were found against.
     snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
-    text = open(snp_file).read().replace("##contig=<ID=c2,length=300>",
+    text = Path(snp_file).read_text().replace("##contig=<ID=c2,length=300>",
                                          "##contig=<ID=c2,length=301>")
     other = tmp_path / "other.vcf"
     other.write_text(text)
@@ -246,7 +247,7 @@ def test_genomes_the_alignment_lacks_are_left_out_with_a_warning(monkeypatch, da
     # A RepGenR2 genome map names every genome, its alignment often only the
     # representatives.
     genome_map = tmp_path / "genome_map.tsv"
-    genome_map.write_text(open(dataset.genome_map).read() + "GCF_000999999.1\tA.1\n")
+    genome_map.write_text(Path(dataset.genome_map).read_text() + "GCF_000999999.1\tA.1\n")
     snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file, groups=str(genome_map)) == 0
     assert "1 genomes that the alignment does not hold" in caplog.text

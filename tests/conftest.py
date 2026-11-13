@@ -23,7 +23,6 @@ import os
 import random
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
 
 import pytest
 
@@ -39,7 +38,7 @@ ALIGNMENT_LENGTH = 1000
 CONTIGS = [("c1", 0, 700), ("c2", 700, 1000)]
 
 # node -> (alignment column, ancestral base, derived base)
-PLANTED: Dict[str, Tuple[int, str, str]] = {
+PLANTED: dict[str, tuple[int, str, str]] = {
     "root": (100, "A", "T"),
     "A": (200, "G", "C"),
     "B": (300, "T", "A"),
@@ -65,7 +64,7 @@ GENES = [
 REPEATS = [("c1", 60, 95), ("c2", 120, 160)]
 
 
-def node_isolates(node: str) -> List[str]:
+def node_isolates(node: str) -> list[str]:
     """The isolates below a node, which is what a canSNP for it must separate."""
     descendants = {
         "root": ["A.1", "A.2", "B.1", "B.2"],
@@ -76,7 +75,7 @@ def node_isolates(node: str) -> List[str]:
     return [isolate for cluster in clusters for isolate in CLUSTERS[cluster]]
 
 
-def build_alignment() -> Dict[str, str]:
+def build_alignment() -> dict[str, str]:
     """Build the alignment, planting one canSNP per node."""
     random.seed(20261112)
     backbone = [random.choice("ACGT") for _ in range(ALIGNMENT_LENGTH)]
@@ -94,20 +93,19 @@ def build_alignment() -> Dict[str, str]:
     for isolate in isolates:
         sequences[isolate][column] = derived
 
-    for name, base in zip(GENOMES, "AACGAA"):
+    for name, base in zip(GENOMES, "AACGAA", strict=True):
         sequences[name][TRIALLELIC] = base
-    for name, base in zip(GENOMES, ["A", "A", "A", "A", "A", "-"]):
+    for name, base in zip(GENOMES, ["A", "A", "A", "A", "A", "-"], strict=True):
         sequences[name][GAPPED] = base
 
     return {name: "".join(bases) for name, bases in sequences.items()}
 
 
-def write_fasta(path: str, records: List[Tuple[str, str]], width: int = 70) -> None:
+def write_fasta(path: str, records: list[tuple[str, str]], width: int = 70) -> None:
     with open(path, "w") as handle:
         for name, sequence in records:
             handle.write(f">{name}\n")
-            for start in range(0, len(sequence), width):
-                handle.write(sequence[start:start + width] + "\n")
+            handle.writelines(sequence[start:start + width] + "\n" for start in range(0, len(sequence), width))
 
 
 @dataclass
@@ -122,12 +120,12 @@ class Dataset:
     genome_map: str
     gff: str
     repeats: str
-    sequences: Dict[str, str] = field(default_factory=dict)
+    sequences: dict[str, str] = field(default_factory=dict)
 
-    def planted(self) -> Dict[str, Tuple[int, str, str]]:
+    def planted(self) -> dict[str, tuple[int, str, str]]:
         return dict(PLANTED)
 
-    def contig_of(self, column: int) -> Tuple[str, int]:
+    def contig_of(self, column: int) -> tuple[str, int]:
         """The contig and 1-based local position of an alignment column."""
         for name, start, end in CONTIGS:
             if start <= column < end:
@@ -157,14 +155,12 @@ def dataset(tmp_path) -> Dataset:
     genome_map = os.path.join(directory, "genome_map.tsv")
     with open(genome_map, "w") as handle:
         for cluster, isolates in CLUSTERS.items():
-            for isolate in isolates:
-                handle.write(f"{isolate}\t{cluster}\n")
+            handle.writelines(f"{isolate}\t{cluster}\n" for isolate in isolates)
 
     hierarchy = os.path.join(directory, "hierarchy.tsv")
     with open(hierarchy, "w") as handle:
         handle.write("child\tparent\n")
-        for child, parent in EDGES:
-            handle.write(f"{child}\t{parent}\n")
+        handle.writelines(f"{child}\t{parent}\n" for child, parent in EDGES)
 
     hierarchy_newick = os.path.join(directory, "hierarchy.nwk")
     with open(hierarchy_newick, "w") as handle:
@@ -260,15 +256,15 @@ def scored(dataset, parsed_snps):
 # Shared by the audit tests, which read the scheme back in and change one thing
 # at a time.
 
-METADATA = dict(
-    organism="testus_organismus",
-    genome="TEST1",
-    strain="testus",
-    citation="Sjodin2026",
-    genbank_id="GCA_000007125.1",
-    refseq_id="GCF_000007125.1",
-    assembly_name="ASM712v1",
-)
+METADATA = {
+    "organism": "testus_organismus",
+    "genome": "TEST1",
+    "strain": "testus",
+    "citation": "Sjodin2026",
+    "genbank_id": "GCA_000007125.1",
+    "refseq_id": "GCF_000007125.1",
+    "assembly_name": "ASM712v1",
+}
 
 TREE = "testus_organismus_tree.txt"
 SNPS = "testus_organismus_snp.txt"

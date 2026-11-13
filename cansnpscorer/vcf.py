@@ -26,9 +26,9 @@ none. Reserved characters in INFO values are percent-encoded, as VCF 4.3 asks.
 import logging
 import os
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from cansnpscorer import __version__
 from cansnpscorer.model import Reference
@@ -122,20 +122,20 @@ class Record:
     """1-based position on the contig."""
     ref: str
     alt: str
-    info: Dict[str, Optional[str]] = field(default_factory=dict)
-    filters: List[str] = field(default_factory=list)
+    info: dict[str, str | None] = field(default_factory=dict)
+    filters: list[str] = field(default_factory=list)
     """The FILTER codes it failed; empty when it passed."""
 
     @property
-    def node(self) -> Optional[str]:
+    def node(self) -> str | None:
         return self.info.get("NODE")
 
     @property
-    def ancestral(self) -> Optional[str]:
+    def ancestral(self) -> str | None:
         return self.info.get("AA")
 
     @property
-    def derived(self) -> Optional[str]:
+    def derived(self) -> str | None:
         if self.ancestral is None:
             return None
         return self.alt if self.ancestral == self.ref else self.ref
@@ -157,7 +157,7 @@ class Record:
 
 def header_lines(reference: Reference, reference_path: str, command: str,
                  infos: Sequence[Info], filters: Sequence[Filter] = (),
-                 extra: Sequence[str] = ()) -> List[str]:
+                 extra: Sequence[str] = ()) -> list[str]:
     lines = [
         f"##fileformat={VERSION}",
         f"##fileDate={date.today().strftime('%Y%m%d')}",
@@ -182,8 +182,7 @@ def write(path: str, header: Sequence[str], records: Iterable[Record]) -> int:
     """Write a VCF file. Returns the number of records written."""
     count = 0
     with open(path, "w", newline="\n") as handle:
-        for line in header:
-            handle.write(line + "\n")
+        handle.writelines(line + "\n" for line in header)
         for record in records:
             handle.write(record.line() + "\n")
             count += 1
@@ -192,10 +191,10 @@ def write(path: str, header: Sequence[str], records: Iterable[Record]) -> int:
 
 @dataclass
 class Vcf:
-    meta: List[str]
-    contigs: Dict[str, int]
-    infos: Dict[str, Info]
-    records: List[Record]
+    meta: list[str]
+    contigs: dict[str, int]
+    infos: dict[str, Info]
+    records: list[Record]
 
     def check_against(self, reference: Reference, path: str) -> None:
         """The file's contigs must be the reference's, by ID and length."""
@@ -230,9 +229,9 @@ class Vcf:
                 + "; ".join(wrong[:3]))
 
 
-def _attributes(text: str) -> Dict[str, str]:
+def _attributes(text: str) -> dict[str, str]:
     """The key=value pairs of a structured header line, quotes removed."""
-    attributes: Dict[str, str] = {}
+    attributes: dict[str, str] = {}
     index = 0
     while index < len(text):
         equals = text.index("=", index)
@@ -266,10 +265,10 @@ def read(path: str) -> Vcf:
             record that is not a biallelic SNP.
         OSError: If the file cannot be read.
     """
-    meta: List[str] = []
-    contigs: Dict[str, int] = {}
-    infos: Dict[str, Info] = {}
-    records: List[Record] = []
+    meta: list[str] = []
+    contigs: dict[str, int] = {}
+    infos: dict[str, Info] = {}
+    records: list[Record] = []
     seen_header = False
 
     from cansnpscorer.helpers.file_utils import open_text
@@ -313,7 +312,7 @@ def read(path: str) -> Vcf:
                 raise VcfError(
                     f"{path}: line {number} is not a biallelic SNP ({ref} to {alt}); "
                     f"only SNPs as extract writes them are read")
-            values: Dict[str, Optional[str]] = {}
+            values: dict[str, str | None] = {}
             if info != ".":
                 for item in info.split(";"):
                     key, has_value, value = item.partition("=")
@@ -335,8 +334,8 @@ def read(path: str) -> Vcf:
     return Vcf(meta, contigs, infos, records)
 
 
-def snp_record(reference: Reference, contig: str, position: int, alleles: Tuple[str, str],
-               node: Optional[str] = None, ancestral: Optional[str] = None) -> Record:
+def snp_record(reference: Reference, contig: str, position: int, alleles: tuple[str, str],
+               node: str | None = None, ancestral: str | None = None) -> Record:
     """A record for a SNP at a 1-based position, REF taken from the reference.
 
     Raises:
@@ -348,7 +347,7 @@ def snp_record(reference: Reference, contig: str, position: int, alleles: Tuple[
             f"{contig}:{position} is {ref} in the reference, which is neither allele "
             f"{alleles[0]} nor {alleles[1]}")
     alt = alleles[1] if alleles[0] == ref else alleles[0]
-    info: Dict[str, Optional[str]] = {}
+    info: dict[str, str | None] = {}
     if node is not None:
         info["NODE"] = node
         info["AA"] = ancestral
@@ -361,7 +360,7 @@ SCORE = Info("SCORE", "1", "Integer",
              "Weighted sum of the five score terms; higher suits an assay better")
 
 
-def term_infos() -> List[Info]:
+def term_infos() -> list[Info]:
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS
 
     descriptions = {
@@ -377,7 +376,7 @@ def term_infos() -> List[Info]:
             for term, key in INFO_KEYS.items()]
 
 
-def score_filters(cutoff: int, top: Optional[int]) -> List[Filter]:
+def score_filters(cutoff: int, top: int | None) -> list[Filter]:
     filters = [Filter("LowScore", f"SCORE is not above the cutoff of {cutoff}")]
     if top is not None:
         filters.append(Filter("NotTop", f"Not among the {top} highest scoring canSNPs of its "
@@ -393,16 +392,16 @@ class Snp:
 
     contig: str
     position: int
-    node: Optional[str]
+    node: str | None
     derived: str
     ancestral: str
-    nearest: Optional[int] = None
+    nearest: int | None = None
     """Distance to the nearest variation among the scheme's genomes, when known."""
     missing: int = 0
     """Genomes of the alignment without a base at the SNP."""
 
 
-def nearest_of(record: Record) -> Optional[int]:
+def nearest_of(record: Record) -> int | None:
     value = record.info.get("NEAREST")
     return int(value) if value not in (None, "") else None
 
@@ -412,7 +411,7 @@ def missing_of(record: Record) -> int:
     return int(value) if value not in (None, "") else 0
 
 
-def read_snps(path: str, reference: Reference) -> List[Snp]:
+def read_snps(path: str, reference: Reference) -> list[Snp]:
     """Read the SNPs extract wrote, checked against the reference.
 
     For a SNP that marks no node the polarity is unknown, and the REF and ALT
@@ -438,7 +437,7 @@ def read_snps(path: str, reference: Reference) -> List[Snp]:
 
 
 def write_scores(path: str, scores, reference: Reference, reference_path: str, cutoff: int,
-                 top: Optional[int], weights: Dict[str, float]) -> int:
+                 top: int | None, weights: dict[str, float]) -> int:
     """Write scored canSNPs, each with its terms and the filters it failed."""
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS, TERMS
 
@@ -461,7 +460,7 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str, c
     return write(path, header, records)
 
 
-def read_scores(path: str, reference: Optional[Reference] = None):
+def read_scores(path: str, reference: Reference | None = None):
     """Read the scored canSNPs evaluate wrote."""
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS, ScoredSnp
 

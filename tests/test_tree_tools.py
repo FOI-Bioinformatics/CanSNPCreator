@@ -2,6 +2,7 @@
 genomes on an existing scheme by the tree rather than by typing."""
 
 import logging
+from pathlib import Path
 
 import pytest
 from conftest import CLUSTERS, PLANTED, cli_run, vcf_records
@@ -178,7 +179,7 @@ def test_the_written_files_are_read_back_by_extract(tmp_path):
     assert read_hierarchy(hierarchy_path).root == "T"
     clusters = read_genome_map(genomes_path)
     assert clusters["T.1.1"] == ["s1", "s1b"]
-    assert "0.97" in open(nodes_path).read()
+    assert "0.97" in Path(nodes_path).read_text()
 
 
 def test_a_scheme_is_extracted_from_a_collapsed_tree(dataset, tmp_path):

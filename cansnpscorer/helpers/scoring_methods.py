@@ -24,8 +24,8 @@ The five terms are, each on a scale of 0 to 1 before weighting:
     introduces or removes a stop codon, or lies outside any CDS, scores 0.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
 
 from cansnpscorer.helpers.data_utils import codon_comparer, gc_content, neighbour_distance, search
 from cansnpscorer.model import Contig
@@ -38,7 +38,7 @@ TERMS = ("neighbour_score", "gc_score", "tandem_score", "gene_score", "mutation_
 
 #: Weights applied before the terms are summed. The gene term counts twice,
 #: which is the behaviour the tool has had since the scoring was introduced.
-DEFAULT_WEIGHTS: Dict[str, float] = {"gene_score": 2.0}
+DEFAULT_WEIGHTS: dict[str, float] = {"gene_score": 2.0}
 
 #: The highest total a SNP can reach with the default weights.
 MAXIMUM_SCORE = round(100 * sum(DEFAULT_WEIGHTS.get(term, 1.0) for term in TERMS))
@@ -53,9 +53,9 @@ class SnpContext:
     """0-based position within the contig."""
     node: str
     alleles: Sequence[str]
-    previous: Optional[int] = None
+    previous: int | None = None
     """0-based position of the closest SNP to the left on this contig."""
-    following: Optional[int] = None
+    following: int | None = None
     """0-based position of the closest SNP to the right on this contig."""
     genes: Sequence[Sequence[int]] = field(default_factory=list)
     """Bases covered by a gene or CDS on this contig as (start, end), sorted and joined."""
@@ -63,17 +63,17 @@ class SnpContext:
     """CDS intervals on this contig as (start, end, strand, phase), sorted by start."""
     repeats: Sequence[Sequence[int]] = field(default_factory=list)
     """Tandem repeat intervals on this contig as (start, end), sorted by start."""
-    nearest: Optional[int] = None
+    nearest: int | None = None
     """Distance to the nearest variation among the scheme's genomes, as extract
     measured it over every column where they differ; None when not known."""
 
     @property
-    def derived(self) -> Optional[str]:
+    def derived(self) -> str | None:
         """The base carried below the node, when the polarity is known."""
         return self.alleles[0] if self.alleles else None
 
     @property
-    def ancestral(self) -> Optional[str]:
+    def ancestral(self) -> str | None:
         return self.alleles[1] if len(self.alleles) > 1 else None
 
     @property
@@ -128,7 +128,7 @@ def gene_score(context: SnpContext, limit: int) -> float:
     return 1.0 - distance
 
 
-def codons_at(context: SnpContext) -> Optional[List[str]]:
+def codons_at(context: SnpContext) -> list[str] | None:
     """The codon each allele gives, read in the frame of the CDS the SNP is in.
 
     A CDS is read from its 5' end, skipping ``phase`` bases first, as GFF3
@@ -208,10 +208,10 @@ class ScoredSnp:
     position: int
     node: str
     total: int
-    terms: Dict[str, int]
-    derived: Optional[str] = None
-    ancestral: Optional[str] = None
-    filters: List[str] = field(default_factory=list)
+    terms: dict[str, int]
+    derived: str | None = None
+    ancestral: str | None = None
+    filters: list[str] = field(default_factory=list)
     """The FILTER codes it failed: LowScore, NotTop or Masked. Empty when it passed."""
     missing: int = 0
     """Genomes of the alignment without a base at the SNP; fewer is ranked first."""
@@ -222,7 +222,7 @@ class ScoredSnp:
 
 
 def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
-              gc_goal: float = 0.5, weights: Optional[Dict[str, float]] = None,
+              gc_goal: float = 0.5, weights: dict[str, float] | None = None,
               flank: int = 50, gc_tolerance: float = 0.1) -> ScoredSnp:
     """Score one SNP.
 
@@ -251,10 +251,10 @@ def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
     )
 
 
-def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
-                 genes: Dict[str, Sequence[Sequence[int]]],
-                 repeats: Dict[str, Sequence[Sequence[int]]],
-                 cds: Optional[Dict[str, Sequence[Sequence[int]]]] = None) -> List[SnpContext]:
+def contexts_for(snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
+                 genes: dict[str, Sequence[Sequence[int]]],
+                 repeats: dict[str, Sequence[Sequence[int]]],
+                 cds: dict[str, Sequence[Sequence[int]]] | None = None) -> list[SnpContext]:
     """Build the contexts for a set of SNPs, filling in each SNP's neighbours.
 
     Args:
@@ -269,12 +269,12 @@ def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
     """
     ordered = sorted(snps, key=lambda snp: (snp[0].start, snp[1]))
 
-    positions: Dict[str, List[int]] = {}
+    positions: dict[str, list[int]] = {}
     for snp in ordered:
         positions.setdefault(snp[0].name, []).append(snp[1])
 
-    contexts: List[SnpContext] = []
-    seen: Dict[str, int] = {}
+    contexts: list[SnpContext] = []
+    seen: dict[str, int] = {}
     for snp in ordered:
         contig, position, node, alleles = snp[:4]
         nearest = snp[4] if len(snp) > 4 else None

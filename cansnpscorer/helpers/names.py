@@ -11,7 +11,6 @@ on. Node names are never cleaned: a node called A.1 stays A.1.
 
 import logging
 import re
-from typing import Dict, Set
 
 NOT_ALPHANUMERIC = re.compile("[^A-Za-z0-9]+")
 FASTA_SUFFIX = re.compile(r"\.(fasta|fna|fa|fas|ffn)(\.gz)?$", re.IGNORECASE)
@@ -83,7 +82,7 @@ def resolve_clusters(clusters, records):
     matched, unmatched, ambiguous = resolve_names(names, records)
     # Two names written differently can be one record; placed at two nodes
     # they would put one genome in two places, so both are refused.
-    nodes_of: Dict[str, Set[str]] = {}
+    nodes_of: dict[str, set[str]] = {}
     for node, genomes in clusters.items():
         for name in genomes:
             if name in matched:

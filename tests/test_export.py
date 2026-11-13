@@ -18,15 +18,15 @@ from cansnpscorer.cansnp_export import main as export_main
 from cansnpscorer.cansnp_scorer import main as cli
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, TERMS, ScoredSnp
 
-METADATA = dict(
-    organism="testus_organismus",
-    genome="TEST1",
-    strain="testus",
-    citation="Sjodin2026",
-    genbank_id="GCA_000007125.1",
-    refseq_id="GCF_000007125.1",
-    assembly_name="ASM712v1",
-)
+METADATA = {
+    "organism": "testus_organismus",
+    "genome": "TEST1",
+    "strain": "testus",
+    "citation": "Sjodin2026",
+    "genbank_id": "GCA_000007125.1",
+    "refseq_id": "GCF_000007125.1",
+    "assembly_name": "ASM712v1",
+}
 
 
 def score(node, contig="c1", position=100, total=500, derived="G", ancestral="C"):
@@ -182,7 +182,7 @@ def test_metadata_that_breaks_the_rules_is_refused(dataset, scheme, field, value
 
 
 def test_a_score_file_from_another_tool_is_refused(dataset, scheme, tmp_path):
-    scores, outdir = scheme
+    _scores, outdir = scheme
     wrong = tmp_path / "wrong.csv"
     wrong.write_text("position,group\n100,A.1\n")
     assert export_main(str(wrong), dataset.hierarchy, dataset.reference, outdir, **METADATA) == 1

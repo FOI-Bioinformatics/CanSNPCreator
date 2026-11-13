@@ -1,5 +1,7 @@
 """VCF 4.3 as this tool writes and reads it."""
 
+from pathlib import Path
+
 import pytest
 
 from cansnpscorer import vcf
@@ -34,13 +36,13 @@ def test_reserved_characters_in_a_node_name_survive(tmp_path):
     node = "A;B=C,D%E:F"
     record = vcf.snp_record(REFERENCE, "chr1", 1, ("A", "G"), node=node, ancestral="A")
     path = written(tmp_path, [record])
-    assert "NODE=A%3BB%3DC%2CD%25E%3AF" in open(path).read()
+    assert "NODE=A%3BB%3DC%2CD%25E%3AF" in Path(path).read_text()
     assert vcf.read(path).records[0].node == node
 
 
 def test_the_header_declares_contigs_and_fields(tmp_path):
     path = written(tmp_path, [])
-    text = open(path).read()
+    text = Path(path).read_text()
     assert text.startswith("##fileformat=VCFv4.3\n")
     assert "##contig=<ID=chr1,length=10>\n##contig=<ID=pX,length=6>" in text
     assert '##INFO=<ID=AA,Number=1,Type=String,Description="Ancestral allele">' in text

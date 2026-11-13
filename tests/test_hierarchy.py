@@ -62,7 +62,7 @@ def test_a_leaf_without_isolates_is_reported_as_empty():
 
 
 def test_a_cluster_that_is_not_in_the_hierarchy_is_refused():
-    with pytest.raises(HierarchyError, match="not in the hierarchy: C.9"):
+    with pytest.raises(HierarchyError, match=r"not in the hierarchy: C\.9"):
         Hierarchy.from_child_parent(TABLE).isolates({"A.1": ["s1"], "C.9": ["s9"]})
 
 
@@ -75,7 +75,7 @@ def test_a_node_with_two_parents_is_refused():
 
 
 def test_a_cycle_is_refused():
-    with pytest.raises(HierarchyError, match="no root|not a tree"):
+    with pytest.raises(HierarchyError, match=r"no root|not a tree"):
         Hierarchy.from_child_parent([("A", "B"), ("B", "A")])
 
 

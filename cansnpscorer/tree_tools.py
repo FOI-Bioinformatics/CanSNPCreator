@@ -33,8 +33,8 @@ weak for nodes with one or two; the report gives the index of every match.
 import csv
 import logging
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
 
 from cansnpscorer.findings import CHECK, MODIFY, Finding, problem, recommendation
 from cansnpscorer.helpers.file_utils import hierarchy_format, open_text, read_hierarchy
@@ -50,7 +50,7 @@ NODE_TABLE_COLUMNS = ("node", "support", "branch_length")
 # -- reading a genome tree ---------------------------------------------------
 
 
-def read_genome_tree(path: str, nodes_file: Optional[str] = None) -> Hierarchy:
+def read_genome_tree(path: str, nodes_file: str | None = None) -> Hierarchy:
     """Read a genome tree whose leaves are genomes.
 
     Args:
@@ -98,7 +98,7 @@ def read_genome_tree(path: str, nodes_file: Optional[str] = None) -> Hierarchy:
     return tree
 
 
-def read_members(path: str, tree: Hierarchy) -> Dict[str, List[str]]:
+def read_members(path: str, tree: Hierarchy) -> dict[str, list[str]]:
     """Genomes a leaf of the tree stands for, from RepGenR2's genomes_map.tsv.
 
     That file maps an accession to a leaf. The leaf's own accession is one of
@@ -106,10 +106,10 @@ def read_members(path: str, tree: Hierarchy) -> Dict[str, List[str]]:
     folded into that leaf.
     """
     leaves = set(tree.leaves)
-    members: Dict[str, List[str]] = {}
-    foreign: Set[str] = set()
-    placed: Dict[str, str] = {}
-    twice: List[str] = []
+    members: dict[str, list[str]] = {}
+    foreign: set[str] = set()
+    placed: dict[str, str] = {}
+    twice: list[str] = []
     with open_text(path) as handle:
         for number, line in enumerate(handle, 1):
             fields = line.rstrip("\n").split("\t")
@@ -157,28 +157,28 @@ class Collapsed:
     """A genome tree reduced to the nodes of a scheme."""
 
     hierarchy: Hierarchy
-    genomes: Dict[str, str]
+    genomes: dict[str, str]
     """Each genome and the node it sits at."""
-    source: Dict[str, str]
+    source: dict[str, str]
     """Each node and the node of the genome tree it was, before any renaming."""
-    removed: Dict[str, str] = field(default_factory=dict)
+    removed: dict[str, str] = field(default_factory=dict)
     """Each internal node of the tree that was removed, and why."""
 
-    def genome_count(self) -> Dict[str, int]:
+    def genome_count(self) -> dict[str, int]:
         """Genomes at or below each node."""
-        own: Dict[str, int] = {}
+        own: dict[str, int] = {}
         for node in self.genomes.values():
             own[node] = own.get(node, 0) + 1
-        count: Dict[str, int] = {}
+        count: dict[str, int] = {}
         for node in reversed(self.hierarchy.nodes):
             count[node] = own.get(node, 0) + sum(
                 count[child] for child in self.hierarchy.children[node])
         return count
 
 
-def collapse(tree: Hierarchy, min_support: Optional[float] = None, min_genomes: int = 2,
-             min_length: Optional[float] = None,
-             members: Optional[Mapping[str, Sequence[str]]] = None,
+def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int = 2,
+             min_length: float | None = None,
+             members: Mapping[str, Sequence[str]] | None = None,
              outgroups: Sequence[str] = ()) -> Collapsed:
     """Remove weak internal nodes of a genome tree and place its genomes.
 
@@ -204,12 +204,12 @@ def collapse(tree: Hierarchy, min_support: Optional[float] = None, min_genomes: 
     outgroup = set(outgroups)
     weight = {leaf: 0 if leaf in outgroup else 1 + len(members.get(leaf, []))
               for leaf in tree.leaves}
-    below: Dict[str, int] = {}
+    below: dict[str, int] = {}
     for node in reversed(tree.nodes):
         below[node] = weight.get(node, 0) + sum(below[child] for child in tree.children[node])
 
-    removed: Dict[str, str] = {}
-    kept: Set[str] = {tree.root}
+    removed: dict[str, str] = {}
+    kept: set[str] = {tree.root}
     for node in tree.nodes:
         if node == tree.root or not tree.children[node]:
             continue
@@ -234,7 +234,7 @@ def collapse(tree: Hierarchy, min_support: Optional[float] = None, min_genomes: 
 
     parent_of = {node: (None if node == tree.root else kept_above(node))
                  for node in tree.nodes if node in kept}
-    genomes: Dict[str, str] = {}
+    genomes: dict[str, str] = {}
     for leaf in tree.leaves:
         if leaf == tree.root or leaf in outgroup:
             continue
@@ -245,7 +245,7 @@ def collapse(tree: Hierarchy, min_support: Optional[float] = None, min_genomes: 
 
     # Join a node that holds exactly its parent's genomes into the parent.
     while True:
-        children: Dict[str, List[str]] = {}
+        children: dict[str, list[str]] = {}
         for node, parent in parent_of.items():
             if parent is not None:
                 children.setdefault(parent, []).append(node)
@@ -301,7 +301,7 @@ def rename(collapsed: Collapsed, prefix: str) -> Collapsed:
 
 
 def write_collapsed(collapsed: Collapsed, tree: Hierarchy, outdir: str,
-                    prefix: str) -> List[str]:
+                    prefix: str) -> list[str]:
     """Write the hierarchy, the genome map and a node table."""
     os.makedirs(outdir, exist_ok=True)
     hierarchy = collapsed.hierarchy
@@ -311,12 +311,10 @@ def write_collapsed(collapsed: Collapsed, tree: Hierarchy, outdir: str,
 
     with open(paths[0], "w", newline="\n") as handle:
         handle.write("child\tparent\n")
-        for node in hierarchy.nodes:
-            handle.write(f"{node}\t{hierarchy.parents[node] or ''}\n")
+        handle.writelines(f"{node}\t{hierarchy.parents[node] or ''}\n" for node in hierarchy.nodes)
 
     with open(paths[1], "w", newline="\n") as handle:
-        for genome, node in sorted(collapsed.genomes.items(), key=lambda item: (item[1], item[0])):
-            handle.write(f"{genome}\t{node}\n")
+        handle.writelines(f"{genome}\t{node}\n" for genome, node in sorted(collapsed.genomes.items(), key=lambda item: (item[1], item[0])))
 
     with open(paths[2], "w", newline="\n") as handle:
         handle.write("node\tparent\tgenomes\tsupport\tbranch_length\ttree_node\n")
@@ -339,17 +337,17 @@ class Match:
     """The clade of the genome tree a node of the scheme was matched to."""
 
     node: str
-    clade: Optional[str] = None
+    clade: str | None = None
     jaccard: float = 0.0
     carriers: int = 0
     shared: int = 0
     clade_only: int = 0
     carriers_only: int = 0
-    genomes: FrozenSet[str] = frozenset()
+    genomes: frozenset[str] = frozenset()
     reason: str = ""
     outside: bool = False
     """Whether the match is the genomes outside ``clade`` rather than inside it."""
-    group: FrozenSet[str] = frozenset()
+    group: frozenset[str] = frozenset()
     """The genomes the node was matched to."""
 
     @property
@@ -364,15 +362,15 @@ class Match:
 class Placement:
     """Where the genomes sit in an existing scheme, read from a genome tree."""
 
-    clusters: Dict[str, List[str]]
+    clusters: dict[str, list[str]]
     """The genomes placed at each node of the scheme, by alignment record name."""
-    matches: List[Match]
-    findings: List[Finding]
+    matches: list[Match]
+    findings: list[Finding]
 
 
-def _clades(tree: Hierarchy, records: Mapping[str, str]) -> Dict[str, FrozenSet[str]]:
+def _clades(tree: Hierarchy, records: Mapping[str, str]) -> dict[str, frozenset[str]]:
     """The alignment records at or below each node of the tree."""
-    clades: Dict[str, FrozenSet[str]] = {}
+    clades: dict[str, frozenset[str]] = {}
     for node in reversed(tree.nodes):
         own = {records[node]} if node in records else set()
         for child in tree.children[node]:
@@ -382,8 +380,8 @@ def _clades(tree: Hierarchy, records: Mapping[str, str]) -> Dict[str, FrozenSet[
 
 
 def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], reference: Reference,
-          genome: Optional[str] = None, min_match: float = 0.5,
-          members: Optional[Mapping[str, Sequence[str]]] = None) -> Placement:
+          genome: str | None = None, min_match: float = 0.5,
+          members: Mapping[str, Sequence[str]] | None = None) -> Placement:
     """Place the genomes of a tree on the nodes of an existing scheme.
 
     Args:
@@ -397,7 +395,7 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         members: Genomes folded into a leaf of the tree, which are placed with
             it when the alignment holds them.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
     if scheme.hierarchy is None:
         return Placement({}, [], [problem(
             CHECK, "placement", "", "the tree file of the scheme is not a single rooted tree")])
@@ -412,7 +410,7 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
             f"the alignment and are left out: {', '.join(sorted(unmatched + ambiguous)[:5])}"))
     leaf_record = dict(matched)
 
-    member_record: Dict[str, str] = {}
+    member_record: dict[str, str] = {}
     for leaf, names in (members or {}).items():
         if leaf not in leaf_record:
             continue
@@ -423,7 +421,7 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     clades = _clades(tree, leaf_record)
     in_tree = clades[tree.root]
 
-    matches: Dict[str, Match] = {}
+    matches: dict[str, Match] = {}
     annotated = sorted({snp.genome for snp in scheme.snps})
     if genome is None and len(annotated) > 1:
         raise ValueError(
@@ -452,8 +450,8 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
             matches[node] = Match(node, reason="the position is not aligned")
             continue
 
-        called: Set[str] = set()
-        carriers: Set[str] = set()
+        called: set[str] = set()
+        carriers: set[str] = set()
         for record in in_tree:
             base = alignment[record][column].upper()
             if base in BASES:
@@ -470,8 +468,8 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         # candidates, so the match does not depend on where the tree is rooted.
         n_called = len(called)
         n_carriers = len(carriers)
-        below_called: Dict[str, int] = {}
-        below_carriers: Dict[str, int] = {}
+        below_called: dict[str, int] = {}
+        below_carriers: dict[str, int] = {}
         for tree_node in reversed(tree.nodes):
             record = leaf_record.get(tree_node)
             own_called = 1 if record in called else 0
@@ -481,7 +479,7 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
             below_carriers[tree_node] = own_carrier + sum(
                 below_carriers[child] for child in tree.children[tree_node])
 
-        best: Optional[Tuple[float, int, int, str]] = None
+        best: tuple[float, int, int, str] | None = None
         for tree_node in tree.nodes:
             inside_called, inside_carriers = below_called[tree_node], below_carriers[tree_node]
             sides = [(inside_called, inside_carriers, 0)]
@@ -550,9 +548,9 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
 
     depth = {node: len(scheme.hierarchy.path(node)) for node in scheme.hierarchy.nodes}
     matched_nodes = [node for node, match in matches.items() if match.clade]
-    clusters: Dict[str, List[str]] = {}
-    split: List[str] = []
-    placed_at: Dict[str, str] = {}
+    clusters: dict[str, list[str]] = {}
+    split: list[str] = []
+    placed_at: dict[str, str] = {}
     for record in sorted(in_tree):
         holding = [node for node in matched_nodes if record in matches[node].group]
         if not holding:
@@ -583,20 +581,18 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     return Placement(clusters, list(matches.values()), findings)
 
 
-def write_placement(placement: Placement, genome_map: str, report: Optional[str] = None) -> None:
+def write_placement(placement: Placement, genome_map: str, report: str | None = None) -> None:
     """Write the genome map, and a report of how each node was matched."""
     with open(genome_map, "w", newline="\n") as handle:
         for node, genomes in sorted(placement.clusters.items()):
-            for genome in sorted(genomes):
-                handle.write(f"{genome}\t{node}\n")
+            handle.writelines(f"{genome}\t{node}\n" for genome in sorted(genomes))
     if report:
         with open(report, "w", newline="\n") as handle:
             handle.write("\t".join(Match.HEADER) + "\n")
-            for match in placement.matches:
-                handle.write("\t".join([
+            handle.writelines("\t".join([
                     match.node, match.clade or "",
                     "" if not match.clade else ("outside" if match.outside else "inside"),
                     f"{match.jaccard:.3f}", str(match.carriers),
                     str(match.shared), str(match.clade_only), str(match.carriers_only),
-                    str(len(match.genomes)), match.reason]) + "\n")
+                    str(len(match.genomes)), match.reason]) + "\n" for match in placement.matches)
 

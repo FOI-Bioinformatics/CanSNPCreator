@@ -10,7 +10,7 @@ genome may sit at an internal node.
 """
 
 import re
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from collections.abc import Iterable, Mapping, Sequence
 
 SUPPORT_LABEL = re.compile(r"^\d+(\.\d+)?(/\d+(\.\d+)?)*$")
 #: Marks a token that was a quoted label, so that a quoted "(" or ":" is a
@@ -22,10 +22,10 @@ class HierarchyError(ValueError):
     """The hierarchy cannot be read, or is not a tree."""
 
 
-def _newick_tokens(text: str) -> List[str]:
+def _newick_tokens(text: str) -> list[str]:
     """Split Newick text into brackets, commas, the closing semicolon, labels
     and branch lengths, the latter kept with their leading colon."""
-    tokens: List[str] = []
+    tokens: list[str] = []
     index = 0
     text = text.strip()
     while index < len(text):
@@ -67,7 +67,7 @@ def _newick_tokens(text: str) -> List[str]:
     return tokens
 
 
-def _support_value(label: str) -> Optional[float]:
+def _support_value(label: str) -> float | None:
     """The support a numeric internal label carries, or None for a name."""
     if not SUPPORT_LABEL.match(label):
         return None
@@ -82,14 +82,14 @@ class Hierarchy:
     second root.
     """
 
-    def __init__(self, pairs: Iterable[Tuple[str, Optional[str]]]) -> None:
-        self.parents: Dict[str, Optional[str]] = {}
-        self.children: Dict[str, List[str]] = {}
-        self.order: List[str] = []
+    def __init__(self, pairs: Iterable[tuple[str, str | None]]) -> None:
+        self.parents: dict[str, str | None] = {}
+        self.children: dict[str, list[str]] = {}
+        self.order: list[str] = []
         # Read from a tree that carries them: the support of each internal
         # node as a fraction, and the length of the branch above each node.
-        self.support: Dict[str, float] = {}
-        self.lengths: Dict[str, float] = {}
+        self.support: dict[str, float] = {}
+        self.lengths: dict[str, float] = {}
 
         for child, parent in pairs:
             child = str(child).strip()
@@ -127,7 +127,7 @@ class Hierarchy:
                 f"the hierarchy has {len(roots)} roots where one is expected: "
                 f"{', '.join(sorted(roots))}")
 
-        reached: Set[str] = set()
+        reached: set[str] = set()
         stack = list(roots)
         while stack:
             node = stack.pop()
@@ -144,7 +144,7 @@ class Hierarchy:
     # -- constructors --------------------------------------------------------
 
     @classmethod
-    def from_child_parent(cls, pairs: Iterable[Tuple[str, Optional[str]]]) -> "Hierarchy":
+    def from_child_parent(cls, pairs: Iterable[tuple[str, str | None]]) -> "Hierarchy":
         """Build from (child, parent) pairs, as a repgenr hierarchy file lists them.
 
         The root is the node that appears only as a parent, so it needs no row
@@ -175,26 +175,26 @@ class Hierarchy:
             raise HierarchyError("the Newick string holds no nodes")
         structure = {"(", ")", ",", ";"}
 
-        def is_label(token: Optional[str]) -> bool:
+        def is_label(token: str | None) -> bool:
             return token is not None and (token.startswith(QUOTED) or (
                 token not in structure and not token.startswith(":")))
 
         # Generated names must not take a name the tree already uses.
         taken = {token.lstrip(QUOTED) for token in tokens if is_label(token)}
-        names_seen: Set[str] = set()
+        names_seen: set[str] = set()
 
-        pairs: List[Tuple[str, Optional[str]]] = []
-        support: Dict[str, float] = {}
-        lengths: Dict[str, float] = {}
+        pairs: list[tuple[str, str | None]] = []
+        support: dict[str, float] = {}
+        lengths: dict[str, float] = {}
         generated = 0
         position = 0
 
-        def peek() -> Optional[str]:
+        def peek() -> str | None:
             return tokens[position] if position < len(tokens) else None
 
         def parse_node() -> str:
             nonlocal position, generated
-            children: List[str] = []
+            children: list[str] = []
             if peek() == "(":
                 position += 1
                 while True:
@@ -268,7 +268,7 @@ class Hierarchy:
     # -- questions about the tree -------------------------------------------
 
     @property
-    def roots(self) -> List[str]:
+    def roots(self) -> list[str]:
         return [node for node, parent in self.parents.items() if parent is None]
 
     @property
@@ -276,9 +276,9 @@ class Hierarchy:
         return self.roots[0]
 
     @property
-    def nodes(self) -> List[str]:
+    def nodes(self) -> list[str]:
         """Every node, parents before their children."""
-        ordered: List[str] = []
+        ordered: list[str] = []
         stack = [self.root]
         while stack:
             node = stack.pop(0)
@@ -287,14 +287,14 @@ class Hierarchy:
         return ordered
 
     @property
-    def leaves(self) -> List[str]:
+    def leaves(self) -> list[str]:
         return [node for node in self.nodes if not self.children[node]]
 
-    def descendants(self, node: str) -> List[str]:
+    def descendants(self, node: str) -> list[str]:
         """Every node below this one, excluding itself."""
         if node not in self.parents:
             raise HierarchyError(f"the hierarchy has no node '{node}'")
-        found: List[str] = []
+        found: list[str] = []
         stack = list(self.children[node])
         while stack:
             current = stack.pop(0)
@@ -302,12 +302,12 @@ class Hierarchy:
             stack = self.children[current] + stack
         return found
 
-    def leaves_below(self, node: str) -> List[str]:
+    def leaves_below(self, node: str) -> list[str]:
         """The leaves at or below this node."""
         below = [node, *self.descendants(node)]
         return [name for name in below if not self.children[name]]
 
-    def path(self, node: str) -> List[str]:
+    def path(self, node: str) -> list[str]:
         """The nodes from the root down to this one, inclusive."""
         if node not in self.parents:
             raise HierarchyError(f"the hierarchy has no node '{node}'")
@@ -318,7 +318,7 @@ class Hierarchy:
             parent = self.parents[parent]
         return list(reversed(path))
 
-    def isolates(self, clusters: Mapping[str, Sequence[str]]) -> Dict[str, List[str]]:
+    def isolates(self, clusters: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
         """The isolates below each node.
 
         Args:
@@ -336,14 +336,14 @@ class Hierarchy:
                 f"the genome map names clusters that are not in the hierarchy: "
                 f"{', '.join(unknown)}")
 
-        isolates: Dict[str, List[str]] = {}
+        isolates: dict[str, list[str]] = {}
         for node in reversed(self.nodes):
             own = list(clusters.get(node, []))
             for child in self.children[node]:
                 own.extend(isolates[child])
             # Keep the first mention of each isolate, so that a cluster named at
             # two depths does not inflate the count.
-            seen: Set[str] = set()
+            seen: set[str] = set()
             isolates[node] = [name for name in own if not (name in seen or seen.add(name))]
         return isolates
 

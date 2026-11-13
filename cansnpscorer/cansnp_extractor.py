@@ -3,7 +3,6 @@
 import logging
 import os
 from datetime import datetime
-from typing import Dict, List
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import (
@@ -78,7 +77,7 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         logging.error(error)
         return 1
 
-    records: List[vcf.Record] = []
+    records: list[vcf.Record] = []
     gapped = 0
     for cansnp in cansnps:
         placed = mapping.locate(cansnp.column)
@@ -100,7 +99,7 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         logging.warning(
             f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
 
-    variable: Dict[str, List[int]] = {}
+    variable: dict[str, list[int]] = {}
     for column in flank_columns:
         placed_at = mapping.locate(column)
         if placed_at is not None:
@@ -109,7 +108,7 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         found.sort()
     distances = nearest_distances([(record.chrom, record.pos - 1) for record in records],
                                   variable)
-    for record, distance in zip(records, distances):
+    for record, distance in zip(records, distances, strict=True):
         record.info["NEAREST"] = str(min(distance, vcf.NEAREST_CAP)) if distance is not None \
             else str(vcf.NEAREST_CAP)
     logging.info(f"{len(flank_columns)} columns differ among the {len(placed)} genomes of the "

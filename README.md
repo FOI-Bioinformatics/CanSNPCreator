@@ -15,7 +15,7 @@ a scheme for
 
 ## Installation
 
-Python 3.9 or later; the package has no dependencies.
+Python 3.13 or later; the package has no dependencies.
 
 ```sh
 pip install git+https://github.com/FOI-Bioinformatics/CanSNPCreator.git
@@ -371,7 +371,7 @@ The tests build a small dataset with one canSNP planted per node, including a
 two-contig reference, a node whose genomes are two, a SNP crossing two
 branches, a tri-allelic column and a gapped one, and check that the planted
 canSNPs are recovered at the planted coordinates with the planted polarity. CI
-runs them on Python 3.9, 3.11 and 3.13.
+runs them on Python 3.13 and 3.14.
 
 Two tests use the CanSNPer2-data repository when it is checked out beside this
 one, and are skipped otherwise: one runs that repository's `validate.py` over

@@ -169,7 +169,7 @@ def test_a_position_disagreeing_with_the_reference_is_reported(written, dataset)
     findings = findings_of(outdir, dataset)
     reference_base = [finding for finding in findings if finding.category == "reference-base"]
     assert reference_base and reference_base[0].severity == PROBLEM
-    assert "A" == reference_base[0].node
+    assert reference_base[0].node == "A"
 
 
 def test_coordinates_taken_against_another_assembly_are_reported(written, dataset):

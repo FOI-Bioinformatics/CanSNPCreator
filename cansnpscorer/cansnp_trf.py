@@ -5,15 +5,14 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import List, Tuple
 
 TRF_EXECUTABLE = "trf"
 
 #: (sequence ID, 1-based start, 1-based end, period, copy number) per repeat.
-Repeat = Tuple[str, int, int, int, str]
+Repeat = tuple[str, int, int, int, str]
 
 
-def parse_ngs(text: str) -> List[Repeat]:
+def parse_ngs(text: str) -> list[Repeat]:
     """
     Read the repeats of Tandem Repeats Finder's -ngs output.
 
@@ -24,7 +23,7 @@ def parse_ngs(text: str) -> List[Repeat]:
     Raises:
         ValueError: If a repeat line comes before any sequence, or cannot be read.
     """
-    repeats: List[Repeat] = []
+    repeats: list[Repeat] = []
     sequence = None
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
@@ -45,7 +44,7 @@ def parse_ngs(text: str) -> List[Repeat]:
     return repeats
 
 
-def write_bed(repeats: List[Repeat], path: str) -> None:
+def write_bed(repeats: list[Repeat], path: str) -> None:
     """Write repeats as BED: 0-based, half open, in the order TRF met the sequences."""
     order = {}
     for sequence, *_rest in repeats:
