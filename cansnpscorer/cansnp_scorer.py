@@ -15,7 +15,7 @@ from cansnpscorer import (
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.kmers import DEFAULT_K
-from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, TERMS
+from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, PROFILES, TERMS
 
 
 def at_least(minimum: int):
@@ -77,12 +77,17 @@ def non_negative_float(text: str) -> float:
     return value
 
 
-def score_weights(settings):
-    """Turn --score-weight TERM=FACTOR arguments into a dictionary of weights."""
-    if not settings:
-        return dict(DEFAULT_WEIGHTS)
+def score_weights(settings, profile="assay"):
+    """Turn --score-weight TERM=FACTOR arguments into a dictionary of weights.
 
-    weights = {}
+    Without any, the weights are those of the profile. With some, the terms
+    not named keep the weight of 1 for the assay profile, as they always have,
+    and the profile's weight for any other.
+    """
+    if not settings:
+        return dict(PROFILES[profile][0])
+
+    weights = {} if profile == "assay" else dict(PROFILES[profile][0])
     for setting in settings:
         term, _, factor = setting.partition("=")
         if term not in TERMS:
@@ -219,15 +224,29 @@ def main():
                           help="How many bases on either side of a canSNP must be free of "
                                "variation among the scheme's genomes, and of a contig end, for "
                                "the full neighbour term. Default: 50.")
-    evaluate.add_argument("--cutoff", type=at_least(0), default=500,
+    evaluate.add_argument("--profile", choices=sorted(PROFILES), default="assay",
+                          help="What the scheme is for, which sets the weights and the cutoff "
+                               "used unless --score-weight and --cutoff give others. 'assay': "
+                               "every term, the gene term twice, cutoff 500. 'typing', for "
+                               "schemes typed from genome alignments: no GC term, the gene term "
+                               "once, and no cutoff, so that every node keeps the canSNPs it "
+                               "has and they are only ranked. Default: assay.")
+    evaluate.add_argument("--cutoff", type=at_least(0), default=None,
                           help=f"Only pass canSNPs scoring above this. The highest reachable "
-                               f"total is {MAXIMUM_SCORE} with the default weights, and the "
-                               f"default of 500 in practice requires the SNP to fall in a gene.")
+                               f"total is {MAXIMUM_SCORE} with the assay profile's weights, "
+                               f"whose default of 500 in practice requires the SNP to fall in "
+                               f"a gene. Default: that of --profile.")
+    evaluate.add_argument("--observed", default=None, metavar="TSV",
+                          help="The _snps.tsv table audit --typing-report wrote for a scheme "
+                               "exported from these canSNPs. CanSNPs that disagreed with their "
+                               "node, or had no base, in the genomes typed are ranked after "
+                               "the others of their node, ahead of the score.")
     evaluate.add_argument("--top-n", type=at_least(1), default=None,
                           help="Only pass the best this many canSNPs of each node.")
     evaluate.add_argument("--min-spacing", type=at_least(0), default=1000,
                           help="With --top-n, the fewest bases between two canSNPs passed for "
-                               "the same node, so that they do not share a locus. Default: 1000.")
+                               "the same node. Beyond it, canSNPs in different genes are taken "
+                               "before ones sharing a gene. Default: 1000.")
     evaluate.add_argument("--copy-kmer", type=at_least(0), default=DEFAULT_K, metavar="K",
                           help=f"Count how often the sequence around each canSNP occurs in the "
                                f"reference, with k-mers of this size on both strands, and rank "
@@ -273,7 +292,8 @@ def main():
                              "Default: 1.")
     export.add_argument("--min-spacing", type=at_least(0), default=1000,
                         help="The fewest bases between two canSNPs kept for the same node. "
-                             "Default: 1000.")
+                             "Beyond it, canSNPs in different genes are kept before ones "
+                             "sharing a gene. Default: 1000.")
     export.add_argument("--prune", action="store_true",
                         help="Leave out nodes that have no canSNP, instead of refusing to write "
                              "a scheme. Their children then hang from the nearest node that has "
@@ -328,6 +348,13 @@ def main():
                             "scheme at this many nodes or more: derived off the path they type "
                             "it to, or ancestral on it. Default: "
                             f"{GENOME_CONFLICTS}.")
+    audit.add_argument("--typing-report", default=None, metavar="PREFIX",
+                       help="With --alignment, type every genome with the scheme, by the "
+                            "rule of CanSNPer2 (one canSNP per node) and by the majority of "
+                            "each node's canSNPs, and write PREFIX_genomes.tsv, _snps.tsv, "
+                            "_nodes.tsv and _summary.tsv. No genome map is needed; with one, "
+                            "each call is compared with the node it gives. evaluate "
+                            "--observed reads the _snps.tsv table.")
     audit.add_argument("-o", "--output", default=None,
                        help="Also write the findings to this tab separated file.")
     audit.add_argument("--strict", action="store_true",
@@ -428,17 +455,18 @@ def run(args, parser, evaluate) -> int:
             genome_map=args.genome_map, output=args.output, min_called=args.min_called)
     if args.command == "evaluate":
         try:
-            weights = score_weights(args.score_weight)
+            weights = score_weights(args.score_weight, args.profile)
         except argparse.ArgumentTypeError as error:
             evaluate.error(str(error))
         return cansnp_evaluator.main(
             snps=args.snps, reference=args.reference, genes=args.genes, repeats=args.repeats,
             hierarchy=args.hierarchy, output=args.output, tandem_limit=args.tandem_limit,
-            gene_limit=args.gene_limit, gc_goal=args.gc_goal, cutoff=args.cutoff,
+            gene_limit=args.gene_limit, gc_goal=args.gc_goal,
+            cutoff=PROFILES[args.profile][1] if args.cutoff is None else args.cutoff,
             top_n=args.top_n, weights=weights, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
             flank=args.flank, gc_tolerance=args.gc_tolerance, spacing=args.min_spacing,
-            copy_kmer=args.copy_kmer)
+            copy_kmer=args.copy_kmer, observed=args.observed)
     if args.command == "export":
         return cansnp_export.main(
             scores=args.scores, hierarchy=args.hierarchy, reference=args.reference,
@@ -456,7 +484,7 @@ def run(args, parser, evaluate) -> int:
             min_clade_size=args.min_clade_size, min_clade_snps=args.min_clade_snps,
             tree=args.tree, members=args.members, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
-            genome_conflicts=args.genome_conflicts)
+            genome_conflicts=args.genome_conflicts, typing_report=args.typing_report)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,

@@ -376,6 +376,14 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
                  if snps_per_node is not None and len(chosen[path[-1]]) < snps_per_node]
         logging.info(
             f"The canSNP set holds {sum(counts)} canSNPs, {counts[0]} to {counts[-1]} per node")
+        shared = [path[-1] for path in paths
+                  if len({(score.contig, score.locus) for score in chosen[path[-1]]
+                          if score.locus})
+                  < sum(1 for score in chosen[path[-1]] if score.locus)]
+        if shared:
+            logging.warning(
+                f"{len(shared)} nodes hold canSNPs that share a gene, which one deletion or "
+                f"recombinant segment would take together: {', '.join(shared[:5])}")
         if short:
             logging.warning(
                 f"{len(short)} nodes have fewer than {snps_per_node} canSNPs that passed and lie "

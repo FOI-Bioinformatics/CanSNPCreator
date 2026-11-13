@@ -1,9 +1,10 @@
 import logging
 import math
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import groupby
 
 from cansnpscorer.helpers.genetic_code import codon_table
 
@@ -416,41 +417,109 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
     return cansnps
 
 
+def reliability(score):
+    """What is known of how reliably a SNP can be called, most important first:
+    whether its sequence occurs more than once in the reference; in how many
+    genomes of a typing report it disagreed with its node; whether it was
+    observed in such a report at all, since a SNP that was typed with and
+    held is better known than one that was never tried; and in how many
+    genomes, of the alignment and of a typing report, it has no base.
+
+    The last two only compare like with like when every candidate of a node
+    was observed, which a scheme exported with every canSNP of each node
+    gives; a SNP that was not observed has no observed missing bases to
+    count."""
+    return (getattr(score, "copies", 1) > 1, getattr(score, "discordant", 0),
+            getattr(score, "observed_genomes", 0) == 0,
+            getattr(score, "missing", 0) + getattr(score, "observed_missing", 0))
+
+
 def ranking(score):
-    """The order SNPs of a node are taken in: those in sequence that occurs once
-    in the reference first, then those with fewer genomes missing a base, then
-    the best total, then by contig and position, so that the same scores
-    always give the same choice."""
-    return (getattr(score, "copies", 1) > 1, getattr(score, "missing", 0), -score.total,
-            score.contig, score.position)
+    """The order SNPs of a node are taken in: by :func:`reliability` first, which
+    is what was observed of the SNP, then by the best total, which is what its
+    context in the reference suggests, then by contig and position, so that
+    the same scores always give the same choice."""
+    return (*reliability(score), -score.total, score.contig, score.position)
 
 
 def select_per_node(scores, top=None, spacing=0):
-    """The best ``top`` SNPs of each node, at least ``spacing`` bases apart.
+    """The best ``top`` SNPs of each node, chosen to fail independently.
 
-    The SNPs of a node are taken in order of :func:`ranking`, passing over any
-    that lie within ``spacing`` bases of one already taken, so that those
-    chosen for a node do not share a locus that one deletion or recombination
-    event could remove. With ``top`` None every SNP so spaced is taken.
+    The first SNP taken for a node is the first by :func:`ranking`, the one a
+    scheme of one SNP per node carries. The others are taken so that one event
+    removes as few of the set as possible. Among SNPs of equal reliability:
+
+    1. a SNP in a gene none of the set lies in is taken before one that shares
+       a gene with it, whatever their totals, since a deletion or a recombinant
+       segment takes a gene's SNPs together;
+    2. among those, the best total is taken first, and of equal totals one on
+       a contig the set does not yet use, which spreads a set over replicons
+       without giving up any score;
+    3. only then are SNPs sharing a gene with the set taken, by ranking.
+
+    No SNP within ``spacing`` bases of one already taken is taken at all. SNPs
+    of lower reliability are considered only once those above them are used
+    up. With ``top`` None every SNP so spaced is taken.
 
     Returns:
-        For each node, the chosen SNPs, best first.
+        For each node, the chosen SNPs in the order they were taken.
     """
     by_node = defaultdict(list)
     for score in scores:
         by_node[score.node].append(score)
-    chosen = {}
-    for node, node_scores in by_node.items():
-        picked = []
-        for score in sorted(node_scores, key=ranking):
-            if top is not None and len(picked) >= top:
-                break
-            if any(other.contig == score.contig
-                   and abs(other.position - score.position) < spacing for other in picked):
-                continue
-            picked.append(score)
-        chosen[node] = picked
-    return chosen
+    return {node: select_set(node_scores, top, spacing)
+            for node, node_scores in by_node.items()}
+
+
+def select_set(node_scores, top=None, spacing=0):
+    """The SNPs chosen for one node, as :func:`select_per_node` describes."""
+    picked = []
+    positions = defaultdict(list)  # per contig, sorted
+    loci = set()
+
+    def full():
+        return top is not None and len(picked) >= top
+
+    def free(score):
+        taken = positions.get(score.contig)
+        if not taken or spacing <= 0:
+            return True
+        at = bisect_left(taken, score.position)
+        return not ((at < len(taken) and taken[at] - score.position < spacing)
+                    or (at > 0 and score.position - taken[at - 1] < spacing))
+
+    def new_locus(score):
+        locus = getattr(score, "locus", "")
+        return not locus or (score.contig, locus) not in loci
+
+    def take(score):
+        picked.append(score)
+        taken = positions[score.contig]
+        taken.insert(bisect_left(taken, score.position), score.position)
+        if getattr(score, "locus", ""):
+            loci.add((score.contig, score.locus))
+
+    for _tier, tier in groupby(sorted(node_scores, key=ranking), key=reliability):
+        sharing = []
+        for _total, same in groupby(tier, key=lambda score: score.total):
+            waiting = []
+            for score in same:
+                if (not full() and new_locus(score) and score.contig not in positions
+                        and free(score)):
+                    take(score)
+                else:
+                    waiting.append(score)
+            for score in waiting:
+                if not full() and new_locus(score) and free(score):
+                    take(score)
+                else:
+                    sharing.append(score)
+        for score in sharing:
+            if not full() and free(score):
+                take(score)
+        if full():
+            break
+    return picked
 
 
 def apply_filters(scores, cutoff, top=None, spacing=0):
@@ -466,7 +535,7 @@ def apply_filters(scores, cutoff, top=None, spacing=0):
 
     Args:
         scores: Scored SNPs, each with a total, a node and a list of filters.
-        cutoff: A score must be above this to pass.
+        cutoff: A score must be above this to pass; None applies no cutoff.
         top: How many of the best scores of each node pass. All of them if None.
         spacing: The fewest bases between two SNPs taken for the same node.
 
@@ -474,7 +543,7 @@ def apply_filters(scores, cutoff, top=None, spacing=0):
         The same scores, in the order given.
     """
     for score in scores:
-        if score.total <= cutoff and "LowScore" not in score.filters:
+        if cutoff is not None and score.total <= cutoff and "LowScore" not in score.filters:
             score.filters.append("LowScore")
 
     if top is not None:
@@ -512,7 +581,7 @@ def summarize_scores(nodes_data, scores):
     without = [node for node, count in node_counts.items() if not count]
     if without:
         logging.warning(
-            f"{len(without)} of {len(node_counts)} nodes have no canSNP above the cutoff, so "
+            f"{len(without)} of {len(node_counts)} nodes have no canSNP that passed, so "
             f"they cannot be typed: {', '.join(without)}")
 
     # CanSNPer2 calls a node only when enough of the SNPs on its path are

@@ -40,6 +40,19 @@ TERMS = ("neighbour_score", "gc_score", "tandem_score", "gene_score", "mutation_
 #: which is the behaviour the tool has had since the scoring was introduced.
 DEFAULT_WEIGHTS: dict[str, float] = {"gene_score": 2.0}
 
+#: Weights for a scheme typed from genome alignments rather than by an assay.
+#: The GC content around a SNP matters to a primer and not to an alignment, so
+#: that term is left out, and the gene term counts once: a SNP in a gene is
+#: more likely to be present in a new genome, which is worth one term, not two.
+TYPING_WEIGHTS: dict[str, float] = {"gc_score": 0.0, "gene_score": 1.0}
+
+#: The weights of each profile, and the cutoff it applies when none is given;
+#: None applies no cutoff, so that every node keeps the canSNPs it has.
+PROFILES: dict[str, tuple[dict[str, float], int | None]] = {
+    "assay": (DEFAULT_WEIGHTS, 500),
+    "typing": (TYPING_WEIGHTS, None),
+}
+
 #: The highest total a SNP can reach with the default weights.
 MAXIMUM_SCORE = round(100 * sum(DEFAULT_WEIGHTS.get(term, 1.0) for term in TERMS))
 
@@ -218,6 +231,19 @@ class ScoredSnp:
     copies: int = 1
     """Highest number of times a k-mer holding the SNP occurs in the reference, both
     strands counted; above 1 the SNP is ranked after those in unique sequence."""
+    locus: str = ""
+    """The gene the SNP lies in, as the first and last base of its interval on the
+    contig; empty outside every gene. Two canSNPs of a node in one locus can be
+    lost together, so a set is chosen from different loci where it can be."""
+    discordant: int = 0
+    """Genomes of a typing report in which the SNP disagreed with the other canSNPs
+    of its node or with the genome's path; fewer is ranked first."""
+    observed_genomes: int = 0
+    """Genomes of the typing report the SNP was observed in; 0 when it was not
+    in the scheme the report typed with. Where some canSNPs of a node were
+    observed and found sound, they are ranked before those never observed."""
+    observed_missing: int = 0
+    """Genomes of a typing report without a base at the SNP; counted with ``missing``."""
 
     @property
     def passed(self) -> bool:

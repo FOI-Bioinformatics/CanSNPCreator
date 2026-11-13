@@ -5,7 +5,7 @@ from bisect import bisect_right
 from collections.abc import Sequence
 
 from cansnpscorer import vcf
-from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
+from cansnpscorer.helpers.data_utils import apply_filters, search, summarize_scores
 from cansnpscorer.helpers.file_utils import (
     merge_intervals,
     read_contig_aliases,
@@ -18,6 +18,7 @@ from cansnpscorer.helpers.kmers import DEFAULT_K, copy_numbers
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, contexts_for, score_snp
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
+from cansnpscorer.typing_report import read_observed
 from cansnpscorer.validate import check_annotations, report
 
 NUCLEOTIDES = frozenset("ACGT")
@@ -200,8 +201,13 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
          weights: dict[str, float] | None = None, masks=None,
          masks_concatenated=False, contig_aliases=None, flank=50, gc_tolerance=0.1,
-         spacing=1000, copy_kmer=DEFAULT_K) -> int:
+         spacing=1000, copy_kmer=DEFAULT_K, observed=None) -> int:
     """Score the canSNPs extract found. Returns a process exit status.
+
+    ``cutoff`` None applies no cutoff. ``observed`` is the _snps.tsv table of
+    a typing report of a scheme holding these canSNPs: those that disagreed
+    with their node, or had no base, in its genomes are ranked after the
+    others of their node.
 
     With ``copy_kmer`` above 0, the copy number of each canSNP's context is
     counted with k-mers of that size, and canSNPs in repeated sequence are
@@ -221,6 +227,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
                                                  aliases)
         masked = read_masks(masks, genome, masks_concatenated, aliases) if masks else {}
         tree = read_hierarchy(hierarchy) if hierarchy else None
+        behaviour = read_observed(observed) if observed else {}
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -265,6 +272,34 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         logging.info(f"{repeated} canSNPs lie in sequence that occurs more than once in the "
                      f"reference ({copy_kmer}-mers, both strands); within a node they are "
                      f"ranked after those in unique sequence")
+    for score in scores:
+        _distance, gene = search(score.position - 1, gene_intervals.get(score.contig, []), 0)
+        if gene is not None:
+            score.locus = f"{gene[0] + 1}-{gene[1] + 1}"
+    if behaviour:
+        matched = 0
+        for score in scores:
+            seen = behaviour.get(
+                (score.node, genome.contig(score.contig).start + score.position))
+            if seen is not None:
+                matched += 1
+                score.discordant, score.observed_missing = seen.discordant, seen.missing
+                score.observed_genomes = seen.genomes
+        logging.info(
+            f"{matched} of {len(scores)} canSNPs were observed in the typing report, "
+            f"{sum(1 for s in scores if s.discordant)} of them disagreeing with their node in "
+            f"some genome and {sum(1 for s in scores if s.observed_missing)} lacking a base in "
+            f"some; within a node these are ranked after the others")
+        if 0 < matched < len(scores):
+            logging.warning(
+                f"{len(scores) - matched} canSNPs were not in the scheme the report typed "
+                f"with. Within a node they are ranked after the observed ones that held and "
+                f"before those that did not; for a ranking of every candidate, type with a "
+                f"scheme exported with --snps-per-node all")
+        if not matched:
+            logging.warning(
+                f"No canSNP of {observed} is among those scored; the table should come from "
+                f"a scheme exported from these canSNPs against the same reference")
     incomplete = sum(1 for score in scores if score.missing)
     if incomplete:
         logging.info(f"{incomplete} canSNPs lack a base in some genomes; within a node they "
@@ -279,14 +314,14 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     apply_filters(scores, cutoff, top_n, spacing)
     passing = [score for score in scores if score.passed]
     logging.info(
-        f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs; {len(passing)} pass the "
-        f"cutoff of {cutoff}" + (f" and the best {top_n} per node, at least {spacing} bases "
+        f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs; {len(passing)} pass "
+        + (f"the cutoff of {cutoff}" if cutoff is not None else "with no cutoff") + (f" and the best {top_n} per node, at least {spacing} bases "
                                  f"apart" if top_n else ""))
 
     if tree is not None:
         summarize_scores(tree.nodes, passing)
 
     written = vcf.write_scores(output, scores, genome, reference, cutoff, top_n, weights,
-                               copies=bool(copy_kmer))
+                               copies=bool(copy_kmer), observed=bool(behaviour))
     logging.info(f"Wrote {written} scored canSNPs to {output}")
     return 0
