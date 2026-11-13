@@ -14,6 +14,7 @@ from cansnpscorer.helpers.file_utils import (
     read_intervals,
     reference_parser,
 )
+from cansnpscorer.helpers.kmers import DEFAULT_K, copy_numbers
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, contexts_for, score_snp
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
@@ -199,8 +200,13 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
          tandem_limit=50, gene_limit=0, gc_goal=0.5, cutoff=0, top_n=None,
          weights: dict[str, float] | None = None, masks=None,
          masks_concatenated=False, contig_aliases=None, flank=50, gc_tolerance=0.1,
-         spacing=1000) -> int:
-    """Score the canSNPs extract found. Returns a process exit status."""
+         spacing=1000, copy_kmer=DEFAULT_K) -> int:
+    """Score the canSNPs extract found. Returns a process exit status.
+
+    With ``copy_kmer`` above 0, the copy number of each canSNP's context is
+    counted with k-mers of that size, and canSNPs in repeated sequence are
+    ranked after the others of their node.
+    """
     weights = dict(DEFAULT_WEIGHTS) if weights is None else weights
     try:
         genome = reference_parser(reference)
@@ -250,6 +256,15 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     missing = {(snp.contig, snp.position): snp.missing for snp in parsed}
     for score in scores:
         score.missing = missing.get((score.contig, score.position), 0)
+    if copy_kmer:
+        copies = copy_numbers(genome, [(score.contig, score.position - 1) for score in scores],
+                              copy_kmer)
+        for score in scores:
+            score.copies = copies[(score.contig, score.position - 1)]
+        repeated = sum(1 for score in scores if score.copies > 1)
+        logging.info(f"{repeated} canSNPs lie in sequence that occurs more than once in the "
+                     f"reference ({copy_kmer}-mers, both strands); within a node they are "
+                     f"ranked after those in unique sequence")
     incomplete = sum(1 for score in scores if score.missing)
     if incomplete:
         logging.info(f"{incomplete} canSNPs lack a base in some genomes; within a node they "
@@ -271,6 +286,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     if tree is not None:
         summarize_scores(tree.nodes, passing)
 
-    written = vcf.write_scores(output, scores, genome, reference, cutoff, top_n, weights)
+    written = vcf.write_scores(output, scores, genome, reference, cutoff, top_n, weights,
+                               copies=bool(copy_kmer))
     logging.info(f"Wrote {written} scored canSNPs to {output}")
     return 0

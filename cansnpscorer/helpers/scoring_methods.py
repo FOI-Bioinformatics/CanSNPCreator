@@ -215,6 +215,9 @@ class ScoredSnp:
     """The FILTER codes it failed: LowScore, NotTop or Masked. Empty when it passed."""
     missing: int = 0
     """Genomes of the alignment without a base at the SNP; fewer is ranked first."""
+    copies: int = 1
+    """Highest number of times a k-mer holding the SNP occurs in the reference, both
+    strands counted; above 1 the SNP is ranked after those in unique sequence."""
 
     @property
     def passed(self) -> bool:

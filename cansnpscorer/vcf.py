@@ -112,6 +112,16 @@ MISSING = Info("MISSING", "1", "Integer",
                "Number of genomes of the alignment without a base (gap or N) at the SNP; "
                "0 unless extract was run with --min-called below 1")
 
+COPIES = Info("COPIES", "1", "Integer",
+              "Highest number of times a k-mer holding the SNP occurs in the reference, both "
+              "strands counted; above 1 the SNP lies in repeated sequence and is ranked after "
+              "those in unique sequence. 0 when no k-mer of A, C, G and T holds it")
+
+
+def copies_of(record: "Record") -> int:
+    value = record.info.get("COPIES")
+    return int(value) if value not in (None, "") else 1
+
 
 @dataclass
 class Record:
@@ -437,8 +447,9 @@ def read_snps(path: str, reference: Reference) -> list[Snp]:
 
 
 def write_scores(path: str, scores, reference: Reference, reference_path: str, cutoff: int,
-                 top: int | None, weights: dict[str, float]) -> int:
-    """Write scored canSNPs, each with its terms and the filters it failed."""
+                 top: int | None, weights: dict[str, float], copies: bool = False) -> int:
+    """Write scored canSNPs, each with its terms and the filters it failed;
+    with ``copies``, with the copy number of their context as well."""
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS, TERMS
 
     records = []
@@ -449,12 +460,15 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str, c
         for term in TERMS:
             record.info[INFO_KEYS[term]] = str(score.terms[term])
         record.info["MISSING"] = str(getattr(score, "missing", 0))
+        if copies:
+            record.info["COPIES"] = str(getattr(score, "copies", 1))
         record.filters = list(score.filters)
         records.append(record)
 
     weighting = ",".join(f"{term}={weights.get(term, 1.0):g}" for term in TERMS)
     header = header_lines(reference, reference_path, "evaluate",
-                          [NODE, ANCESTRAL, SCORE, *term_infos(), MISSING],
+                          [NODE, ANCESTRAL, SCORE, *term_infos(), MISSING,
+                           *([COPIES] if copies else [])],
                           score_filters(cutoff, top),
                           [f"##CanSNPCreatorWeights={weighting}"])
     return write(path, header, records)
@@ -483,7 +497,8 @@ def read_scores(path: str, reference: Reference | None = None):
                 total=int(record.info["SCORE"]),
                 terms={term: int(record.info[key]) for term, key in INFO_KEYS.items()},
                 derived=record.derived, ancestral=record.ancestral,
-                filters=list(record.filters), missing=missing_of(record)))
+                filters=list(record.filters), missing=missing_of(record),
+                copies=copies_of(record)))
         except (KeyError, TypeError, ValueError):
             raise VcfError(
                 f"{path}: {record.chrom}:{record.pos} lacks a whole number score") from None

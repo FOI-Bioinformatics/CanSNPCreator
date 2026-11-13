@@ -105,6 +105,10 @@ both as VCF 4.3:
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
   `GENE`, `MUTATION`), and records the weights in a `##CanSNPCreatorWeights`
   line.
+- `INFO/COPIES`, from `evaluate`, is the highest number of times a k-mer
+  holding the SNP occurs in the reference, both strands counted: 1 in unique
+  sequence, more in a repeat, 0 when every such k-mer holds a base other than
+  A, C, G or T.
 - A canSNP that fails is kept, with a `FILTER` code: `LowScore` (not above
   `--cutoff`), `NotTop` (not among the `--top-n` best of its node that lie
   `--min-spacing` apart) or `Masked` (in a region given with `--masks`).
@@ -186,11 +190,29 @@ distance to the other SNPs of the file, which only sees the strict core. In a
 set of 91 *Brucella* genomes that missed variation within 25 bases of more
 than half of the canSNPs.
 
-`--top-n` passes the best N canSNPs of each node. They are taken in order of
-score, passing over any within `--min-spacing` bases (default 1000) of one
-already taken, so that the canSNPs of a node do not share a locus that one
-deletion or recombination event could remove. Equal scores are taken in order
-of contig and position.
+`evaluate` also counts how often the sequence around each canSNP occurs in the
+reference: every k-mer of `--copy-kmer` bases (default 31) that holds the SNP
+is looked up on both strands, and `INFO/COPIES` gives the highest count. A
+canSNP in repeated sequence, such as an rRNA operon, an insertion sequence or a
+paralogous gene, is harder to align to the right copy in a query genome. In
+1,229 *Brucella* genomes left out of a scheme's tree, the 0.2% of candidates in
+repeated 31-mers lacked a base three times as often as the others, and
+disagreed with the other canSNPs of their node three times as often. Such
+canSNPs are kept, and ranked after those in unique sequence. `--copy-kmer 0`
+leaves the count out. Counting 187,000 candidates on a 3.4 Mbp reference takes
+about five seconds and 0.7 GB of memory.
+
+Within a node, canSNPs are taken in this order: unique sequence first, then
+fewer genomes without a base (`INFO/MISSING`), then the higher score, then by
+contig and position. In the same *Brucella* genomes, ranking further by how
+consistently each candidate behaved in the held-out genomes changed the rank-1
+SNP of few nodes and did not lower how often it disagreed with its node, so
+this order is kept.
+
+`--top-n` passes the best N canSNPs of each node, in that order, passing over
+any within `--min-spacing` bases (default 1000) of one already taken, so that
+the canSNPs of a node do not share a locus that one deletion or recombination
+event could remove.
 
 ### Export
 
@@ -307,6 +329,24 @@ exactly that node's genomes (`replacement`), or that none does
 (`unsupported-node`); a node that one site alone supports (`single-site`); and
 a SNP that every genome carries, which nothing tests without an outgroup
 (`no-outgroup`).
+
+Each genome is also typed by its own canSNPs. A node is derived in a genome
+when more of its canSNPs carry the derived base than the ancestral one, and the
+genome's path ends at the deepest derived node with no ancestral node above it.
+Two findings come from this. `misplaced` lists genomes whose canSNPs agree with
+each other but lead to another node than the genome map gives, grouped by both
+nodes. A genome map that places every member of a RepGenR2 cluster at its
+representative's node gives many of these when the clusters are coarser than
+the scheme: in a *Brucella* scheme of 91 nodes, 941 of 1,229 cluster members
+were typed at another node than their representative: 345 above it, 234
+below it and 362 on another branch. The finding gives the number of canSNPs the typing rests on, since
+with one canSNP at a node the same pattern comes from a homoplastic SNP.
+`discordant-genome` lists genomes that contradict the scheme at
+`--genome-conflicts` nodes or more (default 3): derived off their path, or
+ancestral on it. Base errors, contamination or a mixed assembly show
+themselves this way, and such genomes are weak evidence against a SNP. The
+`not-canonical` and `homoplasy` findings still count every genome, so a
+`misplaced` or `discordant-genome` finding can explain them.
 
 It also reads every variable site at which all genomes have one of two bases,
 and reports groups of genomes that share SNPs no other genome carries and that

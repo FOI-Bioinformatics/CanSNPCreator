@@ -402,10 +402,12 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
 
 
 def ranking(score):
-    """The order SNPs of a node are taken in: those with fewer genomes missing
-    a base first, then the best total, then by contig and position, so that
-    the same scores always give the same choice."""
-    return (getattr(score, "missing", 0), -score.total, score.contig, score.position)
+    """The order SNPs of a node are taken in: those in sequence that occurs once
+    in the reference first, then those with fewer genomes missing a base, then
+    the best total, then by contig and position, so that the same scores
+    always give the same choice."""
+    return (getattr(score, "copies", 1) > 1, getattr(score, "missing", 0), -score.total,
+            score.contig, score.position)
 
 
 def select_per_node(scores, top=None, spacing=0):

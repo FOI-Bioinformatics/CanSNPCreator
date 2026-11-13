@@ -12,7 +12,9 @@ from cansnpscorer import (
     cansnp_tree,
     cansnp_trf,
 )
+from cansnpscorer.alignment_audit import GENOME_CONFLICTS
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
+from cansnpscorer.helpers.kmers import DEFAULT_K
 from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, MAXIMUM_SCORE, TERMS
 
 
@@ -226,6 +228,11 @@ def main():
     evaluate.add_argument("--min-spacing", type=at_least(0), default=1000,
                           help="With --top-n, the fewest bases between two canSNPs passed for "
                                "the same node, so that they do not share a locus. Default: 1000.")
+    evaluate.add_argument("--copy-kmer", type=at_least(0), default=DEFAULT_K, metavar="K",
+                          help=f"Count how often the sequence around each canSNP occurs in the "
+                               f"reference, with k-mers of this size on both strands, and rank "
+                               f"canSNPs in repeated sequence after the others of their node. "
+                               f"0 turns the count off. Default: {DEFAULT_K}.")
     evaluate.add_argument("--score-weight", action="append", metavar="TERM=FACTOR",
                           help=f"Weight one score term before the terms are summed. Terms: "
                                f"{', '.join(TERMS)}. Repeatable. Default: "
@@ -315,6 +322,12 @@ def main():
     audit.add_argument("--min-clade-snps", type=at_least(1), default=1,
                        help="Report a clade the scheme does not resolve only when at least this "
                             "many SNPs mark it. Default: 1.")
+    audit.add_argument("--genome-conflicts", type=at_least(1), default=GENOME_CONFLICTS,
+                       metavar="N",
+                       help="With --alignment, report a genome whose canSNPs contradict the "
+                            "scheme at this many nodes or more: derived off the path they type "
+                            "it to, or ancestral on it. Default: "
+                            f"{GENOME_CONFLICTS}.")
     audit.add_argument("-o", "--output", default=None,
                        help="Also write the findings to this tab separated file.")
     audit.add_argument("--strict", action="store_true",
@@ -424,7 +437,8 @@ def run(args, parser, evaluate) -> int:
             gene_limit=args.gene_limit, gc_goal=args.gc_goal, cutoff=args.cutoff,
             top_n=args.top_n, weights=weights, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
-            flank=args.flank, gc_tolerance=args.gc_tolerance, spacing=args.min_spacing)
+            flank=args.flank, gc_tolerance=args.gc_tolerance, spacing=args.min_spacing,
+            copy_kmer=args.copy_kmer)
     if args.command == "export":
         return cansnp_export.main(
             scores=args.scores, hierarchy=args.hierarchy, reference=args.reference,
@@ -441,7 +455,8 @@ def run(args, parser, evaluate) -> int:
             alignment=args.alignment, genome_map=args.genome_map,
             min_clade_size=args.min_clade_size, min_clade_snps=args.min_clade_snps,
             tree=args.tree, members=args.members, masks=args.masks,
-            masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases)
+            masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
+            genome_conflicts=args.genome_conflicts)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,
