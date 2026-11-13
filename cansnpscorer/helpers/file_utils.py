@@ -319,11 +319,14 @@ class GeneModel:
     strand, phase). ``sequences`` holds the sequences a ##FASTA section
     carries, as Prokka and Bakta write them, by which the annotated sequences
     can be matched to the reference's contigs when their names differ.
+    ``loci`` holds each gene on its own as (start, end), sorted and not
+    joined, which tells one gene from the next where they abut or overlap.
     """
 
     genes: dict[str, list[tuple[int, int]]]
     cds: dict[str, list[tuple[int, int, str, int]]]
     sequences: dict[str, str] = field(default_factory=dict)
+    loci: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
 
 
 def gff3_attributes(text: str) -> dict[str, str]:
@@ -356,6 +359,7 @@ def read_gff3(gff_file: str) -> GeneModel:
     """
     logging.info(f"Reading genes from {gff_file}")
     genes: dict[str, list[tuple[int, int, str]]] = {}
+    features: dict[str, dict[str, set[tuple[int, int]]]] = {}
     cds: dict[str, list[tuple[int, int, str, int]]] = {}
     sequences: dict[str, list[str]] = {}
     pseudo = 0
@@ -398,6 +402,8 @@ def read_gff3(gff_file: str) -> GeneModel:
             sequence = unquote(fields[GFF_SEQID])
             strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
             genes.setdefault(sequence, []).append((start, end, strand))
+            features.setdefault(sequence, {}).setdefault(fields[GFF_TYPE], set()).add(
+                (start, end))
             if fields[GFF_TYPE] != "CDS":
                 continue
             phase = fields[GFF_PHASE]
@@ -433,7 +439,12 @@ def read_gff3(gff_file: str) -> GeneModel:
         f"{sum(len(found) for found in cds.values())} CDS with a reading frame, over "
         f"{len(genes)} sequences from {gff_file}"
         + (f", and {len(sequences)} sequences after ##FASTA" if sequences else ""))
-    return GeneModel(genes=merged, cds=cds,
+    # Each gene on its own, for telling which gene a SNP lies in: the gene
+    # features where the file has them, as NCBI and Bakta write a gene with
+    # its CDS, and the CDS features where it does not, as Prokka can.
+    loci = {sequence: sorted(found.get("gene") or found.get("CDS", ()))
+            for sequence, found in features.items()}
+    return GeneModel(genes=merged, cds=cds, loci=loci,
                      sequences={key: "".join(value) for key, value in sequences.items()})
 
 

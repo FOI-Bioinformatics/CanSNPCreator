@@ -455,6 +455,11 @@ class Match:
     """Whether the match is the genomes outside ``clade`` rather than inside it."""
     group: frozenset[str] = frozenset()
     """The genomes the node was matched to."""
+    uncalled: frozenset[str] = frozenset()
+    """Genomes of the tree without a base at the SNP the match rests on, which
+    therefore say nothing about whether they belong to the node."""
+    rank: int = 1
+    """The rank of the node's canSNP the match rests on."""
 
     @property
     def described(self) -> str:
@@ -537,24 +542,21 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         raise ValueError(
             f"the scheme annotates no SNP on genome '{genome}'; it names "
             f"{', '.join(annotated) or 'none'}")
-    snps = {}
-    for snp in scheme.snps:
+    # Every canSNP of a node is tried, best rank first, and the one that
+    # matches a side of a branch best is kept: one homoplastic or uncalled
+    # canSNP then does not misplace a node whose other canSNPs mark it.
+    snps: dict[str, list] = {}
+    for snp in sorted(scheme.checked_snps, key=lambda snp: (snp.rank, snp.line)):
         if genome is not None and snp.genome != genome:
             continue
-        snps.setdefault(snp.node, snp)
+        snps.setdefault(snp.node, []).append(snp)
 
-    for node in scheme.hierarchy.nodes:
-        snp = snps.get(node)
-        if snp is None:
-            matches[node] = Match(node, reason="no SNP for this node")
-            continue
+    def match_snp(node: str, snp) -> Match:
         if not 1 <= snp.position <= reference.length:
-            matches[node] = Match(node, reason="the position is outside the reference")
-            continue
+            return Match(node, reason="the position is outside the reference")
         column = mapping.to_column(snp.position - 1)
         if column is None:
-            matches[node] = Match(node, reason="the position is not aligned")
-            continue
+            return Match(node, reason="the position is not aligned")
 
         called: set[str] = set()
         carriers: set[str] = set()
@@ -565,8 +567,7 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
                 if base == snp.derived.upper():
                     carriers.add(record)
         if not carriers:
-            matches[node] = Match(node, reason="no genome of the tree carries the derived base")
-            continue
+            return Match(node, reason="no genome of the tree carries the derived base")
 
         # Count, for every node of the tree, the genomes below it that have a
         # base here and those that carry the derived one. Each branch splits
@@ -589,13 +590,19 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         for tree_node in tree.nodes:
             inside_called, inside_carriers = below_called[tree_node], below_carriers[tree_node]
             sides = [(inside_called, inside_carriers, 0)]
-            # The genomes outside one leaf are a side only of the branch to
-            # that leaf, which every tree has; it says nothing about clades, and
-            # on an unresolved tree it would stand in for one.
-            if tree_node != tree.root and tree.children[tree_node]:
-                sides.append((n_called - inside_called, n_carriers - inside_carriers, 1))
+            # The genomes outside a clade are the other side of its branch.
+            # Those outside one leaf are a side every tree has, which says
+            # nothing about clades, and on an unresolved tree would stand in
+            # for one; they are taken only as an exact match, as when the tree
+            # is unrooted and one outgroup genome lies outside the scheme's
+            # root, and rank after a clade that matches as well.
+            if tree_node != tree.root:
+                sides.append((n_called - inside_called, n_carriers - inside_carriers,
+                              1 if tree.children[tree_node] else 2))
             for side_called, shared, outside in sides:
                 if not shared:
+                    continue
+                if outside == 2 and not (shared == n_carriers == side_called):
                     continue
                 index = shared / (side_called + n_carriers - shared)
                 size = (len(clades[tree_node]) if not outside
@@ -611,14 +618,24 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         genomes = group & called
         match = Match(node, clade, index, len(carriers), len(genomes & carriers),
                       len(genomes - carriers), len(carriers - genomes),
-                      outside=outside, group=group)
+                      outside=outside, group=group, uncalled=frozenset(in_tree - called),
+                      rank=snp.rank)
         if index < min_match:
             match.reason = f"the best clade matches with a Jaccard index of {index:.2f} only"
             match.clade = None
         elif outside:
             match.reason = (f"matches the genomes outside the tree's clade {clade}, so the tree "
                             f"is rooted inside this node's clade")
-        matches[node] = match
+        return match
+
+    for node in scheme.hierarchy.nodes:
+        if node not in snps:
+            matches[node] = Match(node, reason="no SNP for this node")
+            continue
+        tried = [match_snp(node, snp) for snp in snps[node]]
+        # A matched clade before none, then the higher index, then the better rank.
+        matches[node] = min(tried, key=lambda match: (match.clade is None, -match.jaccard,
+                                                      match.rank))
 
     for node, match in matches.items():
         if match.clade is None:
@@ -644,8 +661,10 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     for node in scheme.hierarchy.nodes:
         parent = scheme.hierarchy.parents[node]
         child_match, parent_match = matches[node], matches.get(parent) if parent else None
+        # Genomes without a base at the parent's SNP may belong to it: only a
+        # genome called there and left outside contradicts the scheme.
         if child_match.clade and parent_match and parent_match.clade \
-                and not child_match.group <= parent_match.group:
+                and not child_match.group <= parent_match.group | parent_match.uncalled:
             findings.append(problem(
                 MODIFY, "placement-order", node,
                 f"the node matches {child_match.described}, which is not inside "

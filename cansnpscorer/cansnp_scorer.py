@@ -469,11 +469,17 @@ def run(args, parser, evaluate) -> int:
             weights = score_weights(args.score_weight, args.profile)
         except argparse.ArgumentTypeError as error:
             evaluate.error(str(error))
+        cutoff = PROFILES[args.profile][1] if args.cutoff is None else args.cutoff
+        reachable = round(100 * sum(weights.get(term, 1.0) for term in TERMS))
+        if cutoff is not None and cutoff >= reachable:
+            logging.warning(
+                f"No canSNP can pass: a score must be above the cutoff of {cutoff}, and the "
+                f"highest total these weights can give is {reachable}. Give a lower --cutoff")
         return cansnp_evaluator.main(
             snps=args.snps, reference=args.reference, genes=args.genes, repeats=args.repeats,
             hierarchy=args.hierarchy, output=args.output, tandem_limit=args.tandem_limit,
             gene_limit=args.gene_limit, gc_goal=args.gc_goal,
-            cutoff=PROFILES[args.profile][1] if args.cutoff is None else args.cutoff,
+            cutoff=cutoff,
             top_n=args.top_n, weights=weights, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
             flank=args.flank, gc_tolerance=args.gc_tolerance, spacing=args.min_spacing,

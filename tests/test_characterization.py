@@ -32,8 +32,9 @@ def test_the_alignment_is_read_in_file_order(dataset):
     assert alignment["ref"] == dataset.sequences["ref"]
 
 
-def test_clean_name_keeps_only_alphanumeric():
-    assert clean_name("GCA_000007125.1 ASM712v1") == "GCA0000071251ASM712v1"
+def test_clean_name_writes_every_separator_alike():
+    assert clean_name("GCA_000007125.1 ASM712v1") == "GCA_000007125_1_ASM712v1"
+    assert clean_name("S1_2") != clean_name("S12")
 
 
 def test_gff3_genes_and_cds_are_read_per_sequence_zero_based(dataset):

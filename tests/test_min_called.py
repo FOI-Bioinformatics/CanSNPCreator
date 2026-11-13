@@ -122,3 +122,16 @@ def test_cli_refuses_a_fraction_out_of_range(monkeypatch, dataset, tmp_path, cap
             assert stop.code == 2
         else:
             raise AssertionError(f"--min-called {value} was accepted")
+
+
+def test_a_node_is_not_marked_when_the_isolates_above_it_all_lack_a_base():
+    # P holds X (x1-x3) and Y (y1, y2). A SNP of P with both Y genomes missing
+    # looks like a SNP of X, and P itself has too few genomes called to match,
+    # so nothing else flags the column.
+    alignment = {"out": "AA", "x1": "TT", "x2": "TT", "x3": "TT", "y1": "NA", "y2": "NA",
+                 **{f"o{i}": "AA" for i in range(14)}}
+    groups = {"P": ["x1", "x2", "x3", "y1", "y2"], "X": ["x1", "x2", "x3"], "Y": ["y1", "y2"]}
+    snps = snp_extractor(alignment, min_called=0.75)
+    found = {snp.column: snp for snp in canSNP_extractor(alignment, groups, snps, 0.75)}
+    assert found[0].node is None, "X or P: the column cannot tell"
+    assert found[1].node == "X", "with Y called ancestral it is X's"

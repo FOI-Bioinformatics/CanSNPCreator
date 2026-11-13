@@ -56,10 +56,17 @@ two agree base for base.
 the reference FASTA's IDs; one that uses none of them is refused. Genome
 names are matched more leniently, since a genome is often written as a file
 name in one place and a record ID in another: `strain-7` matches `strain_7`,
-and an assembly accession such as `GCF_000007765.2` matches the one record
-whose name contains it, as RepGenR2 names records
-`Family_Genus_species_Accession` but lists accessions alone. Node names are
-never altered, so `2.10` stays `2.10`.
+since any separator counts as any other, but not `strain7`, which may be
+another genome. An assembly accession such as `GCF_000007765.2` matches the
+one record whose name contains it, as RepGenR2 names records
+`Family_Genus_species_Accession` but lists accessions alone, and as NCBI names
+files `GCA_900475405.1_49699_E01_genomic`; the version must agree, and an
+accession without a version matches when one record holds it. A genome whose
+name matches no record is left out with a warning; its record then counts as
+outside every node, so such a warning is worth resolving. The reference
+genome is named in a warning when it is placed at no node: it then acts as an
+outgroup, and the nodes on its own lineage get no canSNP. Node names are never
+altered, so `2.10` stays `2.10`.
 
 ### Gene annotations
 
@@ -333,7 +340,7 @@ modified.
 | tree | | a node under two parents, a node with no SNP or two, a SNP naming a node the tree does not hold |
 | alleles | | a base outside A, C, G and T, which can never be called derived; equal derived and ancestral bases; two nodes at one position |
 | references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
-| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, which CanSNPer2 cannot call |
+| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes at or below a node without a SNP (`unreachable`), neither of which CanSNPer2 can call |
 | spacing | | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
 | masked | `--reference`, `--masks` | a SNP in a masked region, such as a recombinant one |
@@ -386,11 +393,20 @@ without being told where they belong, so it can be run on genomes the scheme
 was not made from. Every genome is typed twice: by the rule of CanSNPer2
 2.2.0, which reads the first canSNP of each node and calls the deepest node
 whose whole chain from the root is derived, and by the majority of each
-node's canSNPs, where a node without a decision may lie on the way to a
-derived node below it. Four tables are written:
+node's canSNPs. Under the second rule a node without a decision may lie on
+the way to a derived node below it, and of the nodes a genome could be called
+at, the one with the most derived nodes on its path from the root is taken,
+so that one homoplastic canSNP below a run of undecided nodes does not
+outweigh a well supported path. Two equally supported branches give no call.
+The single rule's column was compared with CanSNPer2 2.2.0 itself on 20,000
+random trees, without a difference. Four tables are written:
 
-- `PREFIX_genomes.tsv`: the call under each rule, where the single rule
-  stopped and why, and the nodes that support or contradict the call. With a
+- `PREFIX_genomes.tsv`: the call under each rule, and in `single_stop_node`
+  and `single_stop_reason` why the single rule did not give the set call: the
+  node where its chain broke (`missing`, `ancestral`, or `other-reference`
+  for a node annotated on another reference genome), `min-hits`, or
+  `other-branch` with the node it called instead. Also the nodes that support
+  or contradict the call. With a
   genome map, a tree or the scheme's genomes file, each call is compared with
   the node expected.
 - `PREFIX_snps.tsv`: for each canSNP, in how many genomes it has no base,
@@ -434,7 +450,9 @@ CanSNPCreator place \
 
 Each node is matched to the side of a branch whose genomes best agree with the
 genomes carrying its derived base, by Jaccard index, counting only genomes
-with a base at the site. Both sides of every branch are considered, so where
+with a base at the site. Every canSNP of the node is tried and the best match
+kept, so one homoplastic or uncalled canSNP does not misplace a node its
+others mark. Both sides of every branch are considered, so where
 the tree is rooted does not matter. A genome is placed at the deepest node
 whose match holds it. `--min-match` (default 0.5) sets the lowest index
 accepted, and the report gives each node's match and index. A node with one or

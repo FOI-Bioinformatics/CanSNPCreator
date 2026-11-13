@@ -313,10 +313,11 @@ def test_genome_names_are_resolved_to_alignment_records():
     from cansnpscorer.helpers.names import resolve_clusters
 
     records = ["ref", "Fam_Gen_sp_GCF_000000001.1", "strain-7"]
-    clusters = {"A": ["GCF_000000001.1", "strain_7", "strain7"], "B": ["missing"]}
+    clusters = {"A": ["GCF_000000001.1", "strain_7", "strain.7"], "B": ["missing", "strain7"]}
     resolved, unmatched, ambiguous = resolve_clusters(clusters, records)
     assert resolved == {"A": ["Fam_Gen_sp_GCF_000000001.1", "strain-7"], "B": []}
-    assert unmatched == ["missing"] and ambiguous == []
+    # A name written without the separator may be another genome: S1_2 is not S12.
+    assert unmatched == ["missing", "strain7"] and ambiguous == []
 
 
 
@@ -334,9 +335,31 @@ def test_record_ids_with_a_fasta_suffix_match_the_genome_map():
 def test_an_exact_name_wins_and_a_collision_is_reported():
     from cansnpscorer.helpers.names import resolve_names
 
-    matched, _unmatched, ambiguous = resolve_names(["A_1", "A1"], ["A_1", "A-1"])
+    matched, unmatched, ambiguous = resolve_names(["A_1", "A.1", "A1"], ["A_1", "A-1"])
     assert matched == {"A_1": "A_1"}
-    assert ambiguous == ["A1"], "A1 could be either record"
+    assert ambiguous == ["A.1"], "A.1 could be either record"
+    assert unmatched == ["A1"], "a name without the separator is another name"
+
+
+def test_a_record_id_matches_itself_beside_a_record_named_as_its_file():
+    from cansnpscorer.helpers.names import resolve_names
+
+    matched, unmatched, ambiguous = resolve_names(["x"], ["x", "x.fna"])
+    assert matched == {"x": "x"} and not unmatched and not ambiguous
+
+
+def test_an_accession_matches_an_ncbi_file_name_and_an_unversioned_one():
+    from cansnpscorer.helpers.names import resolve_names
+
+    records = ["GCA_900475405.1_49699_E01_genomic", "Fam_Gen_sp_GCF_000007125.1",
+               "Fam_Gen_sp_GCF_000007125.10x"]
+    matched, unmatched, ambiguous = resolve_names(
+        ["GCA_900475405.1", "GCA_900475405", "GCF_000007125.1", "GCF_000007125",
+         "GCA_90047540.1"], records)
+    assert matched == {"GCA_900475405.1": records[0], "GCA_900475405": records[0],
+                       "GCF_000007125.1": records[1]}
+    assert ambiguous == ["GCF_000007125"], "two versions of it are aligned"
+    assert unmatched == ["GCA_90047540.1"]
 
 
 def test_a_snp_in_a_gene_holding_smaller_features_is_in_a_gene(tmp_path):

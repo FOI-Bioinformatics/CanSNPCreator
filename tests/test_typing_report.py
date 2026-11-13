@@ -136,7 +136,8 @@ def test_a_missing_base_stops_the_single_rule_and_not_the_set_rule(written, data
     alignment = changed(dataset, tmp_path, {"s1": {PLANTED["A"][0]: "N"}})
     _status, prefix = run_report(written, dataset, tmp_path, alignment)
     row = {r["genome"]: r for r in table(prefix + "_genomes.tsv")}["s1"]
-    assert row["single_call"] == "NA" and row["single_stop"] == "A:missing"
+    assert row["single_call"] == "NA"
+    assert (row["single_stop_node"], row["single_stop_reason"]) == ("A", "missing")
     assert row["set_call"] == "A.1" and row["missing_on_path"] == "1"
     nodes = {r["node"]: r for r in table(prefix + "_nodes.tsv")}
     assert nodes["A"]["single_stops"] == "1" and nodes["A"]["unknown_on_path"] == "1"
@@ -160,7 +161,8 @@ def test_a_set_outvotes_one_discordant_base_and_the_snp_is_counted(written, data
 
     _status, prefix = run_report(written, dataset, tmp_path, alignment)
     row = {r["genome"]: r for r in table(prefix + "_genomes.tsv")}["s2"]
-    assert row["single_call"] == "NA" and row["single_stop"] == "A:ancestral"
+    assert row["single_call"] == "NA"
+    assert (row["single_stop_node"], row["single_stop_reason"]) == ("A", "ancestral")
     assert row["set_call"] == "A.2"
 
     snps = {(r["node"], r["rank"]): r for r in table(prefix + "_snps.tsv")}
@@ -301,5 +303,5 @@ def test_what_was_observed_survives_the_scores_file(written, dataset, tmp_path):
                    "--observed", prefix + "_snps.tsv") == 0
     read = {score.node: score for score in
             vcf.read_scores(scores, reference_parser(dataset.reference))}
-    assert (read["A"].observed_genomes, read["A"].observed_missing) == (6, 1)
+    assert (read["A"].observed_genomes, read["A"].observed_missing) == (5, 1)
     assert (read["B"].observed_genomes, read["B"].observed_missing) == (6, 0)

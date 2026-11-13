@@ -35,7 +35,10 @@ def test_consistent_inputs_report_nothing(pieces):
     alignment, reference, hierarchy, clusters = pieces
     assert check_alignment_against_reference(alignment, reference) == ([], [])
     problems, warnings = check_groups(alignment, clusters, hierarchy, "ref")
-    assert (problems, warnings) == ([], [])
+    assert problems == []
+    assert len(warnings) == 1 and "reference genome 'ref' is placed at no node" in warnings[0]
+    placed = {**clusters, "A.1": [*clusters["A.1"], "ref"]}
+    assert check_groups(alignment, placed, hierarchy, "ref") == ([], [])
 
 
 def test_a_reference_of_another_length_is_a_problem(pieces, tmp_path):
@@ -97,10 +100,13 @@ def test_a_genome_in_no_cluster_is_a_warning(pieces):
     assert any("have no isolates" in warning for warning in warnings)
 
 
-def test_the_reference_genome_is_not_expected_to_be_grouped(pieces):
+def test_an_unplaced_reference_is_named_on_its_own(pieces):
+    # It is often an outgroup on purpose; when it is not, the nodes on its
+    # lineage silently get no canSNP, so it is said either way.
     alignment, _reference, hierarchy, clusters = pieces
     _problems, warnings = check_groups(alignment, clusters, hierarchy, "ref")
-    assert not any("ref" in warning for warning in warnings)
+    assert not any("genomes of the alignment are placed at no node" in w for w in warnings)
+    assert any("reference genome 'ref'" in warning for warning in warnings)
 
 
 # -- annotations -------------------------------------------------------------

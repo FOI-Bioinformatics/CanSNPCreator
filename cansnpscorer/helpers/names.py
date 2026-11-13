@@ -4,9 +4,9 @@ Sequences are named by their FASTA ID, exactly, as GFF3, VCF and BED name
 them; nothing here renames a sequence. A genome, though, is often written one
 way in an alignment, another in a genome map and a third in a tree: a file
 name, a record ID, or an assembly accession alone. ``resolve_names`` matches
-such names to alignment records by their alphanumeric characters, or by an
-accession the record name holds, and the record ID is what is used from then
-on. Node names are never cleaned: a node called A.1 stays A.1.
+such names to alignment records once their separators are written alike, or
+by an accession the record name holds, and the record ID is what is used from
+then on. Node names are never cleaned: a node called A.1 stays A.1.
 """
 
 import logging
@@ -16,20 +16,26 @@ NOT_ALPHANUMERIC = re.compile("[^A-Za-z0-9]+")
 FASTA_SUFFIX = re.compile(r"\.(fasta|fna|fa|fas|ffn)(\.gz)?$", re.IGNORECASE)
 
 
-#: An NCBI assembly accession once cleaned, as in GCA0000071251.
-ACCESSION = re.compile(r"GC[AF]\d{9}\d+")
+#: An NCBI assembly accession, with or without its version.
+ACCESSION = re.compile(r"(GC[AF]_\d{9})(?:\.(\d+))?")
 
 
 def resolve_names(names, records):
     """Match genome names from one file to the record names of another.
 
-    In order: a name equal to a record, with or without a FASTA suffix on
-    either, matches it. Failing that, a name matches the record it equals once
-    both are reduced to their alphanumeric characters, provided only one record
-    does. Failing that, a name that is an assembly accession matches the one
-    record whose name contains it, since RepGenR2 names records
-    ``Family_Genus_species_Acc`` while its genomes_map.tsv gives the accession
-    alone. A name that would match two records is reported, not guessed.
+    In order: a name equal to a record matches it, then one equal to it once
+    a FASTA suffix is removed from either. Failing that, a name matches the
+    record it equals once every run of characters other than letters and
+    digits is written as one separator, provided only one record does; the
+    separators are kept, so that ``S1_2`` is not ``S12``. Failing that, a name
+    that is an assembly accession matches the one record whose name contains
+    it, since RepGenR2 names records ``Family_Genus_species_Acc`` while its
+    genomes_map.tsv gives the accession alone. The version must be the same,
+    so version 1 is not version 10, and what follows it in the record name
+    does not matter, as in an NCBI file name ``GCA_900475405.1_49699_E01``. An
+    accession without a version matches the record that holds it in any
+    version, when only one does. A name that would match two records is
+    reported, not guessed.
 
     Args:
         names: The names to match, as the file gives them.
@@ -46,11 +52,16 @@ def resolve_names(names, records):
             by_name.setdefault(key, set()).add(record)
         by_clean.setdefault(clean_name(strip_fasta_suffix(record)), set()).add(record)
 
+    exact = set(records)
     matched = {}
     unmatched = []
     ambiguous = []
     for name in names:
         stripped = strip_fasta_suffix(name)
+        if name in exact:
+            # The record's own ID, whatever other record resembles it.
+            matched[name] = name
+            continue
         if name in by_name and len(by_name[name]) == 1:
             matched[name] = next(iter(by_name[name]))
             continue
@@ -58,11 +69,15 @@ def resolve_names(names, records):
             matched[name] = next(iter(by_name[stripped]))
             continue
         found = by_clean.get(clean_name(stripped), set())
-        if not found and ACCESSION.fullmatch(clean_name(stripped)):
-            # Not followed by a digit, so that version 1 does not match version 10.
-            inside = re.compile(re.escape(clean_name(stripped)) + r"(?!\d)")
-            found = {record for key, group in by_clean.items() if inside.search(key)
-                     for record in group}
+        accession = ACCESSION.fullmatch(stripped)
+        if not found and accession:
+            stem, version = accession.groups()
+            # Delimited on both sides: not part of a longer word before it,
+            # and the version not followed by a further digit.
+            inside = re.compile(
+                r"(?<![A-Za-z0-9])" + re.escape(stem)
+                + (r"\." + version if version else r"(?:\.\d+)?") + r"(?!\d)")
+            found = {record for record in records if inside.search(record)}
         if len(found) == 1:
             matched[name] = next(iter(found))
         elif found:
@@ -114,19 +129,17 @@ def strip_fasta_suffix(name: str) -> str:
 
 def clean_name(name: str) -> str:
     """
-    Reduce a name to its alphanumeric characters.
+    Write every run of characters other than letters and digits as one
+    underscore, and drop those at either end.
 
-    Args:
-        name: The name as the file gives it.
-
-    Returns:
-        The name with every other character removed.
+    The separators are kept, not removed: removing them makes ``S1_2`` and
+    ``S12`` one name, and one genome would be placed as the other.
 
     Example:
         >>> clean_name("GCA_000007125.1 ASM712v1")
-        'GCA0000071251ASM712v1'
+        'GCA_000007125_1_ASM712v1'
     """
-    cleaned = NOT_ALPHANUMERIC.sub("", name)
+    cleaned = NOT_ALPHANUMERIC.sub("_", name).strip("_")
     if cleaned != name:
         logging.debug(f"Cleaned the name {name!r} to {cleaned!r}")
     return cleaned

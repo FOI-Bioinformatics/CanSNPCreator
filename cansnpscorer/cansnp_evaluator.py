@@ -5,7 +5,7 @@ from bisect import bisect_right
 from collections.abc import Sequence
 
 from cansnpscorer import vcf
-from cansnpscorer.helpers.data_utils import apply_filters, search, summarize_scores
+from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
 from cansnpscorer.helpers.file_utils import (
     merge_intervals,
     read_contig_aliases,
@@ -157,6 +157,22 @@ def locate_snps(snps: Sequence[vcf.Snp], reference: Reference,
     return located
 
 
+def locus_at(position: int, loci: Sequence[tuple[int, int]], starts: Sequence[int],
+             longest: int) -> tuple[int, int] | None:
+    """The gene that holds a position: of overlapping genes, the first by start.
+
+    ``loci`` are sorted by start, ``starts`` are their starts and ``longest``
+    the length of the longest, which bounds how far back a gene can begin.
+    """
+    found = None
+    index = bisect_right(starts, position) - 1
+    while index >= 0 and position - loci[index][0] < longest:
+        if loci[index][1] >= position:
+            found = loci[index]
+        index -= 1
+    return found
+
+
 def regions_over_contigs(regions: dict[str, Sequence[tuple[int, int]]],
                          reference: Reference) -> dict[str, list[tuple[int, int]]]:
     """Place regions given over the whole concatenated reference on its contigs.
@@ -277,15 +293,33 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         logging.info(f"{repeated} canSNPs lie in sequence that occurs more than once in the "
                      f"reference ({copy_kmer}-mers, both strands); within a node they are "
                      f"ranked after those in unique sequence")
+    # The gene each canSNP lies in, from the genes one by one: joined intervals
+    # would make a run of abutting genes one locus.
+    contig_names = contig_of(list(model.loci), genome, aliases, model.sequences)
+    loci = {contig_names[name]: found for name, found in model.loci.items()
+            if name in contig_names}
+    lookup = {contig: ([start for start, _end in found],
+                       max(end - start + 1 for start, end in found))
+              for contig, found in loci.items() if found}
     for score in scores:
-        _distance, gene = search(score.position - 1, gene_intervals.get(score.contig, []), 0)
+        if score.contig not in lookup:
+            continue
+        starts, longest = lookup[score.contig]
+        gene = locus_at(score.position - 1, loci[score.contig], starts, longest)
         if gene is not None:
             score.locus = f"{gene[0] + 1}-{gene[1] + 1}"
     if behaviour:
         matched = 0
+        other_alleles = 0
         for score in scores:
             seen = behaviour.get(
                 (score.node, genome.contig(score.contig).start + score.position))
+            if seen is not None and (seen.derived, seen.ancestral) != (
+                    (score.derived or "").upper(), (score.ancestral or "").upper()):
+                # The same node and position with other alleles is another
+                # SNP: a report made against another reference genome.
+                other_alleles += 1
+                seen = None
             if seen is not None:
                 matched += 1
                 score.discordant, score.observed_missing = seen.discordant, seen.missing
@@ -295,6 +329,11 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
             f"{sum(1 for s in scores if s.discordant)} of them disagreeing with their node in "
             f"some genome and {sum(1 for s in scores if s.observed_missing)} lacking a base in "
             f"some; within a node these are ranked after the others")
+        if other_alleles:
+            logging.warning(
+                f"{other_alleles} rows of {observed} name the node and position of a canSNP "
+                f"here with other alleles, and were not used; the report may have been made "
+                f"against another reference genome")
         if 0 < matched < len(scores):
             logging.warning(
                 f"{len(scores) - matched} canSNPs were not in the scheme the report typed "

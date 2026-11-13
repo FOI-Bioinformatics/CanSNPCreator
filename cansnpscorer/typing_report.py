@@ -16,9 +16,13 @@ Each genome is typed under two rules:
     nodes. A node without a base at its canSNP breaks the chain.
 ``set``
     A node is derived when more of its canSNPs carry the derived base than
-    the ancestral one, ancestral when fewer, and unknown otherwise. The call
-    is the deepest derived node with no ancestral node above it; a node of
-    unknown state may lie on the way.
+    the ancestral one, ancestral when fewer, and unknown otherwise. A derived
+    node with no ancestral node above it can be the call; a node of unknown
+    state may lie on the way to it. Of such nodes the call is the one with
+    the most derived nodes on its path from the root, and the deepest of
+    those. Counting the support, not the depth alone, keeps one homoplastic
+    canSNP below a run of unknown nodes from outweighing a well supported
+    path. Two best supported nodes on different branches give no call.
 
 With one canSNP per node the two rules differ only in how they treat missing
 bases and short chains. With several, the set rule also outvotes a single
@@ -55,7 +59,8 @@ BASES = frozenset("ACGT")
 
 DERIVED, ANCESTRAL, MISSING, OTHER = "D", "A", "N", "O"
 
-GENOME_COLUMNS = ("genome", "single_call", "single_depth", "single_stop", "set_call",
+GENOME_COLUMNS = ("genome", "single_call", "single_depth", "single_stop_node",
+                  "single_stop_reason", "set_call",
                   "set_depth", "derived_on_path", "missing_on_path", "ancestral_on_path",
                   "derived_off_path", "discordant", "expected", "single_outcome",
                   "set_outcome")
@@ -80,10 +85,16 @@ class GenomeTyping:
 
     genome: str
     single_call: str | None = None
-    single_stop: str = ""
-    """Why the single rule ended above the set call: the node its chain broke
-    at and that node's state, or ``min-hits`` for a complete chain too short."""
+    single_stop: tuple[str, str] = ("", "")
+    """Why the single rule did not give the set call, as (node, reason): the
+    node its chain broke at with ``missing``, ``ancestral`` or
+    ``other-reference``; ``min-hits`` for a complete chain too short;
+    ``other-branch`` with the node it called instead; ``ambiguous`` for two
+    complete chains of equal depth."""
     set_call: str | None = None
+    path: frozenset[str] = frozenset()
+    """The nodes from the root to the set call; where two branches tie and no
+    call is made, the nodes they share."""
     derived_on_path: int = 0
     missing_on_path: int = 0
     ancestral_on_path: int = 0
@@ -116,7 +127,7 @@ class TypingReport:
                 typed.genome,
                 typed.single_call or "NA",
                 str(self.depth.get(typed.single_call, 0)) if typed.single_call else "0",
-                typed.single_stop,
+                *typed.single_stop,
                 typed.set_call or "NA",
                 str(self.depth.get(typed.set_call, 0)) if typed.set_call else "0",
                 str(typed.derived_on_path), str(typed.missing_on_path),
@@ -192,12 +203,56 @@ def single_call(first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
     return deepest(complete, lineage)
 
 
-def set_call(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]) -> str | None:
-    """The deepest derived node with no ancestral node above it."""
+def set_path(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]
+             ) -> tuple[str | None, frozenset[str]]:
+    """The call of the set rule and the nodes from the root to it.
+
+    A derived node with no ancestral node above it can be the call. The one
+    with the most derived nodes on its lineage is taken, and the deepest of
+    those. When the best supported nodes lie on different branches there is
+    no call, and the path is the part of their lineages they share, so that
+    what the genome carries beyond it still counts as contradicting the
+    scheme.
+    """
     reachable = [node for node, state in states.items()
                  if state == DERIVED
                  and not any(states.get(above) == ANCESTRAL for above in lineage[node])]
-    return deepest(reachable, lineage)
+    if not reachable:
+        return None, frozenset()
+    support = {node: sum(1 for above in lineage[node] if states.get(above) == DERIVED)
+               for node in reachable}
+    most = max(support.values())
+    best = [node for node in reachable if support[node] == most]
+    lowest = max(best, key=lambda node: len(lineage[node]))
+    if all(node in lineage[lowest] for node in best):
+        return lowest, frozenset(lineage[lowest])
+    shared = set(lineage[best[0]])
+    for node in best[1:]:
+        shared &= set(lineage[node])
+    return None, frozenset(shared)
+
+
+def set_call(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]) -> str | None:
+    """The call of the set rule alone; see :func:`set_path`."""
+    return set_path(states, lineage)[0]
+
+
+def derived_off(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
+                call: str | None, path: frozenset[str]) -> int:
+    """How many derived nodes contradict the path of a genome.
+
+    With a call these are the derived nodes off its path. Where branches tie
+    and there is no call, one of the tied branches may still be the genome's
+    own, so the count is the fewest nodes that contradict any one of them:
+    the derived nodes beyond the shared path, less those of the tied branch
+    that holds most of them.
+    """
+    off = [node for node, state in states.items() if state == DERIVED and node not in path]
+    if call is not None or not off or not path:
+        return len(off)
+    beyond = set(off)
+    own = max(sum(1 for above in lineage[node] if above in beyond) for node in off)
+    return len(off) - own
 
 
 def scheme_columns(scheme: Scheme, mapping: AlignmentMap, genome: str | None
@@ -255,6 +310,17 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     by_node = scheme_columns(scheme, mapping, genome)
     if not by_node:
         raise TypingError("the scheme holds no canSNP at a node of its tree for this genome")
+    # The single rule reads the canSNP of rank 1 and no other.
+    has_first = {node: snps[0][0].rank == 1 for node, snps in by_node.items()}
+    # Nodes whose canSNPs are all annotated on another reference genome cannot
+    # be read in this alignment. CanSNPer2 aligns to every reference, so the
+    # single rule's column is not its call below such a node.
+    elsewhere = {snp.node for snp in scheme.checked_snps} - set(by_node)
+    if elsewhere:
+        logging.warning(
+            f"{len(elsewhere)} nodes carry canSNPs on other reference genomes only, and count "
+            f"as without a base here: {', '.join(sorted(elsewhere)[:5])}. Below them the "
+            f"single rule's call is not what CanSNPer2 gives, which aligns to every reference")
 
     expected: dict[str, str] = {}
     if clusters:
@@ -276,12 +342,13 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
                 result.states[(node, index)] = state
 
         nodes = {node: node_state(states) for node, states in per_node.items()}
-        first = {node: (states[0] if states[0] in (DERIVED, ANCESTRAL) else MISSING)
+        first = {node: (states[0] if has_first[node] and states[0] in (DERIVED, ANCESTRAL)
+                        else MISSING)
                  for node, states in per_node.items()}
-        result.set_call = set_call(nodes, lineage)
+        result.set_call, result.path = set_path(nodes, lineage)
         result.single_call = single_call(first, lineage, min_required_hits)
 
-        path = set(lineage[result.set_call]) if result.set_call else set()
+        path = result.path
         for node, state in nodes.items():
             if node in path:
                 if state == DERIVED:
@@ -290,12 +357,12 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
                     result.ancestral_on_path += 1
                 else:
                     result.missing_on_path += 1
-            elif state == DERIVED and result.set_call:
-                result.derived_off_path += 1
+        result.derived_off_path = derived_off(nodes, lineage, result.set_call, path)
         # Nodes of the path that carry no canSNP at all are missing too.
         result.missing_on_path += sum(1 for node in path if node not in nodes)
         result.discordant = result.conflicts >= genome_conflicts
-        result.single_stop = _single_stop(result, first, lineage, min_required_hits)
+        result.single_stop = _single_stop(result, first, lineage, min_required_hits,
+                                          elsewhere)
         typed.append(result)
 
     report = TypingReport(genomes=typed, snp_rows=[], node_rows=[], summary=[], depth=depth,
@@ -306,20 +373,29 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     return report
 
 
+#: The reasons that name the node where the single rule's chain broke.
+BROKEN = ("missing", "ancestral", "other-reference")
+
+
 def _single_stop(result: GenomeTyping, first: Mapping[str, str],
-                 lineage: Mapping[str, Sequence[str]], min_required_hits: int) -> str:
-    """Why the single rule did not reach the set call, when it did not."""
+                 lineage: Mapping[str, Sequence[str]], min_required_hits: int,
+                 elsewhere: frozenset[str] | set[str] = frozenset()) -> tuple[str, str]:
+    """Why the single rule did not give the set call, as (node, reason)."""
     if result.set_call is None or result.single_call == result.set_call:
-        return ""
+        return "", ""
     if result.single_call and result.set_call in lineage[result.single_call]:
-        return ""  # the first canSNPs lead further than the majority of the sets
+        return "", ""  # the first canSNPs lead further than the majority of the sets
+    if result.single_call and result.single_call not in lineage[result.set_call]:
+        return result.single_call, "other-branch"
     for node in reversed(lineage[result.set_call]):  # from the root down
         state = first.get(node, MISSING)
         if state != DERIVED:
-            return f"{node}:{'ancestral' if state == ANCESTRAL else 'missing'}"
+            if node in elsewhere:
+                return node, "other-reference"
+            return node, "ancestral" if state == ANCESTRAL else "missing"
     if len(lineage[result.set_call]) < min_required_hits:
-        return "min-hits"
-    return "ambiguous"
+        return "", "min-hits"
+    return "", "ambiguous"
 
 
 def _snp_rows(by_node, typed: Sequence[GenomeTyping],
@@ -343,12 +419,11 @@ def _snp_rows(by_node, typed: Sequence[GenomeTyping],
                 # The other canSNPs of the node: its totals without this one.
                 if (state == DERIVED and ancestral > derived - 1) or (state == ANCESTRAL and derived > ancestral - 1):
                     counts["discordant"] += 1
-                if result.set_call:
-                    on_path = node in lineage[result.set_call]
-                    if on_path and state == ANCESTRAL:
-                        counts["ancestral_on_path"] += 1
-                    elif not on_path and state == DERIVED:
-                        counts["derived_off_path"] += 1
+                on_path = node in result.path
+                if on_path and state == ANCESTRAL:
+                    counts["ancestral_on_path"] += 1
+                elif not on_path and state == DERIVED:
+                    counts["derived_off_path"] += 1
             called = counts[DERIVED] + counts[ANCESTRAL] + counts[OTHER]
             rows.append([
                 node, str(snp.rank), snp.genome, str(snp.position), snp.derived, snp.ancestral,
@@ -364,8 +439,8 @@ def _node_rows(nodes: Sequence[str], by_node, typed: Sequence[GenomeTyping],
     rows = []
     single_calls = Counter(result.single_call for result in typed)
     set_calls = Counter(result.set_call for result in typed)
-    stops = Counter(result.single_stop.partition(":")[0] for result in typed
-                    if ":" in result.single_stop)
+    stops = Counter(result.single_stop[0] for result in typed
+                    if result.single_stop[1] in BROKEN)
     for node in nodes:
         snps = by_node.get(node, [])
         through = all_derived = unknown = split = 0
@@ -375,7 +450,7 @@ def _node_rows(nodes: Sequence[str], by_node, typed: Sequence[GenomeTyping],
             derived, ancestral = states.count(DERIVED), states.count(ANCESTRAL)
             if derived and ancestral:
                 split += 1
-            if not result.set_call or node not in lineage[result.set_call]:
+            if node not in result.path:
                 continue
             through += 1
             if derived > ancestral:
@@ -400,7 +475,22 @@ def _summary(typed: Sequence[GenomeTyping], depth: Mapping[str, int],
     sets = [result.set_call for result in typed]
 
     def mean_depth(calls: Sequence[str | None]) -> str:
-        return f"{sum(depth[call] for call in calls if call) / total:.2f}" if total else "0"
+        made = [depth[call] for call in calls if call]
+        return f"{sum(made) / len(made):.2f}" if made else "NA"
+
+    def compared(result: GenomeTyping) -> str:
+        """The single call beside the set call, where the set rule made one."""
+        single, by_set = result.single_call, result.set_call
+        if single == by_set:
+            return "same"
+        if single is None:
+            return "none"
+        if single in lineage[by_set]:
+            return "above"
+        return "below" if by_set in lineage[single] else "other"
+
+    beside = Counter(compared(result) for result in typed if result.set_call)
+    only_single = sum(1 for result in typed if result.single_call and not result.set_call)
 
     sizes = sorted(len(snps) for snps in by_node.values())
     rows = [
@@ -409,13 +499,15 @@ def _summary(typed: Sequence[GenomeTyping], depth: Mapping[str, int],
         ("typed", str(sum(1 for call in singles if call)), str(sum(1 for call in sets if call))),
         ("not typed", str(sum(1 for call in singles if not call)),
          str(sum(1 for call in sets if not call))),
-        ("mean depth of call", mean_depth(singles), mean_depth(sets)),
+        ("mean depth of the calls made", mean_depth(singles), mean_depth(sets)),
         ("nodes called at", str(len({call for call in singles if call})),
          str(len({call for call in sets if call}))),
-        ("single call above the set call", str(sum(
-            1 for result in typed if result.set_call and result.single_call != result.set_call
-            and (result.single_call is None
-                 or result.single_call in lineage[result.set_call]))), ""),
+        ("single call is the set call", str(beside["same"]), ""),
+        ("single call above the set call", str(beside["above"]), ""),
+        ("single call below the set call", str(beside["below"]), ""),
+        ("single call on another branch than the set call", str(beside["other"]), ""),
+        ("no single call where the set rule calls", str(beside["none"]), ""),
+        ("single call where the set rule gives none", str(only_single), ""),
         ("genomes with a derived node off their path", "",
          str(sum(1 for result in typed if result.derived_off_path))),
         ("discordant genomes", "", str(sum(1 for result in typed if result.discordant))),
@@ -465,10 +557,14 @@ class Observed:
     """How one canSNP behaved in the genomes of a typing report."""
 
     genomes: int
+    """Genomes in which it had the derived or the ancestral base; 0 when it
+    was called in none, which is no observation at all."""
     missing: int
     discordant: int
     """Genomes where it disagreed with the other canSNPs of its node or with
     the genome's path."""
+    derived: str = ""
+    ancestral: str = ""
 
 
 def read_observed(path: str) -> dict[tuple[str, int], Observed]:
@@ -496,12 +592,23 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
             try:
                 key = (fields[at["node"]], int(fields[at["position"]]))
                 genomes.add(fields[at["genome"]])
-                observed[key] = Observed(
-                    genomes=max(int(fields[at["genomes"]]), 1),
+                row = Observed(
+                    genomes=int(fields[at["derived"]]) + int(fields[at["ancestral"]]),
                     missing=int(fields[at["missing"]]) + int(fields[at["other"]]),
                     discordant=max(int(fields[at["discordant_in_set"]]),
                                    int(fields[at["ancestral_on_path"]])
-                                   + int(fields[at["derived_off_path"]])))
+                                   + int(fields[at["derived_off_path"]])),
+                    derived=fields[at["derived_base"]].upper(),
+                    ancestral=fields[at["ancestral_base"]].upper())
+                earlier = observed.get(key)
+                if earlier is not None:
+                    # Listed twice, as a node with two ranks at one position:
+                    # the worse of the two is kept, not whichever came last.
+                    row = Observed(min(row.genomes, earlier.genomes),
+                                   max(row.missing, earlier.missing),
+                                   max(row.discordant, earlier.discordant),
+                                   row.derived, row.ancestral)
+                observed[key] = row
             except (IndexError, ValueError):
                 raise ValueError(f"{path}: line {number} is not a row of the table") from None
     if not observed:
