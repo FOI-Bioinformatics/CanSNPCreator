@@ -308,7 +308,8 @@ CanSNPCreator collapse \
 | `--min-genomes` | fewer genomes lie below it (default 2) |
 
 A node holding exactly its parent's genomes is joined into the parent too.
-`--outgroup` names a leaf placed at no node, so that it stays in the alignment
+`--outgroup` names a leaf, by its name or by an assembly accession the name
+holds, placed at no node, so that it stays in the alignment
 as a genome outside every node: that is what lets `extract` find the root's
 canSNP and tell which side of each split is derived. Without one, `extract`
 warns that the two sides of the root cannot be told apart, and takes the
@@ -316,10 +317,12 @@ base of the reference genome as ancestral, so that such a SNP marks the side
 without the reference. `--members` reads
 RepGenR2's `genomes_map.tsv`, so that genomes dereplication folded into a
 representative count towards its node and are placed with it. `--rename Cb`
-names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first.
+names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first and, among
+children of one size, by their first genome name.
 
 A Newick genome tree carries its support values and branch lengths; its
-numeric internal labels are read as support. For `tree2tax.tsv`,
+numeric internal labels are read as support, and comments in square brackets,
+such as `[&R]`, are skipped. For `tree2tax.tsv`,
 `--nodes-file tree2tax_nodes.tsv` supplies them. RepGenR2 keeps the outgroup as
 a leaf in both unless `tree2tax --remove-outgroup` was given, and names it in
 `outgroup_accession.txt`.
