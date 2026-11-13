@@ -121,7 +121,7 @@ def test_the_report_needs_no_placement_of_the_genomes(written, dataset, tmp_path
     status, prefix = run_report(written, dataset, tmp_path)
     assert status in (0, 2)
     rows = table(prefix + "_genomes.tsv")
-    assert {row["expected"] for row in rows} == {""}
+    assert {row["expected"] for row in rows} == {"NA"}
     assert sum(row["set_call"] != "NA" for row in rows) == 5
 
 

@@ -363,9 +363,13 @@ def main():
                        help="With --alignment, type every genome with the scheme, by the "
                             "rule of CanSNPer2 (one canSNP per node) and by the majority of "
                             "each node's canSNPs, and write PREFIX_genomes.tsv, _snps.tsv, "
-                            "_nodes.tsv and _summary.tsv. No genome map is needed; with one, "
+                            "_nodes.tsv, _ranks.tsv, _summary.tsv and _run.tsv. No genome map "
+                            "is needed; with one, "
                             "each call is compared with the node it gives. evaluate "
                             "--observed reads the _snps.tsv table.")
+    audit.add_argument("--report", default=None, metavar="FILE",
+                       help="Write the findings, and with --alignment the typing of its "
+                            "genomes, as one Markdown report for reading.")
     audit.add_argument("-o", "--output", default=None,
                        help="Also write the findings to this tab separated file.")
     audit.add_argument("--strict", action="store_true",
@@ -501,7 +505,8 @@ def run(args, parser, evaluate) -> int:
             min_clade_size=args.min_clade_size, min_clade_snps=args.min_clade_snps,
             tree=args.tree, members=args.members, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
-            genome_conflicts=args.genome_conflicts, typing_report=args.typing_report)
+            genome_conflicts=args.genome_conflicts, typing_report=args.typing_report,
+            report=args.report)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,

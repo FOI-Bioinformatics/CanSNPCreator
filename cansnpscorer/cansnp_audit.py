@@ -31,7 +31,7 @@ import itertools
 import logging
 from collections.abc import Mapping, Sequence
 
-from cansnpscorer import vcf
+from cansnpscorer import __version__, vcf
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS, check_against_alignment
 from cansnpscorer.cansnp_evaluator import read_masks
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
@@ -55,9 +55,10 @@ from cansnpscorer.helpers.file_utils import (
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
+from cansnpscorer.report import write_markdown
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 from cansnpscorer.tree_tools import place, read_genome_tree, read_members
-from cansnpscorer.typing_report import TypingError, type_alignment, write_report
+from cansnpscorer.typing_report import NA, TypingError, type_alignment, write_report
 
 BASES = frozenset("ACGT")
 
@@ -243,9 +244,11 @@ def check_against_reference(scheme: Scheme, reference: Reference,
     if derived_in_reference:
         findings.append(Finding(
             RECOMMENDATION, CHECK, "reference-derived", "",
-            f"{len(derived_in_reference)} SNPs have the derived base in the reference genome "
-            f"itself, so the reference sits inside those branches: "
-            f"{', '.join(sorted(derived_in_reference)[:5])}. That is expected of a reference "
+            f"{len(derived_in_reference)} SNPs at {len(set(derived_in_reference))} nodes have "
+            f"the derived base in the reference genome itself, so the reference sits inside "
+            f"those branches: {', '.join(sorted(set(derived_in_reference))[:5])}"
+            f"{' and others' if len(set(derived_in_reference)) > 5 else ''}. "
+            f"That is expected of a reference "
             f"chosen from within the scheme, and worth confirming otherwise"))
 
     logging.info(f"Checked the reference base at {checked} of {len(scheme.checked_snps)} SNPs")
@@ -313,11 +316,16 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
 
 
 def check_spacing(scheme: Scheme, proximity: int = 50) -> list[Finding]:
-    """SNPs close enough together to interfere with one another's assay."""
+    """SNPs of different nodes that lie close together.
+
+    Only the SNPs of the SNP file are compared, those CanSNPer2 calls. The
+    further ranks of a node's set are chosen apart from each other by export,
+    and with several per node most positions have a neighbour of some node.
+    """
     findings: list[Finding] = []
 
     by_genome: dict[str, list[tuple[int, str]]] = {}
-    for snp in scheme.checked_snps:
+    for snp in scheme.snps:
         by_genome.setdefault(snp.genome, []).append((snp.position, snp.node))
 
     for genome, entries in sorted(by_genome.items()):
@@ -327,9 +335,9 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> list[Finding]:
             if 0 < gap <= proximity:
                 findings.append(recommendation(
                     MODIFY, "spacing", f"{left}, {right}",
-                    f"the two SNPs are {gap} bases apart on {genome} ({first} and {second}). A "
-                    f"neighbouring SNP falls inside the primer or probe of an assay, so one of "
-                    f"them is better replaced"))
+                    f"the two SNPs are {gap} bases apart on {genome} ({first} and {second}). "
+                    f"A deletion or a poorly aligned stretch there removes both from a genome "
+                    f"at once, and each lies in the flank a PCR assay of the other would use"))
 
     return findings
 
@@ -477,25 +485,51 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
                                                  finding.node))
 
 
+def _nodes_of(findings: Sequence[Finding], action: str) -> list[str]:
+    """The nodes that findings of one action name, each once. A finding about
+    two SNPs names both nodes in one field."""
+    return sorted({node.strip() for finding in findings if finding.action == action
+                   for node in finding.node.split(",") if node.strip()})
+
+
+def tally(findings: Sequence[Finding]) -> list[tuple[str, str, int]]:
+    """How many findings there are of each category, problems first."""
+    counts: dict[tuple[str, str], int] = {}
+    for finding in findings:
+        key = (finding.severity, finding.category)
+        counts[key] = counts.get(key, 0) + 1
+    order = {PROBLEM: 0, RECOMMENDATION: 1}
+    return [(severity, category, found) for (severity, category), found in sorted(
+        counts.items(), key=lambda item: (order[item[0][0]], -item[1], item[0][1]))]
+
+
 def summarize(scheme: Scheme, findings: Sequence[Finding]) -> list[str]:
     """The lines of the closing summary."""
     problems = [finding for finding in findings if finding.severity == PROBLEM]
     recommendations = [finding for finding in findings if finding.severity == RECOMMENDATION]
-    to_extend = sorted({finding.node for finding in findings
-                        if finding.action == EXTEND and finding.node})
-    to_modify = sorted({finding.node for finding in findings
-                        if finding.action == MODIFY and finding.node})
+    to_extend = _nodes_of(findings, EXTEND)
+    to_modify = _nodes_of(findings, MODIFY)
 
+    further = sum(1 for snp in scheme.snp_set if snp.rank > 1)
     lines = [
         f"The '{scheme.organism}' scheme holds {len(scheme.nodes)} nodes, {len(scheme.snps)} "
-        f"SNPs and {len(scheme.references)} reference genomes",
+        f"SNPs"
+        + (f", {further} further ranked canSNPs" if further else "")
+        + f" and {len(scheme.references)} reference genomes",
         f"{len(problems)} problems and {len(recommendations)} recommendations",
     ]
+    for severity, label in ((PROBLEM, "Problems"), (RECOMMENDATION, "Recommendations")):
+        counted = [f"{category} {found}" for kind, category, found in tally(findings)
+                   if kind == severity]
+        if counted:
+            lines.append(f"{label} by category: {', '.join(counted)}")
     if to_modify:
-        lines.append(f"SNPs to modify: {', '.join(to_modify[:10])}"
+        lines.append(f"Nodes with a SNP to modify ({len(to_modify)}): "
+                     f"{', '.join(to_modify[:10])}"
                      + (" and others" if len(to_modify) > 10 else ""))
     if to_extend:
-        lines.append(f"Nodes where the scheme would be extended: {', '.join(to_extend[:10])}"
+        lines.append(f"Nodes where the scheme would be extended ({len(to_extend)}): "
+                     f"{', '.join(to_extend[:10])}"
                      + (" and others" if len(to_extend) > 10 else ""))
     if not problems and not recommendations:
         lines.append("Nothing found that asks for a change")
@@ -515,12 +549,14 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
          min_clade_snps=1, tree=None, members=None, masks=None,
          masks_concatenated=False, contig_aliases=None,
-         genome_conflicts=GENOME_CONFLICTS, typing_report=None) -> int:
+         genome_conflicts=GENOME_CONFLICTS, typing_report=None, report=None) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     With ``typing_report``, a prefix, every genome of the alignment is typed
     with the scheme and the tables of :mod:`cansnpscorer.typing_report` are
-    written; that needs the alignment but no placement of its genomes.
+    written; that needs the alignment but no placement of its genomes. With
+    ``report``, a path, the findings and the typing are also written as one
+    Markdown file.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
     the scheme holds a problem, or, with ``strict``, a recommendation.
@@ -650,14 +686,49 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     # The findings are written first: a scheme that cannot be typed with, as
     # one with two roots, is exactly what they report.
+    if genome_map:
+        placed_by = f"genome map {genome_map}"
+    elif tree:
+        placed_by = f"tree {tree}"
+    elif alignment and scheme.genomes:
+        placed_by = "the scheme's genomes file"
+    else:
+        placed_by = NA
+    run = [
+        ("cansnpcreator", __version__),
+        ("scheme", f"{scheme.organism} in {scheme_dir}"),
+        ("reference", str(reference) if reference else NA),
+        ("reference genome of the scheme", genome or ", ".join(annotated) or NA),
+        ("alignment", str(alignment) if alignment else NA),
+        ("genomes placed by", placed_by),
+        ("scores", str(scores) if scores else NA),
+        ("masks", str(masks) if masks else NA),
+        ("min_required_hits", str(min_required_hits)),
+        ("genome_conflicts", str(genome_conflicts)),
+    ]
+
     not_typed = False
-    if typing_report:
+    typing = None
+    if typing_report or (report and aligned is not None):
         try:
-            write_report(type_alignment(scheme, aligned, sequence, genome, clusters,
-                                        min_required_hits, genome_conflicts), typing_report)
+            typing = type_alignment(
+                scheme, aligned, sequence, genome, clusters, min_required_hits,
+                genome_conflicts,
+                outgroups=[accession for accession, _node, role in scheme.genomes
+                           if role == "outgroup"])
+            if typing_report:
+                write_report(typing, typing_report, run)
         except (OSError, TypingError, ReferenceError) as error:
             logging.error(f"No typing report was written: {error}")
-            not_typed = True
+            not_typed = bool(typing_report)
+
+    if report:
+        try:
+            write_markdown(report, scheme, findings, typing, run)
+            logging.info(f"Wrote the report to {report}")
+        except OSError as error:
+            logging.error(error)
+            return 1
 
     if any(finding.severity == PROBLEM for finding in findings):
         return 2

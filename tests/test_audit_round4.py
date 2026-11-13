@@ -92,7 +92,7 @@ def test_a_single_call_on_another_branch_is_labelled_as_such():
     assert result.single_stop == ("A.1", "other-branch")
     stops = {row[0]: row[-1] for row in report.node_rows}
     assert set(stops.values()) == {"0"}, "no node lost a genome of the single rule"
-    summary = {metric: single for metric, single, _set in report.summary}
+    summary = {row[0]: row[1] for row in report.summary}
     assert summary["single call on another branch than the set call"] == "1"
     assert summary["single call above the set call"] == "0"
 
@@ -109,7 +109,7 @@ def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
 def test_the_mean_depth_is_over_the_calls_made():
     _genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "AGAGAGAA",
                                               "none": "AAAAAAAA"})
-    summary = {metric: (single, by_set) for metric, single, by_set in report.summary}
+    summary = {row[0]: (row[1], row[3]) for row in report.summary}
     assert summary["mean depth of the calls made"] == ("3.00", "3.00")
 
 
