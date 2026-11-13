@@ -38,8 +38,17 @@ def hierarchy_format(path: str) -> str:
         HierarchyError: If the file is empty or is neither.
     """
     with open_text(path) as handle:
+        in_comment = False
         for line in handle:
             stripped = line.strip()
+            # A Newick tree may open with comments in square brackets, as
+            # [&R] marks a rooted tree; they are skipped.
+            while in_comment or stripped.startswith("["):
+                end = stripped.find("]")
+                in_comment = end < 0
+                stripped = "" if in_comment else stripped[end + 1:].lstrip()
+                if in_comment:
+                    break
             if not stripped or stripped.startswith("#"):
                 continue
             if stripped.startswith("("):
