@@ -13,6 +13,7 @@ from cansnpscorer.tree_tools import (
     read_genome_tree,
     read_members,
     rename,
+    reroot,
     write_collapsed,
     write_placement,
 )
@@ -24,6 +25,9 @@ def collapse_main(tree_file=None, nodes_file=None, members=None, min_support=Non
     """Collapse a genome tree into a scheme's hierarchy. Returns an exit status."""
     try:
         tree = read_genome_tree(tree_file, nodes_file)
+        # Rooted here as well as in collapse, so that the supports and lengths
+        # written next to each node are those of the rooted tree.
+        tree = reroot(tree, outgroups)
         folded = read_members(members, tree) if members else None
         collapsed = collapse(tree, min_support, min_genomes, min_length, folded, outgroups)
         if prefix_names:

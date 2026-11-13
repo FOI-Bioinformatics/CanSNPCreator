@@ -153,6 +153,12 @@ def check_scheme(hierarchy: Hierarchy, best: dict[str, ScoredSnp],
             problems.append(
                 f"the SNP for '{node}' uses bases outside A, C, G and T: "
                 f"{score.derived} and {score.ancestral}")
+        elif 1 <= score.position <= contig.length:
+            base = contig.base(score.position - 1)
+            if base in BASES and base not in (score.derived, score.ancestral):
+                problems.append(
+                    f"the SNP for '{node}' at {score.contig}:{score.position} gives "
+                    f"{score.derived}/{score.ancestral}, but the reference base there is {base}")
 
     return problems, warnings
 
@@ -208,8 +214,10 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
         seen[assembly] = accession
         rows.append((accession, node, role))
 
+    unplaced: list[str] = []
     for genome, node in placed.items():
         if node not in hierarchy:
+            unplaced.append(f"{genome} ({node})")
             continue
         add(genome, kept_at(node) or hierarchy.root,
             "representative" if genome in matched else "member")
@@ -217,6 +225,10 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
         if record not in aligned_placed:
             add(record, "", "outgroup")
 
+    if unplaced:
+        warnings.append(
+            f"{len(unplaced)} genomes are placed at nodes the hierarchy does not hold and were "
+            f"left out of the genomes file: {', '.join(sorted(unplaced)[:5])}")
     if no_accession:
         warnings.append(
             f"{len(no_accession)} genomes hold no assembly accession in their names and were "
@@ -348,6 +360,15 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     paths = paths_for(tree, kept)
     written = write_scheme(outdir, organism, paths, best, sequence, genome, strain,
                            citation, genbank_id, refseq_id, assembly_name)
+    # The optional files of an earlier export into the same directory would
+    # otherwise stay beside this scheme, and describe another one.
+    for suffix, wanted in ((SNP_SET_SUFFIX, snps_per_node != 1),
+                           (GENOMES_SUFFIX, clusters is not None)):
+        stale = os.path.join(outdir, organism + suffix)
+        if not wanted and os.path.exists(stale):
+            os.remove(stale)
+            logging.warning(f"Removed {stale}, which an earlier export wrote and this one does "
+                            f"not")
     if snps_per_node != 1:
         written.append(write_snp_set(outdir, organism, paths, chosen, sequence, genome))
         counts = sorted(len(chosen[path[-1]]) for path in paths)
