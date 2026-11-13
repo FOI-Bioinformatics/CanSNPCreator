@@ -176,6 +176,113 @@ class Collapsed:
         return count
 
 
+def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
+    """Root the tree on the branch that separates the outgroups from the rest.
+
+    A tree builder such as IQ-TREE writes an unrooted tree rooted at its first
+    taxon, so the outgroups need not sit at the root. The tree is returned
+    unchanged when they already form one child of the root. Otherwise a new
+    root is placed on the branch above the outgroups' clade, halving its
+    length. The support and length of each branch stay with that branch,
+    which, below the new root, is now held by the node at its lower end.
+
+    Raises:
+        HierarchyError: If an outgroup is not a leaf of the tree, or the
+            outgroups do not form a clade on any rooting of the tree.
+    """
+    outgroup = set(outgroups)
+    if not outgroup:
+        return tree
+    unknown = sorted(outgroup - set(tree.leaves))
+    if unknown:
+        raise HierarchyError(f"the tree has no leaf named {', '.join(unknown)}")
+    leaves = set(tree.leaves)
+    below: dict[str, frozenset[str]] = {}
+    for node in reversed(tree.nodes):
+        children = tree.children[node]
+        below[node] = (frozenset([node]) if not children
+                       else frozenset().union(*(below[child] for child in children)))
+
+    ingroup = leaves - outgroup
+    if not ingroup:
+        raise HierarchyError("every leaf of the tree is an outgroup")
+    # The branch that splits the tree into outgroups and ingroup is held by
+    # the node below it, on whichever side of the split that node is.
+    branch = next((node for node in tree.nodes if node != tree.root
+                   and below[node] in (outgroup, ingroup)), None)
+    if branch is None:
+        raise HierarchyError(
+            f"the outgroups ({', '.join(sorted(outgroup))}) do not form a clade of the tree, "
+            f"however it is rooted, so no root separates them from the other genomes")
+    if tree.parents[branch] == tree.root and (below[branch] == outgroup
+                                              or len(tree.children[tree.root]) == 2):
+        return tree
+
+    # Every branch as an undirected edge, labelled by the node below it.
+    neighbours: dict[str, list[tuple[str, str]]] = {node: [] for node in tree.nodes}
+    for node in tree.nodes:
+        parent = tree.parents[node]
+        if parent is not None:
+            neighbours[node].append((parent, node))
+            neighbours[parent].append((node, node))
+
+    new_root = "root"
+    taken = set(tree.nodes)
+    number = 1
+    while new_root in taken:
+        number += 1
+        new_root = f"root{number}"
+
+    upper = tree.parents[branch]
+    pairs: list[tuple[str, str | None]] = [(new_root, None), (branch, new_root), (upper, new_root)]
+    # The branch that held the root is split in two; both halves are the same
+    # split of the genomes, so they carry the same support.
+    support: dict[str, float] = {}
+    lengths: dict[str, float] = {}
+    if branch in tree.support:
+        support[branch] = support[upper] = tree.support[branch]
+    if branch in tree.lengths:
+        lengths[branch] = lengths[upper] = tree.lengths[branch] / 2
+
+    # Walk away from the new root, orienting every other branch away from it.
+    stack = [(branch, upper), (upper, branch)]
+    while stack:
+        node, came_from = stack.pop()
+        for other, edge in neighbours[node]:
+            if other == came_from:
+                continue
+            pairs.append((other, node))
+            if edge in tree.support:
+                support[other] = tree.support[edge]
+            if edge in tree.lengths:
+                lengths[other] = tree.lengths[edge]
+            stack.append((other, node))
+
+    # The old root, when it had two children, is now a node with one child:
+    # its two branches are one, and it is removed.
+    children: dict[str, list[str]] = {}
+    for child, parent in pairs:
+        if parent is not None:
+            children.setdefault(parent, []).append(child)
+    old = tree.root
+    if old != upper and len(children.get(old, [])) == 1:
+        (only,) = children[old]
+        parent = next(parent for child, parent in pairs if child == old)
+        pairs = [(child, parent if child == only else above) for child, above in pairs
+                 if child != old]
+        if old in lengths or only in lengths:
+            lengths[only] = lengths.pop(old, 0.0) + lengths.get(only, 0.0)
+        value = support.pop(old, None)
+        if value is not None:
+            support.setdefault(only, value)
+
+    rerooted = Hierarchy(pairs)
+    rerooted.support = {node: value for node, value in support.items() if rerooted.children[node]}
+    rerooted.lengths = lengths
+    logging.info(f"Rooted the tree on the branch above {', '.join(sorted(outgroup))}")
+    return rerooted
+
+
 def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int = 2,
              min_length: float | None = None,
              members: Mapping[str, Sequence[str]] | None = None,
@@ -195,12 +302,11 @@ def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int
 
     The leaves named in ``outgroups`` are placed at no node. They stay in the
     alignment as genomes outside every node, which is what gives the root and
-    its children a polarity; the root of the result is then the ingroup's.
+    its children a polarity. The tree is first rooted on the branch above the
+    outgroups, as ``reroot`` does, so the root of the result is the ingroup's.
     """
     members = members or {}
-    unknown = sorted(set(outgroups) - set(tree.leaves))
-    if unknown:
-        raise HierarchyError(f"the tree has no leaf named {', '.join(unknown)}")
+    tree = reroot(tree, outgroups)
     outgroup = set(outgroups)
     weight = {leaf: 0 if leaf in outgroup else 1 + len(members.get(leaf, []))
               for leaf in tree.leaves}

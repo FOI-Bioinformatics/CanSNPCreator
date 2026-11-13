@@ -70,8 +70,8 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         # The flank of an assay is spoiled by any difference among the genomes
         # it will type, not only by canonical SNPs, so every column where the
         # scheme's genomes differ is found, and the outgroup's are left out.
-        placed = sorted({name for names in clusters.values() for name in names})
-        flank_columns = variable_columns(aligned, placed)
+        scheme_genomes = sorted({name for names in clusters.values() for name in names})
+        flank_columns = variable_columns(aligned, scheme_genomes)
         cansnps = canSNP_extractor(aligned, isolates, snps, min_called)
     except (ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
@@ -111,7 +111,7 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     for record, distance in zip(records, distances, strict=True):
         record.info["NEAREST"] = str(min(distance, vcf.NEAREST_CAP)) if distance is not None \
             else str(vcf.NEAREST_CAP)
-    logging.info(f"{len(flank_columns)} columns differ among the {len(placed)} genomes of the "
+    logging.info(f"{len(flank_columns)} columns differ among the {len(scheme_genomes)} genomes of the "
                  f"scheme, which gives each SNP the distance to its nearest variation")
 
     header = vcf.header_lines(genome, reference, "extract",
@@ -119,7 +119,12 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     written = vcf.write(output, header, records)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
-    without = sorted(set(tree.nodes) - {cansnp.node for cansnp in cansnps if cansnp.node})
+    # A node whose SNPs were all reported against a node with the same
+    # isolates has them as well.
+    marked = {cansnp.node for cansnp in cansnps if cansnp.node}
+    marked |= {name for cansnp in cansnps if cansnp.node for name in cansnp.also_matched
+               if set(isolates[name]) == set(isolates[cansnp.node])}
+    without = sorted(set(tree.nodes) - marked)
     if without:
         logging.warning(
             f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")

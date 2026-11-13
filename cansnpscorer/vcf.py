@@ -491,6 +491,10 @@ def read_scores(path: str, reference: Reference | None = None):
     for record in parsed.records:
         if record.node is None:
             continue
+        if record.ancestral not in (record.ref, record.alt):
+            raise VcfError(
+                f"{path}: {record.chrom}:{record.pos} gives the ancestral allele "
+                f"{record.ancestral}, which is neither REF nor ALT")
         try:
             scores.append(ScoredSnp(
                 contig=record.chrom, position=record.pos, node=record.node,

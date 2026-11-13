@@ -276,6 +276,13 @@ def contexts_for(snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
     for snp in ordered:
         positions.setdefault(snp[0].name, []).append(snp[1])
 
+    # Sorted once per contig and shared by its SNPs, not copied for each, which
+    # on a genome of a few thousand genes and some 10^5 SNPs is gigabytes.
+    def by_start(intervals: dict[str, Sequence[Sequence[int]]]) -> dict[str, list]:
+        return {name: sorted(found, key=lambda interval: interval[0])
+                for name, found in intervals.items()}
+
+    sorted_genes, sorted_repeats, sorted_cds = by_start(genes), by_start(repeats), by_start(cds or {})
     contexts: list[SnpContext] = []
     seen: dict[str, int] = {}
     for snp in ordered:
@@ -292,9 +299,9 @@ def contexts_for(snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
                 alleles=tuple(alleles),
                 previous=on_contig[index - 1] if index > 0 else None,
                 following=on_contig[index + 1] if index + 1 < len(on_contig) else None,
-                genes=sorted(genes.get(contig.name, []), key=lambda interval: interval[0]),
-                repeats=sorted(repeats.get(contig.name, []), key=lambda interval: interval[0]),
-                cds=sorted((cds or {}).get(contig.name, []), key=lambda interval: interval[0]),
+                genes=sorted_genes.get(contig.name, []),
+                repeats=sorted_repeats.get(contig.name, []),
+                cds=sorted_cds.get(contig.name, []),
                 nearest=nearest,
             )
         )

@@ -256,7 +256,10 @@ def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: Al
     The canSNPs of a node give its state in a genome: derived when more of
     them carry the derived base than the ancestral one, ancestral when fewer,
     unknown otherwise. The genome's path is the deepest node it is derived at
-    with no node above ancestral, which is where CanSNPer2 would type it.
+    with no node above ancestral. A node of unknown state may lie on the
+    path, as when its canSNPs have no base in the genome; CanSNPer2 2.2.0
+    stops at such a node, so the path is where the genome's canSNPs place it,
+    which can lie below where CanSNPer2 would type it.
 
     Two things are reported, as they explain failures check_scheme_snps
     attributes to SNPs:

@@ -335,6 +335,7 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
     canonical = 0
     ambiguous = 0
     complementary = 0
+    undecided = 0
 
     for snp in snps:
         column = snp['index']
@@ -360,6 +361,15 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
                 continue
             if counts.get(shared, 0) == len(called):
                 matches.append((node, shared))
+
+        if len(matches) > 1 and missing:
+            # A node and one below it can both match only when the genomes
+            # that tell them apart have no base here, so the column does not
+            # say which of the two it marks.
+            sets = [set(members[name]) for name, _base in matches]
+            if any(a < b for a in sets for b in sets):
+                undecided += 1
+                matches = []
 
         if not matches:
             cansnps.append(CanSnp(column=column, bases=bases, missing=missing))
@@ -393,9 +403,14 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
     if complementary:
         logging.warning(
             f"{complementary} canSNPs separate two nodes whose isolates together are every "
-            f"genome of the alignment, so which side carries the derived base cannot be told "
-            f"without a genome outside both; each is reported against the first of them. An "
-            f"outgroup genome in the alignment, placed at no node, settles it")
+            f"genome with a base at the site, so which side carries the derived base cannot be "
+            f"told without a genome outside both; each is reported against the first of them. "
+            f"An outgroup genome in the alignment, placed at no node and called at the site, "
+            f"settles it")
+    if undecided:
+        logging.warning(
+            f"{undecided} SNPs fit both a node and a node below it, because the genomes that "
+            f"tell the two apart have no base at the site; they are not reported as canSNPs")
     logging.info(f"Found {canonical} canSNPs")
 
     return cansnps
