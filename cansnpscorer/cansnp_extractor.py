@@ -8,6 +8,7 @@ from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import (
     canSNP_extractor,
     nearest_distances,
+    reference_anchors,
     snp_extractor,
     variable_columns,
 )
@@ -45,8 +46,12 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     try:
         tree = read_hierarchy(hierarchy)
         clusters = read_genome_map(genome_map)
-        aligned = read_alignment(alignment)
         genome = reference_parser(reference)
+        # The output names the contigs, so a name VCF does not allow is
+        # refused here, before the alignment is read, rather than once all
+        # the work is done.
+        vcf.check_contig_names(genome)
+        aligned = read_alignment(alignment)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -99,13 +104,17 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
         logging.warning(
             f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
 
+    # A variable column where the reference has a gap, such as an insertion
+    # among the scheme's genomes, counts at the reference bases on either side.
+    # In a projected alignment every column is a reference position, aligned
+    # or not, so it counts where it is.
+    def position_of(column: int) -> int | None:
+        return column if mapping.projected else mapping.to_reference(column)
+
     variable: dict[str, list[int]] = {}
-    for column in flank_columns:
-        placed_at = mapping.locate(column)
-        if placed_at is not None:
-            variable.setdefault(placed_at[0].name, []).append(placed_at[1] - 1)
-    for found in variable.values():
-        found.sort()
+    for position in reference_anchors(flank_columns, position_of, mapping.columns):
+        contig, local_position = genome.locate(position)
+        variable.setdefault(contig.name, []).append(local_position)
     distances = nearest_distances([(record.chrom, record.pos - 1) for record in records],
                                   variable)
     for record, distance in zip(records, distances, strict=True):

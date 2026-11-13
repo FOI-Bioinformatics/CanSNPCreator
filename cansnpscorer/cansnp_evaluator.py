@@ -237,6 +237,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     weights = dict(PROFILES[DEFAULT_PROFILE][0]) if weights is None else weights
     try:
         genome = reference_parser(reference)
+        vcf.check_contig_names(genome)
         parsed = vcf.read_snps(snps, genome)
         aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
         model = read_gff3(genes)
@@ -268,6 +269,14 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         logging.warning(
             "The SNPs carry no INFO/NEAREST, so the flanks are judged by the other SNPs of the "
             "file alone; extract records the variation among all the scheme's genomes")
+    elif flank > vcf.NEAREST_CAP:
+        # NEAREST is a lower bound at the cap, so the neighbour term is one too.
+        logging.warning(
+            f"--flank {flank} is larger than the {vcf.NEAREST_CAP} bases up to which extract "
+            f"records the distance to the nearest variation (INFO/NEAREST), so variation "
+            f"further away is not known: a canSNP with none within {vcf.NEAREST_CAP} bases "
+            f"gets {vcf.NEAREST_CAP / flank:.2f} of the full neighbour term, and distances "
+            f"beyond {vcf.NEAREST_CAP} are not told apart")
     if not cds:
         logging.warning(
             "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
@@ -366,6 +375,7 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         summarize_scores(tree.nodes, passing)
 
     written = vcf.write_scores(output, scores, genome, reference, cutoff, top_n, weights,
-                               copies=bool(copy_kmer), observed=bool(behaviour))
+                               copies=bool(copy_kmer), observed=bool(behaviour),
+                               spacing=spacing)
     logging.info(f"Wrote {written} scored canSNPs to {output}")
     return 0
