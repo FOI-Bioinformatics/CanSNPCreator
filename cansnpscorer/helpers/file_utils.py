@@ -44,7 +44,7 @@ def hierarchy_format(path: str) -> str:
                 continue
             if stripped.startswith("("):
                 return "newick"
-            columns = stripped.split("\t")
+            columns = [column.strip() for column in stripped.split("\t")]
             if "child" in columns and "parent" in columns:
                 return "table"
             raise HierarchyError(
@@ -81,7 +81,8 @@ def read_hierarchy(path: str) -> Hierarchy:
         with open_text(path, newline="") as handle:
             lines = [line.rstrip("\r\n") for line in handle
                      if line.strip() and not line.startswith("#")]
-        header = lines[0].split("\t")
+        # Spaces around a header cell, as a spreadsheet may leave, are ignored.
+        header = [column.strip() for column in lines[0].split("\t")]
         child_at, parent_at = header.index("child"), header.index("parent")
         for number, line in enumerate(lines[1:], 2):
             fields = line.split("\t")
