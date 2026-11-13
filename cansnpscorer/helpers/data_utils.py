@@ -332,6 +332,14 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
         for node, isolates in groups.items() if isolates
     }
 
+    # For each node, the nodes that hold all of its isolates and more, with
+    # those further isolates: a column where they all lack a base cannot tell
+    # the node from the one above it.
+    sets = {node: frozenset(isolates) for node, isolates in members.items()}
+    above = {node: [(other, sorted(sets[other] - inside))
+                    for other in members if inside < sets[other]]
+             for node, inside in sets.items()}
+
     cansnps: list[CanSnp] = []
     canonical = 0
     ambiguous = 0
@@ -367,10 +375,21 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
             # A node and one below it can both match only when the genomes
             # that tell them apart have no base here, so the column does not
             # say which of the two it marks.
-            sets = [set(members[name]) for name, _base in matches]
-            if any(a < b for a in sets for b in sets):
+            matched = [sets[name] for name, _base in matches]
+            if any(a < b for a in matched for b in matched):
                 undecided += 1
                 matches = []
+
+        if matches and missing:
+            # The same holds when the node above did not match because too few
+            # of its isolates are called: if every isolate it holds beyond
+            # this node's lacks a base, the column may as well mark it.
+            for name, _base in matches:
+                if any(all(alignment[isolate][column] not in counts for isolate in extra)
+                       for _other, extra in above[name]):
+                    undecided += 1
+                    matches = []
+                    break
 
         if not matches:
             cansnps.append(CanSnp(column=column, bases=bases, missing=missing))
@@ -419,7 +438,9 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
 
 def reliability(score):
     """What is known of how reliably a SNP can be called, most important first:
-    whether its sequence occurs more than once in the reference; in how many
+    whether its sequence occurs more than once in the reference, or could not
+    be counted (a copy number of 0, as on a contig shorter than a k-mer); in
+    how many
     genomes of a typing report it disagreed with its node; whether it was
     observed in such a report at all, since a SNP that was typed with and
     held is better known than one that was never tried; and in how many
@@ -429,7 +450,7 @@ def reliability(score):
     was observed, which a scheme exported with every canSNP of each node
     gives; a SNP that was not observed has no observed missing bases to
     count."""
-    return (getattr(score, "copies", 1) > 1, getattr(score, "discordant", 0),
+    return (getattr(score, "copies", 1) != 1, getattr(score, "discordant", 0),
             getattr(score, "observed_genomes", 0) == 0,
             getattr(score, "missing", 0) + getattr(score, "observed_missing", 0))
 

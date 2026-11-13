@@ -97,6 +97,13 @@ def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[s
             f"outside every node, as an outgroup should; any other genome among them weakens "
             f"the canSNPs it differs at: {', '.join(ungrouped[:5])}")
 
+    if reference_name in alignment and reference_name not in grouped:
+        warnings.append(
+            f"the reference genome '{reference_name}' is placed at no node, so it counts as "
+            f"outside every node, as an outgroup does. If it belongs to the scheme, no canSNP "
+            f"can be found for the nodes on its own lineage, since it carries their derived "
+            f"bases; give it a node in the genome map")
+
     known = {name: isolates for name, isolates in clusters.items() if name in hierarchy}
     without_isolates = sorted(
         node for node, isolates in hierarchy.isolates(known).items() if not isolates)

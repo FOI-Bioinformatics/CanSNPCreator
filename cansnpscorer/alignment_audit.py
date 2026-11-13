@@ -34,6 +34,7 @@ from cansnpscorer.helpers.data_utils import snp_extractor
 from cansnpscorer.helpers.names import resolve_clusters
 from cansnpscorer.model import AlignmentMap, Reference, ReferenceError
 from cansnpscorer.scheme import Scheme
+from cansnpscorer.typing_report import ANCESTRAL, DERIVED, derived_off, set_path
 
 BASES = frozenset("ACGT")
 
@@ -264,11 +265,14 @@ def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: Al
 
     The canSNPs of a node give its state in a genome: derived when more of
     them carry the derived base than the ancestral one, ancestral when fewer,
-    unknown otherwise. The genome's path is the deepest node it is derived at
-    with no node above ancestral. A node of unknown state may lie on the
-    path, as when its canSNPs have no base in the genome; CanSNPer2 2.2.0
-    stops at such a node, so the path is where the genome's canSNPs place it,
-    which can lie below where CanSNPer2 would type it.
+    unknown otherwise. The genome's path leads to the derived node with no
+    node above ancestral that has the most derived nodes on its way from the
+    root, as the typing report's set rule takes it; two such nodes on
+    different branches leave the path at the nodes they share. A node of
+    unknown state may lie on the path, as when its canSNPs have no base in
+    the genome; CanSNPer2 2.2.0 stops at such a node, so the path is where
+    the genome's canSNPs place it, which can lie below where CanSNPer2 would
+    type it.
 
     Two things are reported, as they explain failures check_scheme_snps
     attributes to SNPs:
@@ -316,11 +320,9 @@ def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: Al
             elif ancestral > derived:
                 ancestral_at.add(node)
 
-        reachable = [node for node in derived_at
-                     if not ancestral_at.intersection(lineage[node])]
-        typed = max(reachable, key=lambda node: (len(lineage[node]), node), default=None)
-        path = set(lineage[typed]) if typed else set()
-        conflicts = (sum(1 for node in derived_at if node not in path)
+        states = {**dict.fromkeys(ancestral_at, ANCESTRAL), **dict.fromkeys(derived_at, DERIVED)}
+        typed, path = set_path(states, lineage)
+        conflicts = (derived_off(states, lineage, typed, path)
                      + sum(1 for node in ancestral_at if node in path))
         if conflicts >= min_conflicts:
             discordant.append((name, conflicts))
@@ -617,5 +619,5 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
 
     logging.info(
         f"Read {sites} variable sites over {len(names)} genomes, of which "
-        f"{len(names) - len(placement.ungrouped)} are placed in the scheme")
+        f"{len(placement.node_of)} are placed in the scheme")
     return findings

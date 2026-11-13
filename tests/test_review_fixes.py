@@ -240,7 +240,7 @@ def test_a_genome_map_header_is_not_a_node(tmp_path):
 
 
 def test_two_names_of_one_record_at_two_nodes_are_refused():
-    resolved, _unmatched, ambiguous = resolve_clusters({"n1": ["A_1"], "n2": ["A.1"]}, ["A1"])
+    resolved, _unmatched, ambiguous = resolve_clusters({"n1": ["A_1"], "n2": ["A.1"]}, ["A-1"])
     assert sorted(ambiguous) == ["A.1", "A_1"]
     assert resolved == {"n1": [], "n2": []}
 

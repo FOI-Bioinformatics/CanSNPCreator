@@ -267,15 +267,32 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
 
     with_snp = set(scheme.snps_by_node)
     shallow: list[tuple[str, int]] = []
+    # CanSNPer2 2.2.0 confirms a node only when every node from the root down
+    # to it is called, and a node without a SNP is never called: nothing at or
+    # below one can be the result, however many SNPs lie on the path.
+    cut_off: dict[str, list[str]] = {}
 
     for node in scheme.hierarchy.nodes:
-        hits = sum(1 for name in scheme.hierarchy.path(node) if name in with_snp)
-        if hits < min_required_hits:
-            shallow.append((node, hits))
+        path = scheme.hierarchy.path(node)
+        without = [name for name in path if name not in with_snp]
+        if without:
+            cut_off.setdefault(without[0], []).append(node)
+            continue
+        if len(path) < min_required_hits:
+            shallow.append((node, len(path)))
 
-    callable_leaves = [node for node in scheme.hierarchy.leaves
-                       if sum(1 for name in scheme.hierarchy.path(node) if name in with_snp)
-                       >= min_required_hits]
+    callable_leaves = [
+        node for node in scheme.hierarchy.leaves
+        if len(scheme.hierarchy.path(node)) >= min_required_hits
+        and all(name in with_snp for name in scheme.hierarchy.path(node))]
+
+    for first, nodes in sorted(cut_off.items()):
+        findings.append(problem(
+            EXTEND, "unreachable", first,
+            f"the node has no SNP, and CanSNPer2 calls a node only when every node from the "
+            f"root down to it is called, so neither it nor the {len(nodes) - 1} nodes below "
+            f"it can be the result of typing"
+            + (f": {', '.join(nodes[1:6])}" if len(nodes) > 1 else "")))
 
     if shallow:
         findings.append(recommendation(
@@ -624,14 +641,6 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     for line in summarize(scheme, findings):
         logging.info(line)
 
-    if typing_report:
-        try:
-            write_report(type_alignment(scheme, aligned, sequence, genome, clusters,
-                                        min_required_hits, genome_conflicts), typing_report)
-        except (OSError, TypingError, ReferenceError) as error:
-            logging.error(error)
-            return 1
-
     if output:
         try:
             write_findings(findings, output)
@@ -639,8 +648,19 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
             logging.error(error)
             return 1
 
+    # The findings are written first: a scheme that cannot be typed with, as
+    # one with two roots, is exactly what they report.
+    not_typed = False
+    if typing_report:
+        try:
+            write_report(type_alignment(scheme, aligned, sequence, genome, clusters,
+                                        min_required_hits, genome_conflicts), typing_report)
+        except (OSError, TypingError, ReferenceError) as error:
+            logging.error(f"No typing report was written: {error}")
+            not_typed = True
+
     if any(finding.severity == PROBLEM for finding in findings):
         return 2
     if strict and findings:
         return 2
-    return 0
+    return 1 if not_typed else 0

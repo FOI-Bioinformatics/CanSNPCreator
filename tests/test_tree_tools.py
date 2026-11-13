@@ -97,7 +97,7 @@ def test_repgenr2_tables_give_support_and_lengths(tmp_path):
 
 
 def test_an_accession_finds_the_record_that_holds_it():
-    records = ["FamGensp1GCF0000000011", "FamGensp2GCF00000000110"]
+    records = ["Fam_Gen_sp1_GCF_000000001.1", "Fam.Gen.sp2.GCF_000000001.10"]
     matched, unmatched, ambiguous = resolve_names(
         ["GCF_000000001.1", "GCF_000000001.10", "Fam_Gen_sp1_GCF_000000001.1", "other"],
         records)
@@ -109,7 +109,7 @@ def test_an_accession_finds_the_record_that_holds_it():
 
 def test_an_accession_in_two_records_matches_neither():
     _matched, _unmatched, ambiguous = resolve_names(
-        ["GCF_000000001.1"], ["aGCF0000000011", "bGCF0000000011"])
+        ["GCF_000000001.1"], ["a_GCF_000000001.1", "b_GCF_000000001.1"])
     assert ambiguous == ["GCF_000000001.1"]
 
 
