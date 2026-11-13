@@ -118,6 +118,25 @@ COPIES = Info("COPIES", "1", "Integer",
               "those in unique sequence. 0 when no k-mer of A, C, G and T holds it")
 
 
+LOCUS = Info("LOCUS", "1", "String",
+             "First and last base on the contig of the gene the SNP lies in; canSNPs of a "
+             "node are chosen from different genes where they can be")
+
+OBS_DISCORDANT = Info("OBS_DISCORDANT", "1", "Integer",
+                      "Number of genomes of a typing report in which the SNP disagreed with "
+                      "the other canSNPs of its node or with the genome's path")
+OBS_GENOMES = Info("OBS_GENOMES", "1", "Integer",
+                   "Number of genomes of the typing report the SNP was observed in; 0 when "
+                   "the scheme the report typed with did not hold it")
+OBS_MISSING = Info("OBS_MISSING", "1", "Integer",
+                   "Number of genomes of a typing report without a base at the SNP")
+
+
+def count_of(record: "Record", key: str) -> int:
+    value = record.info.get(key)
+    return int(value) if value not in (None, "") else 0
+
+
 def copies_of(record: "Record") -> int:
     value = record.info.get("COPIES")
     return int(value) if value not in (None, "") else 1
@@ -386,8 +405,9 @@ def term_infos() -> list[Info]:
             for term, key in INFO_KEYS.items()]
 
 
-def score_filters(cutoff: int, top: int | None) -> list[Filter]:
-    filters = [Filter("LowScore", f"SCORE is not above the cutoff of {cutoff}")]
+def score_filters(cutoff: int | None, top: int | None) -> list[Filter]:
+    filters = [Filter("LowScore", f"SCORE is not above the cutoff of {cutoff}"
+                                  if cutoff is not None else "Not applied: no cutoff was set")]
     if top is not None:
         filters.append(Filter("NotTop", f"Not among the {top} highest scoring canSNPs of its "
                                         f"node"))
@@ -446,10 +466,12 @@ def read_snps(path: str, reference: Reference) -> list[Snp]:
     return snps
 
 
-def write_scores(path: str, scores, reference: Reference, reference_path: str, cutoff: int,
-                 top: int | None, weights: dict[str, float], copies: bool = False) -> int:
+def write_scores(path: str, scores, reference: Reference, reference_path: str,
+                 cutoff: int | None, top: int | None, weights: dict[str, float],
+                 copies: bool = False, observed: bool = False) -> int:
     """Write scored canSNPs, each with its terms and the filters it failed;
-    with ``copies``, with the copy number of their context as well."""
+    with ``copies``, with the copy number of their context as well, and with
+    ``observed``, with how they behaved in a typing report."""
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS, TERMS
 
     records = []
@@ -462,13 +484,20 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str, c
         record.info["MISSING"] = str(getattr(score, "missing", 0))
         if copies:
             record.info["COPIES"] = str(getattr(score, "copies", 1))
+        if getattr(score, "locus", ""):
+            record.info["LOCUS"] = score.locus
+        if observed:
+            record.info["OBS_GENOMES"] = str(getattr(score, "observed_genomes", 0))
+            record.info["OBS_DISCORDANT"] = str(getattr(score, "discordant", 0))
+            record.info["OBS_MISSING"] = str(getattr(score, "observed_missing", 0))
         record.filters = list(score.filters)
         records.append(record)
 
     weighting = ",".join(f"{term}={weights.get(term, 1.0):g}" for term in TERMS)
     header = header_lines(reference, reference_path, "evaluate",
                           [NODE, ANCESTRAL, SCORE, *term_infos(), MISSING,
-                           *([COPIES] if copies else [])],
+                           *([COPIES] if copies else []), LOCUS,
+                           *([OBS_GENOMES, OBS_DISCORDANT, OBS_MISSING] if observed else [])],
                           score_filters(cutoff, top),
                           [f"##CanSNPCreatorWeights={weighting}"])
     return write(path, header, records)
@@ -502,7 +531,10 @@ def read_scores(path: str, reference: Reference | None = None):
                 terms={term: int(record.info[key]) for term, key in INFO_KEYS.items()},
                 derived=record.derived, ancestral=record.ancestral,
                 filters=list(record.filters), missing=missing_of(record),
-                copies=copies_of(record)))
+                copies=copies_of(record), locus=record.info.get("LOCUS") or "",
+                discordant=count_of(record, "OBS_DISCORDANT"),
+                observed_genomes=count_of(record, "OBS_GENOMES"),
+                observed_missing=count_of(record, "OBS_MISSING")))
         except (KeyError, TypeError, ValueError):
             raise VcfError(
                 f"{path}: {record.chrom}:{record.pos} lacks a whole number score") from None

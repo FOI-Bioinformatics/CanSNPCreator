@@ -57,6 +57,7 @@ from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 from cansnpscorer.tree_tools import place, read_genome_tree, read_members
+from cansnpscorer.typing_report import TypingError, type_alignment, write_report
 
 BASES = frozenset("ACGT")
 
@@ -497,8 +498,12 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
          min_clade_snps=1, tree=None, members=None, masks=None,
          masks_concatenated=False, contig_aliases=None,
-         genome_conflicts=GENOME_CONFLICTS) -> int:
+         genome_conflicts=GENOME_CONFLICTS, typing_report=None) -> int:
     """Audit an existing scheme. Returns an exit status.
+
+    With ``typing_report``, a prefix, every genome of the alignment is typed
+    with the scheme and the tables of :mod:`cansnpscorer.typing_report` are
+    written; that needs the alignment but no placement of its genomes.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
     the scheme holds a problem, or, with ``strict``, a recommendation.
@@ -522,6 +527,9 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         return 1
     if members and not tree:
         logging.error("--members applies to the leaves of --tree")
+        return 1
+    if typing_report and not alignment:
+        logging.error("--typing-report types the genomes of --alignment, so it needs one")
         return 1
 
     if genome and not reference:
@@ -556,7 +564,12 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
             elif not tree:
                 # The scheme lists the genomes it was made from; an outgroup
                 # sits at no node and counts as outside every node.
-                if not scheme.genomes:
+                if not scheme.genomes and typing_report:
+                    logging.info(
+                        "No genome map, tree or genomes file says where the genomes sit, so "
+                        "they are typed with the scheme but its SNPs are not checked against "
+                        "a placement")
+                elif not scheme.genomes:
                     logging.error(
                         f"the scheme lists no genomes ({scheme.organism}_genomes.txt), so "
                         f"--genome-map or --tree must say where the genomes sit")
@@ -566,7 +579,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
                 # where it does not: they were never aligned.
                 from cansnpscorer.helpers.names import resolve_names
 
-                clusters = {}
+                clusters = {} if scheme.genomes else None
                 listed = [entry for entry in scheme.genomes if entry[2] != "outgroup"]
                 matched, _unmatched, _ambiguous = resolve_names(
                     [accession for accession, _node, _role in listed], list(aligned))
@@ -577,10 +590,11 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
                         skipped += 1
                         continue
                     clusters.setdefault(node, []).append(accession)
-                logging.info(
-                    f"Placed {sum(len(found) for found in clusters.values())} genomes as the "
-                    f"scheme's genomes file lists them"
-                    + (f"; {skipped} members are not in the alignment" if skipped else ""))
+                if clusters is not None:
+                    logging.info(
+                        f"Placed {sum(len(found) for found in clusters.values())} genomes as "
+                        f"the scheme's genomes file lists them"
+                        + (f"; {skipped} members are not in the alignment" if skipped else ""))
             else:
                 genome_tree = read_genome_tree(tree)
                 folded = read_members(members, genome_tree) if members else None
@@ -609,6 +623,14 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     for line in summarize(scheme, findings):
         logging.info(line)
+
+    if typing_report:
+        try:
+            write_report(type_alignment(scheme, aligned, sequence, genome, clusters,
+                                        min_required_hits, genome_conflicts), typing_report)
+        except (OSError, TypingError, ReferenceError) as error:
+            logging.error(error)
+            return 1
 
     if output:
         try:

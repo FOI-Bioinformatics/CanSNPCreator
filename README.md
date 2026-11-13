@@ -202,17 +202,40 @@ canSNPs are kept, and ranked after those in unique sequence. `--copy-kmer 0`
 leaves the count out. Counting 187,000 candidates on a 3.4 Mbp reference takes
 about five seconds and 0.7 GB of memory.
 
-Within a node, canSNPs are taken in this order: unique sequence first, then
-fewer genomes without a base (`INFO/MISSING`), then the higher score, then by
-contig and position. In the same *Brucella* genomes, ranking further by how
-consistently each candidate behaved in the held-out genomes changed the rank-1
-SNP of few nodes and did not lower how often it disagreed with its node, so
-this order is kept.
+`--profile` says what the scheme is for. `assay`, the default, uses every term
+with the gene term counted twice and a cutoff of 500, as before. `typing` is
+for schemes typed from genome alignments, as CanSNPer2 types them: the GC term
+is left out, since it matters to a primer and not to an alignment, the gene
+term counts once, and no cutoff is applied, so that every node keeps the
+canSNPs it has and they are only ranked. `--score-weight` and `--cutoff`
+override either.
 
-`--top-n` passes the best N canSNPs of each node, in that order, passing over
-any within `--min-spacing` bases (default 1000) of one already taken, so that
-the canSNPs of a node do not share a locus that one deletion or recombination
-event could remove.
+Within a node, canSNPs are taken in this order: unique sequence first, then
+fewer genomes in which the SNP disagreed with its node in a typing report
+(see below), then fewer genomes without a base (`INFO/MISSING`), then the
+higher score, then by contig and position. What was observed of a SNP comes
+before its score, which only describes its context in the reference.
+
+`--observed` reads the `_snps.tsv` table that `audit --typing-report` writes
+for a scheme exported from these canSNPs, and records in
+`INFO/OBS_DISCORDANT`, `INFO/OBS_MISSING` and `INFO/OBS_GENOMES` how each
+canSNP behaved in the genomes typed. A canSNP that was typed with and held is
+ranked before one that was never observed, and one that disagreed with its
+node after both. For a ranking of every candidate, export the scheme the
+report types with using `--snps-per-node all --min-spacing 0`. In 1,229
+*Brucella* genomes left out of a scheme's tree, ranking by held-out behaviour
+changed the rank-1 SNP of few nodes, so the gain on a clonal organism is
+expected to be small.
+
+`--top-n` passes the best N canSNPs of each node, chosen so that one event
+removes as few of them as possible. The first is the best ranked, which is the
+SNP a scheme of one canSNP per node carries. After it, among canSNPs of equal
+reliability, one in a gene none of the set lies in (`INFO/LOCUS`) is taken
+before one that shares a gene with it, then the higher score, and of equal
+scores one on a contig the set does not yet use. No canSNP within
+`--min-spacing` bases (default 1000) of one already taken is taken. `export`
+reports the nodes whose canSNPs share a gene, and those with fewer canSNPs
+than asked for.
 
 ### Export
 
@@ -355,6 +378,35 @@ how many SNPs mark them), and sites that fit no grouping the scheme can hold
 (`conflicting-sites`). A grouping that contradicts a better supported one is
 counted as conflicting rather than offered. On a 2 Mbp genome, eight genomes
 take about five seconds; the time grows with the number of genomes.
+
+`--typing-report PREFIX` evaluates the scheme on the genomes of `--alignment`
+without being told where they belong, so it can be run on genomes the scheme
+was not made from. Every genome is typed twice: by the rule of CanSNPer2
+2.2.0, which reads the first canSNP of each node and calls the deepest node
+whose whole chain from the root is derived, and by the majority of each
+node's canSNPs, where a node without a decision may lie on the way to a
+derived node below it. Four tables are written:
+
+- `PREFIX_genomes.tsv`: the call under each rule, where the single rule
+  stopped and why, and the nodes that support or contradict the call. With a
+  genome map, a tree or the scheme's genomes file, each call is compared with
+  the node expected.
+- `PREFIX_snps.tsv`: for each canSNP, in how many genomes it has no base,
+  disagrees with the other canSNPs of its node, is ancestral on the genome's
+  path or derived off it. Genomes that contradict the scheme at
+  `--genome-conflicts` nodes or more are left out of these counts. This is
+  the table `evaluate --observed` reads.
+- `PREFIX_nodes.tsv`: for each node, the genomes passing through it, how many
+  carry every canSNP of its set, the smallest margin between derived and
+  ancestral canSNPs, and how many genomes the single rule lost there.
+- `PREFIX_summary.tsv`: genomes typed, mean depth of the call and, where
+  known, agreement with the expected node, under each rule.
+
+The difference between the two rules is what a set of canSNPs per node would
+gain on those genomes. In a *Brucella* scheme of 94 nodes with up to five
+canSNPs per node, typed on the 109 genomes it was made from, the single rule
+typed 102 genomes and the set rule 108; the six it gained lie at nodes fewer
+than three nodes from the root.
 
 Each finding is a problem, which makes part of the scheme wrong or impossible
 to type, or a recommendation, which leaves it usable, and each asks to
