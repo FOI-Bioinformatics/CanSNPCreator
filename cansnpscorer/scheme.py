@@ -16,8 +16,8 @@ reference genome with a header.
 import glob
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
 
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 
@@ -82,28 +82,28 @@ class Scheme:
     """A scheme as its three source files hold it."""
 
     organism: str
-    paths: List[List[str]] = field(default_factory=list)
-    snps: List[SchemeSnp] = field(default_factory=list)
-    references: List[SchemeReference] = field(default_factory=list)
-    hierarchy: Optional[Hierarchy] = None
-    genomes: List[Tuple[str, str, str]] = field(default_factory=list)
+    paths: list[list[str]] = field(default_factory=list)
+    snps: list[SchemeSnp] = field(default_factory=list)
+    references: list[SchemeReference] = field(default_factory=list)
+    hierarchy: Hierarchy | None = None
+    genomes: list[tuple[str, str, str]] = field(default_factory=list)
     """The genomes the scheme was made from, as (accession, node, role), when
     the scheme lists them in its optional genomes file."""
-    snp_set: List[SchemeSnp] = field(default_factory=list)
+    snp_set: list[SchemeSnp] = field(default_factory=list)
     """Every canSNP of each node, ranked, when the scheme lists more than one
     in its optional canSNP set; rank 1 is the SNP of the SNP file."""
     # Nodes placed under more than one parent, as (node, parents). The tree
     # reader of CanSNPer2 does not refuse these; it creates a second node with
     # the same name and attaches the SNP to one of them.
-    conflicts: List[Tuple[str, List[str]]] = field(default_factory=list)
-    problems: List[str] = field(default_factory=list)
+    conflicts: list[tuple[str, list[str]]] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)
 
     @property
-    def nodes(self) -> List[str]:
+    def nodes(self) -> list[str]:
         """Every node of the tree, parents before their children where known."""
         if self.hierarchy is not None:
             return self.hierarchy.nodes
-        seen: List[str] = []
+        seen: list[str] = []
         for path in self.paths:
             for node in path:
                 if node not in seen:
@@ -111,30 +111,30 @@ class Scheme:
         return seen
 
     @property
-    def snps_by_node(self) -> Dict[str, List[SchemeSnp]]:
-        by_node: Dict[str, List[SchemeSnp]] = {}
+    def snps_by_node(self) -> dict[str, list[SchemeSnp]]:
+        by_node: dict[str, list[SchemeSnp]] = {}
         for snp in self.snps:
             by_node.setdefault(snp.node, []).append(snp)
         return by_node
 
     @property
-    def checked_snps(self) -> List[SchemeSnp]:
+    def checked_snps(self) -> list[SchemeSnp]:
         """The SNPs to check against a genome or an alignment: those of the SNP
         file, and every further rank of the canSNP set."""
         return self.snps + [snp for snp in self.snp_set if snp.rank > 1]
 
     @property
-    def references_by_genome(self) -> Dict[str, SchemeReference]:
+    def references_by_genome(self) -> dict[str, SchemeReference]:
         return {reference.genome: reference for reference in self.references}
 
 
-def schemes_in(directory: str) -> List[str]:
+def schemes_in(directory: str) -> list[str]:
     """The organisms whose tree file is in this directory."""
     found = glob.glob(os.path.join(glob.escape(directory), "*" + TREE_SUFFIX))
     return sorted(os.path.basename(path)[:-len(TREE_SUFFIX)] for path in found)
 
 
-def paths_for(directory: str, organism: str) -> Tuple[str, str, str]:
+def paths_for(directory: str, organism: str) -> tuple[str, str, str]:
     """The three file paths of one scheme."""
     return (
         os.path.join(directory, organism + TREE_SUFFIX),
@@ -143,9 +143,9 @@ def paths_for(directory: str, organism: str) -> Tuple[str, str, str]:
     )
 
 
-def _rows(path: str, columns: Sequence[str], problems: List[str]) -> List[Tuple[int, List[str]]]:
+def _rows(path: str, columns: Sequence[str], problems: list[str]) -> list[tuple[int, list[str]]]:
     """Read a tab separated file with a header, checking the column names."""
-    rows: List[Tuple[int, List[str]]] = []
+    rows: list[tuple[int, list[str]]] = []
     with open(path, newline="") as handle:
         # Only LF and CR LF end a line; splitlines would also split on Unicode
         # line separators inside a field.
@@ -177,10 +177,10 @@ def _rows(path: str, columns: Sequence[str], problems: List[str]) -> List[Tuple[
     return rows
 
 
-def read_tree_file(path: str) -> Tuple[List[List[str]], List[str]]:
+def read_tree_file(path: str) -> tuple[list[list[str]], list[str]]:
     """Read the tree file as a list of paths from the root."""
-    problems: List[str] = []
-    paths: List[List[str]] = []
+    problems: list[str] = []
+    paths: list[list[str]] = []
 
     with open(path, newline="") as handle:
         for number, line in enumerate(
@@ -199,17 +199,17 @@ def read_tree_file(path: str) -> Tuple[List[List[str]], List[str]]:
     return paths, problems
 
 
-def hierarchy_from_paths(paths: Sequence[Sequence[str]]) -> Tuple[Optional[Hierarchy],
-                                                                 List[Tuple[str, List[str]]],
-                                                                 List[str]]:
+def hierarchy_from_paths(paths: Sequence[Sequence[str]]) -> tuple[Hierarchy | None,
+                                                                 list[tuple[str, list[str]]],
+                                                                 list[str]]:
     """Turn the tree file's paths into a hierarchy.
 
     A node named under two parents is reported rather than raised on, and the
     first parent is kept, so that the rest of the scheme can still be examined.
     """
-    parents: Dict[str, Optional[str]] = {}
-    seen: Dict[str, List[str]] = {}
-    problems: List[str] = []
+    parents: dict[str, str | None] = {}
+    seen: dict[str, list[str]] = {}
+    problems: list[str] = []
 
     for path in paths:
         for depth, node in enumerate(path):
@@ -230,7 +230,7 @@ def hierarchy_from_paths(paths: Sequence[Sequence[str]]) -> Tuple[Optional[Hiera
     return hierarchy, sorted(conflicts), problems
 
 
-def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
+def read_scheme(directory: str, organism: str | None = None) -> Scheme:
     """Read one scheme from a directory of CanSNPer2-data source files.
 
     Args:
@@ -270,7 +270,7 @@ def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
     hierarchy, conflicts, tree_problems = hierarchy_from_paths(paths)
     problems += tree_problems
 
-    snps: List[SchemeSnp] = []
+    snps: list[SchemeSnp] = []
     for number, fields in _rows(snp_path, SNP_COLUMNS, problems):
         node, strain, reference, genome, position, derived, ancestral = fields
         try:
@@ -285,11 +285,11 @@ def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
                               derived=derived.strip(), ancestral=ancestral.strip(),
                               line=number))
 
-    references: List[SchemeReference] = []
+    references: list[SchemeReference] = []
     for number, fields in _rows(references_path, REFERENCE_COLUMNS, problems):
         references.append(SchemeReference(*[field.strip() for field in fields], line=number))
 
-    genomes: List[Tuple[str, str, str]] = []
+    genomes: list[tuple[str, str, str]] = []
     genomes_path = os.path.join(directory, organism + GENOMES_SUFFIX)
     if os.path.isfile(genomes_path):
         for number, fields in _rows(genomes_path, GENOME_COLUMNS, problems):
@@ -300,7 +300,7 @@ def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
                 continue
             genomes.append((genome, node, role))
 
-    snp_set: List[SchemeSnp] = []
+    snp_set: list[SchemeSnp] = []
     snp_set_path = os.path.join(directory, organism + SNP_SET_SUFFIX)
     if os.path.isfile(snp_set_path):
         snp_set = read_snp_set(snp_set_path, snps, problems)
@@ -315,14 +315,14 @@ def read_scheme(directory: str, organism: Optional[str] = None) -> Scheme:
                   problems=problems)
 
 
-def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: List[str]) -> List[SchemeSnp]:
+def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: list[str]) -> list[SchemeSnp]:
     """Read the optional ranked canSNPs of each node.
 
     Rank 1 of a node must be the SNP the SNP file gives it, since that is the
     one CanSNPer2 calls; a disagreement is a problem of the scheme.
     """
     name = os.path.basename(path)
-    snp_set: List[SchemeSnp] = []
+    snp_set: list[SchemeSnp] = []
     for number, fields in _rows(path, SNP_SET_COLUMNS, problems):
         node, rank, genome, position, derived, ancestral, _score = (f.strip() for f in fields)
         try:

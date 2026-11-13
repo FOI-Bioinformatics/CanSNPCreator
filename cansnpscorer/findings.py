@@ -8,7 +8,6 @@ settle on its own.
 """
 
 from dataclasses import dataclass
-from typing import List
 
 PROBLEM = "problem"
 RECOMMENDATION = "recommendation"
@@ -30,7 +29,7 @@ class Finding:
     node: str
     detail: str
 
-    def row(self) -> List[str]:
+    def row(self) -> list[str]:
         return [self.severity, self.action, self.category, self.node, self.detail]
 
     def __str__(self) -> str:

@@ -2,6 +2,7 @@
 
 import gzip
 import logging
+from pathlib import Path
 
 import pytest
 from conftest import cli_run
@@ -220,7 +221,7 @@ def test_fasta_comments_spaces_and_bad_characters(tmp_path):
 
 
 def test_a_truncated_gzip_file_is_an_error_not_a_traceback(dataset, tmp_path, caplog):
-    whole = gzip.compress(open(dataset.reference, "rb").read())
+    whole = gzip.compress(Path(dataset.reference).read_bytes())
     truncated = tmp_path / "reference.fasta.gz"
     truncated.write_bytes(whole[: len(whole) // 2])
     with caplog.at_level(logging.ERROR):
@@ -269,8 +270,8 @@ def test_a_scheme_directory_with_glob_characters_is_found(tmp_path):
 def test_export_metadata_that_would_corrupt_the_files_is_refused(field, value, message):
     from cansnpscorer.cansnp_export import check_metadata
 
-    values = dict(genome="G", strain="s", reference="r", genbank_id="GCA_000007125.1",
-                  refseq_id="GCF_000007125.1", assembly_name="A", organism="t")
+    values = {"genome": "G", "strain": "s", "reference": "r", "genbank_id": "GCA_000007125.1",
+                  "refseq_id": "GCF_000007125.1", "assembly_name": "A", "organism": "t"}
     values[field] = value
     assert any(message in problem for problem in check_metadata(**values))
 

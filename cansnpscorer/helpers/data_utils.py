@@ -2,8 +2,8 @@ import logging
 import math
 from bisect import bisect_right
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
 
@@ -70,7 +70,7 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50,
     return max(normalized_deviation, 0.0)
 
 #Binary search algorithm
-def search(snp: int, intervals: Sequence[Sequence[int]], limit: int) -> Tuple[float, Optional[Sequence[int]]]:
+def search(snp: int, intervals: Sequence[Sequence[int]], limit: int) -> tuple[float, Sequence[int] | None]:
     """
     Find the interval that holds a position, or the nearest one within limit of it.
 
@@ -104,7 +104,7 @@ def search(snp: int, intervals: Sequence[Sequence[int]], limit: int) -> Tuple[fl
     return nearest / float(limit), None
 
 
-def codon_comparer(variants: List[str], strand: str) -> float:
+def codon_comparer(variants: list[str], strand: str) -> float:
     """
     Compare two codons to determine their similarity.
 
@@ -152,8 +152,8 @@ def called_needed(total: int, min_called: float) -> int:
     return max(1, math.ceil(min_called * total - 1e-9))
 
 
-def snp_extractor(fasta: Dict[str, str],
-                  min_called: float = 1.0) -> List[Dict[str, Union[int, Dict[str, int]]]]:
+def snp_extractor(fasta: dict[str, str],
+                  min_called: float = 1.0) -> list[dict[str, int | dict[str, int]]]:
     """
     Extract Single Nucleotide Polymorphisms (SNPs) from genomic alignments.
 
@@ -191,7 +191,7 @@ def snp_extractor(fasta: Dict[str, str],
     # faster than indexing every genome in Python, and the counts include the
     # reference row as the first element.
     needed = called_needed(len(rows), min_called)
-    for index, column in enumerate(zip(*rows)):
+    for index, column in enumerate(zip(*rows, strict=True)):
         if column[0] not in nucleotides:
             continue
         counts = Counter(column)
@@ -210,7 +210,7 @@ def snp_extractor(fasta: Dict[str, str],
     logging.info(f"Extraction of {len(snps)} SNPs complete")
     return snps
 
-def variable_columns(fasta: Dict[str, str], genomes: Sequence[str]) -> List[int]:
+def variable_columns(fasta: dict[str, str], genomes: Sequence[str]) -> list[int]:
     """
     The columns where at least two of these genomes carry different bases.
 
@@ -231,8 +231,8 @@ def variable_columns(fasta: Dict[str, str], genomes: Sequence[str]) -> List[int]
         return []
     pick = itemgetter(*indexes)
     nucleotides = frozenset("ACGT")
-    found: List[int] = []
-    for index, column in enumerate(zip(*fasta.values())):
+    found: list[int] = []
+    for index, column in enumerate(zip(*fasta.values(), strict=True)):
         # Most columns are the same in every genome; set() on the whole column
         # rules them out before the chosen genomes are looked at.
         if len(set(column)) < 2:
@@ -242,11 +242,11 @@ def variable_columns(fasta: Dict[str, str], genomes: Sequence[str]) -> List[int]
     return found
 
 
-def nearest_distances(positions: Sequence[Tuple[str, int]],
-                      variable: Dict[str, List[int]]) -> List[Optional[int]]:
+def nearest_distances(positions: Sequence[tuple[str, int]],
+                      variable: dict[str, list[int]]) -> list[int | None]:
     """For each (contig, 0-based position), the distance to the nearest other
     variable position on the same contig, or None when there is none."""
-    distances: List[Optional[int]] = []
+    distances: list[int | None] = []
     for contig, position in positions:
         found = variable.get(contig, [])
         index = bisect_right(found, position)
@@ -267,11 +267,11 @@ class CanSnp:
     """
 
     column: int
-    bases: Tuple[str, ...]
-    node: Optional[str] = None
-    derived: Optional[str] = None
-    ancestral: Optional[str] = None
-    also_matched: Tuple[str, ...] = ()
+    bases: tuple[str, ...]
+    node: str | None = None
+    derived: str | None = None
+    ancestral: str | None = None
+    also_matched: tuple[str, ...] = ()
     """Further nodes separated by the same column, which makes it ambiguous."""
     missing: int = 0
     """Genomes without a base (gap or N) in the column."""
@@ -281,9 +281,9 @@ class CanSnp:
         return self.node is not None
 
 
-def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
-                     snps: List[Dict[str, Union[int, Dict[str, int]]]],
-                     min_called: float = 1.0) -> List[CanSnp]:
+def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
+                     snps: list[dict[str, int | dict[str, int]]],
+                     min_called: float = 1.0) -> list[CanSnp]:
     """
     Find which of the SNPs separate exactly the isolates below one node.
 
@@ -331,7 +331,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
         for node, isolates in groups.items() if isolates
     }
 
-    cansnps: List[CanSnp] = []
+    cansnps: list[CanSnp] = []
     canonical = 0
     ambiguous = 0
     complementary = 0
@@ -342,7 +342,7 @@ def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
         bases = tuple(counts)
 
         missing = snp.get('missing', 0)
-        matches: List[Tuple[str, str]] = []
+        matches: list[tuple[str, str]] = []
         for node, isolates in members.items():
             if not missing:
                 shared = alignment[isolates[0]][column]
@@ -482,7 +482,7 @@ def summarize_scores(nodes_data, scores):
     Returns:
         dict: The nodes that have at least one SNP, and how many.
     """
-    node_counts = {node: 0 for node in nodes_data}
+    node_counts = dict.fromkeys(nodes_data, 0)
 
     for score in scores:
         if score.node in node_counts:

@@ -14,8 +14,8 @@ refuses to do so unless the alignment and the reference agree base for base.
 
 from array import array
 from bisect import bisect_right
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 GAP_CHARACTERS = frozenset("-.~")
 COMPLEMENT = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
@@ -76,14 +76,14 @@ class Reference:
     def __init__(self, contigs: Sequence[Contig]) -> None:
         if not contigs:
             raise ReferenceError("the reference holds no sequence")
-        self.contigs: List[Contig] = list(contigs)
+        self.contigs: list[Contig] = list(contigs)
         self._starts = [contig.start for contig in self.contigs]
-        self._by_name: Dict[str, Contig] = {contig.name: contig for contig in self.contigs}
+        self._by_name: dict[str, Contig] = {contig.name: contig for contig in self.contigs}
 
     @classmethod
-    def from_records(cls, records: Iterable[Tuple[str, str]]) -> "Reference":
+    def from_records(cls, records: Iterable[tuple[str, str]]) -> "Reference":
         """Build a reference from (name, sequence) pairs in file order."""
-        contigs: List[Contig] = []
+        contigs: list[Contig] = []
         start = 0
         for name, sequence in records:
             if name in {contig.name for contig in contigs}:
@@ -105,7 +105,7 @@ class Reference:
         return "".join(contig.sequence for contig in self.contigs)
 
     @property
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         return [contig.name for contig in self.contigs]
 
     def contig(self, name: str) -> Contig:
@@ -115,7 +115,7 @@ class Reference:
             )
         return self._by_name[name]
 
-    def locate(self, position: int) -> Tuple[Contig, int]:
+    def locate(self, position: int) -> tuple[Contig, int]:
         """Split a 0-based global position into a contig and a 0-based local position."""
         if not 0 <= position < self.length:
             raise ReferenceError(
@@ -172,7 +172,7 @@ class AlignmentMap:
                     positions.append(position)
                     position += 1
             mismatches = [
-                index for index, (left, right) in enumerate(zip(observed, expected))
+                index for index, (left, right) in enumerate(zip(observed, expected, strict=True))
                 if left != right
             ]
         elif len(aligned_reference) <= len(expected):
@@ -207,7 +207,7 @@ class AlignmentMap:
             )
 
         self._positions = positions
-        self._columns: Optional[array] = None
+        self._columns: array | None = None
 
     @property
     def columns(self) -> int:
@@ -219,14 +219,14 @@ class AlignmentMap:
         covered = sum(1 for position in self._positions if position >= 0)
         return self.reference.length - covered
 
-    def to_reference(self, column: int) -> Optional[int]:
+    def to_reference(self, column: int) -> int | None:
         """The 0-based global position for a column, or None if the reference is gapped there."""
         if not 0 <= column < self.columns:
             raise ReferenceError(f"column {column} is outside the alignment")
         position = self._positions[column]
         return None if position < 0 else position
 
-    def to_column(self, position: int) -> Optional[int]:
+    def to_column(self, position: int) -> int | None:
         """The column holding a 0-based global position, or None if no column does."""
         if not 0 <= position < self.reference.length:
             raise ReferenceError(
@@ -241,7 +241,7 @@ class AlignmentMap:
         column = self._columns[position]
         return None if column < 0 else column
 
-    def locate(self, column: int) -> Optional[Tuple[Contig, int]]:
+    def locate(self, column: int) -> tuple[Contig, int] | None:
         """The contig and 1-based position for a column, or None if the reference is gapped."""
         position = self.to_reference(column)
         if position is None:

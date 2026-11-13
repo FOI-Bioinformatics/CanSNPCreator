@@ -480,7 +480,7 @@ def test_a_ucsc_chromalias_table_is_read(tmp_path):
 def test_two_names_for_one_contig_are_refused():
     from cansnpscorer.cansnp_evaluator import annotations_by_contig
 
-    with pytest.raises(ValueError, match="describes the contig NZ_A.1 twice"):
+    with pytest.raises(ValueError, match=r"describes the contig NZ_A\.1 twice"):
         annotations_by_contig({"NZ_A.1": [(0, 1)], "A.1": [(2, 3)]}, two_contig_reference(),
                               "gene", [{"A.1", "NZ_A.1"}])
 

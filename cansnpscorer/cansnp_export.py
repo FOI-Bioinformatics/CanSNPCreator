@@ -25,7 +25,7 @@ SNP of the SNP file.
 import logging
 import os
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import ranking, select_per_node
@@ -61,14 +61,14 @@ SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
 REFERENCE_COLUMNS = ("genome", "strain", "genbank_id", "refseq_id", "assembly_name")
 
 
-def best_per_node(scores: Sequence[ScoredSnp]) -> Dict[str, ScoredSnp]:
+def best_per_node(scores: Sequence[ScoredSnp]) -> dict[str, ScoredSnp]:
     """The highest scoring SNP of each node, among those given.
 
     A scheme carries exactly one SNP per node, and the caller passes only the
     canSNPs that passed evaluate's filters. Ties are broken by contig and
     position, so that the same input always exports the same scheme.
     """
-    best: Dict[str, ScoredSnp] = {}
+    best: dict[str, ScoredSnp] = {}
     for score in scores:
         if score.node not in best or ranking(score) < ranking(best[score.node]):
             best[score.node] = score
@@ -76,9 +76,9 @@ def best_per_node(scores: Sequence[ScoredSnp]) -> Dict[str, ScoredSnp]:
 
 
 def check_metadata(genome: str, strain: str, reference: str, genbank_id: str,
-                   refseq_id: str, assembly_name: str, organism: str = "x") -> List[str]:
+                   refseq_id: str, assembly_name: str, organism: str = "x") -> list[str]:
     """The reference genome's row must satisfy the CanSNPer2-data rules."""
-    problems: List[str] = []
+    problems: list[str] = []
     if not ORGANISM.fullmatch(organism or ""):
         problems.append(
             f"the organism '{organism}' names the files, so it may hold only letters, digits, "
@@ -114,11 +114,11 @@ def check_metadata(genome: str, strain: str, reference: str, genbank_id: str,
     return problems
 
 
-def check_scheme(hierarchy: Hierarchy, best: Dict[str, ScoredSnp],
-                 reference: Reference) -> Tuple[List[str], List[str]]:
+def check_scheme(hierarchy: Hierarchy, best: dict[str, ScoredSnp],
+                 reference: Reference) -> tuple[list[str], list[str]]:
     """Check the scheme against the rules of the CanSNPer2-data source files."""
-    problems: List[str] = []
-    warnings: List[str] = []
+    problems: list[str] = []
+    warnings: list[str] = []
 
     for node in hierarchy.nodes:
         if ";" in node:
@@ -157,7 +157,7 @@ def check_scheme(hierarchy: Hierarchy, best: Dict[str, ScoredSnp],
     return problems, warnings
 
 
-def paths_for(hierarchy: Hierarchy, kept: Sequence[str]) -> List[List[str]]:
+def paths_for(hierarchy: Hierarchy, kept: Sequence[str]) -> list[list[str]]:
     """One path per kept node, from the root, skipping the nodes left out."""
     keeping = set(kept)
     paths = []
@@ -168,8 +168,8 @@ def paths_for(hierarchy: Hierarchy, kept: Sequence[str]) -> List[List[str]]:
     return paths
 
 
-def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: Dict[str, List[str]],
-                aligned: Sequence[str]) -> Tuple[List[Tuple[str, str, str]], List[str]]:
+def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, list[str]],
+                aligned: Sequence[str]) -> tuple[list[tuple[str, str, str]], list[str]]:
     """The rows of the genomes file, and warnings about genomes left out.
 
     A genome placed at a node the scheme left out moves to the nearest node
@@ -182,7 +182,7 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: Dict[str, L
 
     keeping = set(kept)
 
-    def kept_at(node: str) -> Optional[str]:
+    def kept_at(node: str) -> str | None:
         while node is not None and node not in keeping:
             node = hierarchy.parents.get(node)
         return node
@@ -191,10 +191,10 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: Dict[str, L
     matched, _unmatched, _ambiguous = resolve_names(list(placed), aligned)
     aligned_placed = set(matched.values())
 
-    rows: List[Tuple[str, str, str]] = []
-    warnings: List[str] = []
-    no_accession: List[str] = []
-    seen: Dict[str, str] = {}
+    rows: list[tuple[str, str, str]] = []
+    warnings: list[str] = []
+    no_accession: list[str] = []
+    seen: dict[str, str] = {}
 
     def add(name: str, node: str, role: str) -> None:
         found = ACCESSION.search(name)
@@ -226,17 +226,16 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: Dict[str, L
     return rows, warnings
 
 
-def write_genomes(outdir: str, organism: str, rows: Sequence[Tuple[str, str, str]]) -> str:
+def write_genomes(outdir: str, organism: str, rows: Sequence[tuple[str, str, str]]) -> str:
     path = os.path.join(outdir, organism + GENOMES_SUFFIX)
     with open(path, "w", newline="\n") as handle:
         handle.write("\t".join(GENOME_COLUMNS) + "\n")
-        for row in rows:
-            handle.write("\t".join(row) + "\n")
+        handle.writelines("\t".join(row) + "\n" for row in rows)
     return path
 
 
 def write_snp_set(outdir: str, organism: str, paths: Sequence[Sequence[str]],
-                  chosen: Dict[str, Sequence[ScoredSnp]], reference: Reference,
+                  chosen: dict[str, Sequence[ScoredSnp]], reference: Reference,
                   genome: str) -> str:
     """Write every chosen canSNP of each kept node, ranked within the node.
 
@@ -258,17 +257,16 @@ def write_snp_set(outdir: str, organism: str, paths: Sequence[Sequence[str]],
 
 
 def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
-                 best: Dict[str, ScoredSnp], reference: Reference, genome: str, strain: str,
+                 best: dict[str, ScoredSnp], reference: Reference, genome: str, strain: str,
                  citation: str, genbank_id: str, refseq_id: str,
-                 assembly_name: str) -> List[str]:
+                 assembly_name: str) -> list[str]:
     """Write the three source files and return their paths."""
     os.makedirs(outdir, exist_ok=True)
     written = []
 
     tree_path = os.path.join(outdir, organism + TREE_SUFFIX)
     with open(tree_path, "w", newline="\n") as handle:
-        for path in paths:
-            handle.write("\t".join(path) + "\n")
+        handle.writelines("\t".join(path) + "\n" for path in paths)
     written.append(tree_path)
 
     snp_path = os.path.join(outdir, organism + SNP_SUFFIX)

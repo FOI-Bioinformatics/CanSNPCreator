@@ -27,7 +27,7 @@ the extract subcommand counts them, and are reported once.
 
 import logging
 from collections import Counter
-from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
+from collections.abc import Mapping, Sequence
 
 from cansnpscorer.findings import CHECK, EXTEND, MODIFY, Finding, problem, recommendation
 from cansnpscorer.helpers.data_utils import snp_extractor
@@ -61,7 +61,7 @@ class Placement:
                  genomes: Sequence[str]) -> None:
         hierarchy = scheme.hierarchy
         self.hierarchy = hierarchy
-        self.genomes: List[str] = list(genomes)
+        self.genomes: list[str] = list(genomes)
         known = set(genomes)
 
         self.unknown_clusters = sorted(set(clusters) - set(hierarchy.parents))
@@ -72,31 +72,31 @@ class Placement:
             node: [name for name in names if name in known]
             for node, names in clusters.items() if node in hierarchy
         }
-        self.node_of: Dict[str, str] = {}
+        self.node_of: dict[str, str] = {}
         for node, names in usable.items():
             for name in names:
                 self.node_of.setdefault(name, node)
 
         below = hierarchy.isolates(usable)
-        self.below: Dict[str, FrozenSet[str]] = {
+        self.below: dict[str, frozenset[str]] = {
             node: frozenset(names) for node, names in below.items()}
         self.ungrouped = sorted(known - set(self.node_of))
-        self.node_by_set: Dict[FrozenSet[str], str] = {}
+        self.node_by_set: dict[frozenset[str], str] = {}
         # Parents come before children, so the deepest node of a set is kept;
         # a node with one child holds the same isolates as that child.
         for node in hierarchy.nodes:
             if self.below[node]:
                 self.node_by_set[self.below[node]] = node
 
-    def lowest_holding(self, carriers: FrozenSet[str]) -> Optional[str]:
+    def lowest_holding(self, carriers: frozenset[str]) -> str | None:
         """The deepest node whose isolates include all of these genomes."""
         first = next(iter(carriers))
-        node: Optional[str] = self.node_of.get(first)
+        node: str | None = self.node_of.get(first)
         while node is not None and not carriers <= self.below[node]:
             node = self.hierarchy.parents[node]
         return node
 
-    def fits(self, carriers: FrozenSet[str], node: str) -> bool:
+    def fits(self, carriers: frozenset[str], node: str) -> bool:
         """Whether a group of genomes below ``node`` respects the scheme's children.
 
         Each child of the node must lie wholly inside the group or wholly
@@ -111,8 +111,8 @@ class Placement:
 
 
 def _bases_at(alignment: Mapping[str, str], column: int,
-              genomes: Sequence[str]) -> Dict[str, List[str]]:
-    by_base: Dict[str, List[str]] = {}
+              genomes: Sequence[str]) -> dict[str, list[str]]:
+    by_base: dict[str, list[str]] = {}
     for genome in genomes:
         base = alignment[genome][column].upper()
         by_base.setdefault(base if base in BASES else "missing", []).append(genome)
@@ -120,15 +120,15 @@ def _bases_at(alignment: Mapping[str, str], column: int,
 
 
 def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: AlignmentMap,
-                      placement: Placement, genome: Optional[str]) -> Tuple[List[Finding],
-                                                                           Set[str]]:
+                      placement: Placement, genome: str | None) -> tuple[list[Finding],
+                                                                           set[str]]:
     """Whether each SNP of the scheme is canonical in these genomes.
 
     Returns the findings and the nodes whose SNP is not canonical.
     """
-    findings: List[Finding] = []
-    failed: Set[str] = set()
-    untested: List[str] = []
+    findings: list[Finding] = []
+    failed: set[str] = set()
+    untested: list[str] = []
     canonical = 0
     not_canonical = 0
 
@@ -236,9 +236,9 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
 
 
 def scan_alignment(alignment: Mapping[str, str], mapping: AlignmentMap,
-                   placement: Placement) -> Tuple[Dict[str, List[Tuple[int, str, str]]],
-                                                  Dict[Tuple[str, FrozenSet[str]],
-                                                       List[Tuple[int, str, str]]],
+                   placement: Placement) -> tuple[dict[str, list[tuple[int, str, str]]],
+                                                  dict[tuple[str, frozenset[str]],
+                                                       list[tuple[int, str, str]]],
                                                   Counter, Counter, int]:
     """Sort every variable site by what it says about the scheme.
 
@@ -252,8 +252,8 @@ def scan_alignment(alignment: Mapping[str, str], mapping: AlignmentMap,
         - conflicting sites per genome
         - the number of sites read
     """
-    canonical: Dict[str, List[Tuple[int, str, str]]] = {}
-    clades: Dict[Tuple[str, FrozenSet[str]], List[Tuple[int, str, str]]] = {}
+    canonical: dict[str, list[tuple[int, str, str]]] = {}
+    clades: dict[tuple[str, frozenset[str]], list[tuple[int, str, str]]] = {}
     conflicts_by_node: Counter = Counter()
     conflicts_by_genome: Counter = Counter()
     grouped = frozenset(placement.node_of)
@@ -266,7 +266,7 @@ def scan_alignment(alignment: Mapping[str, str], mapping: AlignmentMap,
         position = mapping.to_reference(column)
         if position is None:
             continue
-        carriers: Dict[str, Set[str]] = {}
+        carriers: dict[str, set[str]] = {}
         for name in placement.genomes:
             carriers.setdefault(alignment[name][column].upper(), set()).add(name)
         if len(carriers) != 2:
@@ -310,16 +310,16 @@ def scan_alignment(alignment: Mapping[str, str], mapping: AlignmentMap,
 
 
 def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
-                    canonical: Dict[str, List[Tuple[int, str, str]]],
-                    clades: Dict[Tuple[str, FrozenSet[str]], List[Tuple[int, str, str]]],
-                    conflicts_by_node: Counter, conflicts_by_genome: Counter, failed: Set[str],
+                    canonical: dict[str, list[tuple[int, str, str]]],
+                    clades: dict[tuple[str, frozenset[str]], list[tuple[int, str, str]]],
+                    conflicts_by_node: Counter, conflicts_by_genome: Counter, failed: set[str],
                     sites: int, min_clade_size: int = 2, min_clade_snps: int = 1
-                    ) -> List[Finding]:
+                    ) -> list[Finding]:
     """Replacements for failed SNPs, nodes these genomes do not support, and new clades."""
-    findings: List[Finding] = []
+    findings: list[Finding] = []
     reference = mapping.reference
 
-    def described(entries: Sequence[Tuple[int, str, str]]) -> str:
+    def described(entries: Sequence[tuple[int, str, str]]) -> str:
         shown = [f"{position + 1} ({_where(reference, position)}, {ancestral}>{derived})"
                  for position, derived, ancestral in entries[:3]]
         return "; ".join(shown) + (" and others" if len(entries) > 3 else "")
@@ -355,7 +355,7 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
     # contradict each other: genomes shared without one holding the other. No
     # tree holds both, so the better supported one is kept and the other is
     # counted with the conflicting sites, as homoplasy or noise.
-    accepted: List[FrozenSet[str]] = []
+    accepted: list[frozenset[str]] = []
     candidates = []
     contradicted = 0
     for (parent, group), entries in ranked:
@@ -409,8 +409,8 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
 
 def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Reference,
                             clusters: Mapping[str, Sequence[str]],
-                            genome: Optional[str] = None, min_clade_size: int = 2,
-                            min_clade_snps: int = 1) -> List[Finding]:
+                            genome: str | None = None, min_clade_size: int = 2,
+                            min_clade_snps: int = 1) -> list[Finding]:
     """Every check that needs the genomes, as one list of findings.
 
     Args:
@@ -424,7 +424,7 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
         min_clade_size: The fewest genomes a new clade is reported for.
         min_clade_snps: The fewest SNPs a new clade is reported with.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     if scheme.hierarchy is None:
         return [problem(CHECK, "alignment", "",

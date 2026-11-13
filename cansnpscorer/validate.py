@@ -14,19 +14,19 @@ scheme that cannot be typed.
 """
 
 import logging
-from typing import Dict, List, Mapping, Sequence, Tuple
+from collections.abc import Mapping, Sequence
 
 from cansnpscorer.hierarchy import Hierarchy
 from cansnpscorer.model import AlignmentMap, Reference, ReferenceError, ungap
 
-Report = Tuple[List[str], List[str]]
+Report = tuple[list[str], list[str]]
 
 
 def check_alignment_against_reference(alignment: Mapping[str, str],
                                      reference: Reference) -> Report:
     """The alignment's first record must be this reference genome."""
-    problems: List[str] = []
-    warnings: List[str] = []
+    problems: list[str] = []
+    warnings: list[str] = []
 
     if not alignment:
         return ["the alignment holds no genomes"], warnings
@@ -58,10 +58,10 @@ def check_alignment_against_reference(alignment: Mapping[str, str],
 def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[str]],
                  hierarchy: Hierarchy, reference_name: str = "") -> Report:
     """The genome map, the hierarchy and the alignment must describe one set of genomes."""
-    problems: List[str] = []
-    warnings: List[str] = []
+    problems: list[str] = []
+    warnings: list[str] = []
 
-    grouped: Dict[str, List[str]] = {}
+    grouped: dict[str, list[str]] = {}
     for cluster, isolates in clusters.items():
         for isolate in isolates:
             grouped.setdefault(isolate, []).append(cluster)
@@ -116,8 +116,8 @@ def unresolved_genomes(unmatched: Sequence[str], ambiguous: Sequence[str]) -> Re
     the representatives. A name that matches two records is a problem, since
     either choice could be wrong.
     """
-    problems: List[str] = []
-    warnings: List[str] = []
+    problems: list[str] = []
+    warnings: list[str] = []
     if unmatched:
         warnings.append(
             f"the genome map names {len(unmatched)} genomes that the alignment does not hold, "
@@ -132,8 +132,8 @@ def unresolved_genomes(unmatched: Sequence[str], ambiguous: Sequence[str]) -> Re
 def check_annotations(annotations: Mapping[str, Sequence[Sequence[int]]], reference: Reference,
                       description: str) -> Report:
     """Annotations must lie within the contigs they are attached to."""
-    problems: List[str] = []
-    warnings: List[str] = []
+    problems: list[str] = []
+    warnings: list[str] = []
 
     for name, intervals in annotations.items():
         if name not in reference.names:

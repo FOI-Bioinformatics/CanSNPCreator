@@ -27,14 +27,15 @@ Brucella scheme has branches two nodes deep, which CanSNPer2 cannot call with
 its default of three required hits.
 """
 
+import itertools
 import logging
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
 
 from cansnpscorer import vcf
 from cansnpscorer.alignment_audit import check_against_alignment
 from cansnpscorer.cansnp_evaluator import read_masks
 from cansnpscorer.cansnp_export import GENBANK, REFSEQ
-from cansnpscorer.findings import (  # noqa: F401  re-exported for callers of this module
+from cansnpscorer.findings import (
     CHECK,
     EXTEND,
     MODIFY,
@@ -61,9 +62,9 @@ BASES = frozenset("ACGT")
 
 
 
-def check_structure(scheme: Scheme) -> List[Finding]:
+def check_structure(scheme: Scheme) -> list[Finding]:
     """The tree, and whether every node carries exactly one SNP."""
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     for node, parents in scheme.conflicts:
         findings.append(problem(
@@ -105,10 +106,10 @@ def check_structure(scheme: Scheme) -> List[Finding]:
     return findings
 
 
-def check_alleles(scheme: Scheme) -> List[Finding]:
+def check_alleles(scheme: Scheme) -> list[Finding]:
     """Whether each SNP can be called at all, and whether any two collide."""
-    findings: List[Finding] = []
-    positions: Dict[Tuple[str, int], List[str]] = {}
+    findings: list[Finding] = []
+    positions: dict[tuple[str, int], list[str]] = {}
 
     for snp in scheme.checked_snps:
         alleles = {"derived": snp.derived, "ancestral": snp.ancestral}
@@ -141,9 +142,9 @@ def check_alleles(scheme: Scheme) -> List[Finding]:
     return findings
 
 
-def check_references(scheme: Scheme) -> List[Finding]:
+def check_references(scheme: Scheme) -> list[Finding]:
     """The references file, and whether the SNPs name a genome it holds."""
-    findings: List[Finding] = []
+    findings: list[Finding] = []
     known = scheme.references_by_genome
 
     for reference in scheme.references:
@@ -185,14 +186,14 @@ def check_references(scheme: Scheme) -> List[Finding]:
 
 
 def check_against_reference(scheme: Scheme, reference: Reference,
-                            genome: Optional[str] = None) -> List[Finding]:
+                            genome: str | None = None) -> list[Finding]:
     """Whether the reference genome carries one of the two alleles at each position.
 
     This is the direct test for positions taken from a different version of the
     assembly: a scheme whose coordinates have moved reports a reference base
     that is neither the derived nor the ancestral allele at most of its SNPs.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
     genomes = sorted({snp.genome for snp in scheme.snps})
     if genome is None:
@@ -206,8 +207,8 @@ def check_against_reference(scheme: Scheme, reference: Reference,
                 f"holds; the reference base was not checked")]
 
     checked = 0
-    mismatched: List[str] = []
-    derived_in_reference: List[str] = []
+    mismatched: list[str] = []
+    derived_in_reference: list[str] = []
 
     for snp in scheme.checked_snps:
         if snp.genome != genome or snp.position < 1:
@@ -251,7 +252,7 @@ def check_against_reference(scheme: Scheme, reference: Reference,
 
 
 def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_NODE
-                      ) -> List[Finding]:
+                      ) -> list[Finding]:
     """Whether CanSNPer2 can reach each node with its required number of hits.
 
     CanSNPer2 calls the deepest node whose path from the root carries at least
@@ -259,12 +260,12 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
     to the root than that cannot be called however good its SNP is, which is
     what we met when typing the ported Brucella and Coxiella schemes.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
     if scheme.hierarchy is None:
         return findings
 
     with_snp = set(scheme.snps_by_node)
-    shallow: List[Tuple[str, int]] = []
+    shallow: list[tuple[str, int]] = []
 
     for node in scheme.hierarchy.nodes:
         hits = sum(1 for name in scheme.hierarchy.path(node) if name in with_snp)
@@ -293,17 +294,17 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
     return findings
 
 
-def check_spacing(scheme: Scheme, proximity: int = 50) -> List[Finding]:
+def check_spacing(scheme: Scheme, proximity: int = 50) -> list[Finding]:
     """SNPs close enough together to interfere with one another's assay."""
-    findings: List[Finding] = []
+    findings: list[Finding] = []
 
-    by_genome: Dict[str, List[Tuple[int, str]]] = {}
+    by_genome: dict[str, list[tuple[int, str]]] = {}
     for snp in scheme.checked_snps:
         by_genome.setdefault(snp.genome, []).append((snp.position, snp.node))
 
     for genome, entries in sorted(by_genome.items()):
         entries.sort()
-        for (first, left), (second, right) in zip(entries, entries[1:]):
+        for (first, left), (second, right) in itertools.pairwise(entries):
             gap = second - first
             if 0 < gap <= proximity:
                 findings.append(recommendation(
@@ -316,7 +317,7 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> List[Finding]:
 
 
 def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
-                         reference: Reference, genome: Optional[str] = None) -> List[Finding]:
+                         reference: Reference, genome: str | None = None) -> list[Finding]:
     """Compare the scheme against scored candidates for the same nodes.
 
     The scores give positions by contig; the scheme counts them over the
@@ -326,7 +327,7 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
     The scores are against one reference genome, so only the scheme's SNPs on
     that genome are compared.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
     annotated = sorted({snp.genome for snp in scheme.snps})
     if genome is None:
         if len(annotated) > 1:
@@ -337,8 +338,8 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
                 f"against; the scores were not compared")]
         genome = annotated[0] if annotated else None
 
-    best: Dict[str, ScoredSnp] = {}
-    scored_at: Dict[Tuple[int, str], ScoredSnp] = {}
+    best: dict[str, ScoredSnp] = {}
+    scored_at: dict[tuple[int, str], ScoredSnp] = {}
     for score in scores:
         if score.contig in reference.names:
             position = reference.contig(score.contig).start + score.position
@@ -391,8 +392,8 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
 
 
 def check_masks(scheme: Scheme, reference: Reference,
-                masks: Mapping[str, Sequence[Tuple[int, int]]],
-                genome: Optional[str] = None) -> List[Finding]:
+                masks: Mapping[str, Sequence[tuple[int, int]]],
+                genome: str | None = None) -> list[Finding]:
     """SNPs of the scheme that lie in a masked region, such as a recombinant one.
 
     A canSNP in a recombinant region may have been brought in by
@@ -400,7 +401,7 @@ def check_masks(scheme: Scheme, reference: Reference,
     to replace. Positions in the scheme count over the concatenated genome,
     so they are placed on their contig first.
     """
-    findings: List[Finding] = []
+    findings: list[Finding] = []
     for snp in scheme.checked_snps:
         if genome is not None and snp.genome != genome:
             continue
@@ -418,22 +419,22 @@ def check_masks(scheme: Scheme, reference: Reference,
     return findings
 
 
-def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
-                 scores: Optional[Sequence[ScoredSnp]] = None,
-                 genome: Optional[str] = None,
+def audit_scheme(scheme: Scheme, reference: Reference | None = None,
+                 scores: Sequence[ScoredSnp] | None = None,
+                 genome: str | None = None,
                  min_required_hits: int = MINIMUM_SNPS_PER_NODE,
                  proximity: int = 50,
-                 alignment: Optional[Mapping[str, str]] = None,
-                 clusters: Optional[Mapping[str, Sequence[str]]] = None,
+                 alignment: Mapping[str, str] | None = None,
+                 clusters: Mapping[str, Sequence[str]] | None = None,
                  min_clade_size: int = 2, min_clade_snps: int = 1,
-                 masks: Optional[Mapping[str, Sequence[Tuple[int, int]]]] = None
-                 ) -> List[Finding]:
+                 masks: Mapping[str, Sequence[tuple[int, int]]] | None = None
+                 ) -> list[Finding]:
     """Every check, in one list of findings, problems first.
 
     The checks against the genomes run when an alignment and the clusters
     placing its genomes are given, and need the reference genome as well.
     """
-    findings: List[Finding] = [
+    findings: list[Finding] = [
         problem(CHECK, "unreadable", "", detail) for detail in scheme.problems
     ]
     findings += check_structure(scheme)
@@ -457,7 +458,7 @@ def audit_scheme(scheme: Scheme, reference: Optional[Reference] = None,
                                                  finding.node))
 
 
-def summarize(scheme: Scheme, findings: Sequence[Finding]) -> List[str]:
+def summarize(scheme: Scheme, findings: Sequence[Finding]) -> list[str]:
     """The lines of the closing summary."""
     problems = [finding for finding in findings if finding.severity == PROBLEM]
     recommendations = [finding for finding in findings if finding.severity == RECOMMENDATION]
@@ -486,8 +487,7 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
     """Write the findings as a tab separated file."""
     with open(path, "w", newline="\n") as handle:
         handle.write("\t".join(Finding.HEADER) + "\n")
-        for finding in findings:
-            handle.write("\t".join(finding.row()) + "\n")
+        handle.writelines("\t".join(finding.row()) + "\n" for finding in findings)
     logging.info(f"Wrote {len(findings)} findings to {path}")
 
 
@@ -512,7 +512,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     if alignment and not reference:
         logging.error("--alignment needs --reference, the genome the alignment is against")
         return 1
-    if (genome_map or tree) and not alignment or (genome_map and tree):
+    if ((genome_map or tree) and not alignment) or (genome_map and tree):
         logging.error(
             "checking the scheme against the genomes needs --alignment, and either "
             "--genome-map or --tree to say where the genomes sit in the scheme, or the "
@@ -545,7 +545,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         return 1
 
     aligned = clusters = None
-    placement_findings: List[Finding] = []
+    placement_findings: list[Finding] = []
     if alignment:
         try:
             aligned = read_alignment(alignment)
