@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CanSNPCreator"
+description = "Extraction, evaluation and export of canonical SNPs from whole genome alignments"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Andreas Sjödin" }]
+keywords = ["bioinformatics", "canSNP", "genomics", "typing"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/FOI-Bioinformatics/CanSNPCreator"
+Issues = "https://github.com/FOI-Bioinformatics/CanSNPCreator/issues"
+
+[project.scripts]
+# One script only. A lowercase alias beside it is the same file on a
+# case-insensitive filesystem, which macOS uses by default, and reinstalling
+# over an earlier install then fails while removing it.
+CanSNPCreator = "cansnpscorer.cansnp_scorer:main"
+
+[tool.setuptools]
+packages = ["cansnpscorer", "cansnpscorer.helpers"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cansnpscorer.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# The project supports Python 3.9, where typing.List and friends are still the
+# convention used throughout; E501 is covered by line-length alone.
+ignore = ["E501", "UP006", "UP035"]

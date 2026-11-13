@@ -1,11 +1,15 @@
-from typing import List, Dict, Union, NoReturn, Tuple
-import re
-from collections import Counter, defaultdict
 import logging
-
-import heapq
+import math
+from bisect import bisect_right
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from cansnpscorer.helpers.genetic_code import codon_table
+
+#: CanSNPer2 calls a node only when at least this many SNPs on its path are
+#: seen, which is its --min_required_hits default.
+MINIMUM_SNPS_PER_NODE = 3
 
 
 def neighbour_distance(snp: int, left: int, right: int, min_dist: int = 25) -> float:
@@ -29,7 +33,8 @@ def neighbour_distance(snp: int, left: int, right: int, min_dist: int = 25) -> f
     return max_dist / float(min_dist)
 
 #Calculate gc content
-def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> float:
+def gc_content(snp: int, reference: str, goal: float, distance: int = 50,
+               tolerance: float = 0.0) -> float:
     """
     Calculate the GC content around a given SNP and normalize it relative to a goal GC content.
 
@@ -38,98 +43,67 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50) -> flo
         reference (str): The reference genome sequence.
         goal (float): The target GC content.
         distance (int, optional): The distance to look on either side of the SNP. Defaults to 50.
+        tolerance (float, optional): A deviation from the goal up to this counts as none,
+            as primers are designed within a range of GC content. Defaults to 0.
 
     Returns:
         float: Normalized deviation from the target GC content.
     """
-    # Extract the sequence around the SNP
-    sequence = reference[snp - distance:snp + distance]
+    if not 0 < goal < 1:
+        raise ValueError(f"the GC goal must lie between 0 and 1, got {goal}")
 
-    # Count the number of G's and C's in the sequence
+    # Extract the sequence around the SNP, clamped to the ends of the sequence.
+    # Slicing with a negative start would otherwise wrap and give a window that
+    # is short, in the wrong place, or empty.
+    sequence = reference[max(snp - distance, 0):snp + distance]
+    if not sequence:
+        return 0.0
+
     gc_count = sequence.count('G') + sequence.count('C')
+    observed = gc_count / float(len(sequence))
 
-    # Calculate the GC content
-    gc_content = gc_count / float(len(sequence))
+    # Normalized deviation from the target, clamped so that a sequence far from
+    # a low goal cannot contribute a negative score.
+    deviation = max(abs(observed - goal) - tolerance, 0.0)
+    normalized_deviation = 1 - (deviation / goal)
 
-    # Calculate the normalized deviation from the target GC content
-    normalized_deviation = 1 - (abs(gc_content - goal) * (1 / goal))
-
-    return normalized_deviation
+    return max(normalized_deviation, 0.0)
 
 #Binary search algorithm
-def search(snp: int, intervals: list[Tuple[int, int]], limit: int) -> Union[Tuple[int], Tuple[float, Tuple[int, int]]]:
+def search(snp: int, intervals: Sequence[Sequence[int]], limit: int) -> Tuple[float, Optional[Sequence[int]]]:
     """
-    Perform a binary search to find the interval containing the given SNP.
+    Find the interval that holds a position, or the nearest one within limit of it.
 
     Args:
-        snp (int): The position of the SNP to search for.
-        intervals (list[Tuple[int, int]]): A list of sorted intervals to search within.
-        limit (int): A limit used for extending the interval boundaries.
+        snp: The position.
+        intervals: Intervals sorted by their start that do not overlap, each
+            beginning with a start and an end, inclusive. Further elements, such
+            as a strand, are carried through.
+        limit: How far outside an interval still counts as near it.
 
     Returns:
-        Union[Tuple[int], Tuple[float, Tuple[int, int]]]: Either a tuple containing just 1 if not found,
-        or a tuple containing the normalized distance and the interval if found.
+        The distance to the nearest interval as a fraction of limit, 0.0 inside
+        one and 1.0 at or beyond the limit, and that interval when the position
+        is inside it, or None.
     """
-    lowerbound = 0
-    upperbound = len(intervals) - 1
-
-    while True:
-        if upperbound < lowerbound:
-            return 1,
-
-        current = (lowerbound + upperbound) // 2  # Use // for integer division in Python 3
-        temp = intervals[current]
-
-        left = max(temp[0] - limit, 0)
-        right = temp[1] + limit
-
-        if left <= snp <= right:
-            if snp < temp[0]:
-                return (temp[0] - snp) / float(limit),
-            elif snp > temp[1]:
-                return (snp - temp[1]) / float(limit),
-            else:
-                return 0, temp
-        elif snp < left:
-            upperbound = current - 1
-        else:  # snp > right
-            lowerbound = current + 1
-
-#Method for checking type of substitution mutation
-def gene_checker(snp: List[Union[int, str]], reference: List[str], gene_interval: Tuple[int, int, str], correction: int) -> float:
-    """
-    Checks the gene region for SNPs and compares the codons.
-
-    Args:
-        snp (List[Union[int, str]]): List representing the SNP, where the first element is the index and the rest are variants.
-        reference (List[str]): List representing the reference genome sequence.
-        gene_interval (Tuple[int, int, str]): Tuple representing the start, end, and strand of the gene.
-        correction (int): Position correction factor.
-
-    Returns:
-        float: Similarity score between the codons.
-    """
-    variants = []
-    index = snp[0] - gene_interval[0] - correction
-    gene = reference[0][gene_interval[0] + correction: gene_interval[1] + correction + 1]
-
-    if gene_interval[2] == "-":
-        index = (gene_interval[1] - gene_interval[0]) - index
-        gene = gene[::-1]
-
-    j = index % 3
-    for i in snp[2:]:
-        left = gene[index - j: index]
-        mid = i
-        right = gene[index + 1: index + 1 + 2 - j]
-
-        variants.append(left + mid + right)
-
-    sim_score = codon_comparer(variants, gene_interval[2])
-    return sim_score
+    index = bisect_right([interval[0] for interval in intervals], snp) - 1
+    nearest = None
+    # Only the interval starting at or before the position, and the one after
+    # it, can be the nearest when the intervals do not overlap.
+    for candidate in (index, index + 1):
+        if not 0 <= candidate < len(intervals):
+            continue
+        start, end = intervals[candidate][0], intervals[candidate][1]
+        if start <= snp <= end:
+            return 0.0, intervals[candidate]
+        distance = start - snp if snp < start else snp - end
+        if nearest is None or distance < nearest:
+            nearest = distance
+    if nearest is None or limit <= 0 or nearest >= limit:
+        return 1.0, None
+    return nearest / float(limit), None
 
 
-#Compare two codons
 def codon_comparer(variants: List[str], strand: str) -> float:
     """
     Compare two codons to determine their similarity.
@@ -169,34 +143,32 @@ def codon_complement(codon: str) -> str:
     Returns:
         str: The complement codon.
     """
-    translation = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    translation = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
     return "".join([translation[nucleotide] for nucleotide in codon])
 
 
-def clean_name(name: str) -> str:
-    """
-    Cleans the input name by removing all non-alphanumeric characters.
-
-    Args:
-        name (str): The original name string that may contain non-alphanumeric characters.
-
-    Returns:
-        str: The cleaned name containing only alphanumeric characters.
-    """
-    return ''.join(filter(str.isalnum, name))
+def called_needed(total: int, min_called: float) -> int:
+    """The number of genomes out of ``total`` that ``min_called`` asks for."""
+    return max(1, math.ceil(min_called * total - 1e-9))
 
 
-def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, int]]]]:
+def snp_extractor(fasta: Dict[str, str],
+                  min_called: float = 1.0) -> List[Dict[str, Union[int, Dict[str, int]]]]:
     """
     Extract Single Nucleotide Polymorphisms (SNPs) from genomic alignments.
 
     Args:
         fasta (Dict[str, str]): A dictionary where keys are sequence names and values are genomic sequences.
+        min_called: The fraction of genomes that must carry a base (A, C, G or
+            T) in a column for it to count. With 1.0 a single gap or N in any
+            genome leaves the column out; below it the column is a SNP when
+            the genomes that are called carry exactly two bases.
 
     Returns:
         List[Dict[str, Union[int, Dict[str, int]]]]: A list of dictionaries. Each dictionary contains:
             - 'index': The position of the SNP in the reference sequence.
             - 'variants': A dictionary with the nucleotide variants at that position and their counts.
+            - 'missing': The number of genomes without a base in the column.
 
     Example:
         Return value might look like:
@@ -207,181 +179,331 @@ def snp_extractor(fasta: Dict[str, str]) -> List[Dict[str, Union[int, Dict[str, 
         ]
 
     """
-    alignment = list(fasta.values())
-    reference = alignment[0]
-    alignment = alignment[1:]
+    nucleotides = frozenset("ACGT")
+    rows = list(fasta.values())
+    total_length = len(rows[0]) if rows else 0
     snps = []
-
-    nucleotides = set(['A', 'T', 'C', 'G'])
-    total_length = len(reference)
-    last_logged_percent = 0
+    step = max(total_length // 10, 1)
 
     logging.info("Starting SNP extraction...")
 
-    for index, nucleotide in enumerate(reference):
-        if nucleotide not in nucleotides:
+    # zip walks the columns in C, one tuple per column, which is several times
+    # faster than indexing every genome in Python, and the counts include the
+    # reference row as the first element.
+    needed = called_needed(len(rows), min_called)
+    for index, column in enumerate(zip(*rows)):
+        if column[0] not in nucleotides:
             continue
-
-        variants_at_position = [genome[index] for genome in alignment]
-        variants_count = Counter(variants_at_position)
-
-        if nucleotide not in variants_count:
-            variants_count[nucleotide] = 1
-        else:
-            variants_count[nucleotide] += 1
-
-        if all(base in nucleotides for base in variants_count) and len(variants_count) == 2:
-            snps.append({'index': index, 'variants': dict(variants_count)})
-
-        # Log progress every 10%
-        current_percent = int(((index + 1) / total_length) * 100)
-        if current_percent >= last_logged_percent + 10:
-            logging.info(f"Processed {index + 1}/{total_length} positions ({current_percent}%)")
-            last_logged_percent = current_percent
+        counts = Counter(column)
+        if len(counts) == 2 and nucleotides.issuperset(counts):
+            snps.append({'index': index, 'variants': dict(counts), 'missing': 0})
+        elif needed < len(rows):
+            called = {base: n for base, n in counts.items() if base in nucleotides}
+            total = sum(called.values())
+            if len(called) == 2 and total >= needed:
+                snps.append({'index': index, 'variants': called,
+                             'missing': len(rows) - total})
+        if (index + 1) % step == 0:
+            logging.info(f"Processed {index + 1}/{total_length} positions "
+                         f"({round(100 * (index + 1) / total_length)}%)")
 
     logging.info(f"Extraction of {len(snps)} SNPs complete")
     return snps
 
-def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]], snps: List[Dict[str, Union[int, Dict[str, int]]]]) -> List[List[Union[str, int]]]:
+def variable_columns(fasta: Dict[str, str], genomes: Sequence[str]) -> List[int]:
     """
-    Extract Canonical Single Nucleotide Polymorphisms (canSNPs) from genomic alignments.
+    The columns where at least two of these genomes carry different bases.
+
+    Unlike snp_extractor this keeps columns where a third base occurs or where
+    other genomes have no base, since any of them spoils the flank of an assay
+    as much as a canonical SNP does. A gap is not counted as a difference,
+    because in an alignment it cannot be told apart from missing sequence.
 
     Args:
-        alignment (Dict[str, str]): A dictionary where keys are sequence names and values are genomic sequences.
-        groups (Dict[str, List[str]]): A dictionary defining the groups of sequences.
-        snps (List[Dict[str, Union[int, Dict[str, int]]]]): A list of dictionaries, each containing 'index' and 'variants',
-                                                             representing the SNPs extracted from the genomic alignments.
+        fasta: The aligned sequences, keyed by name.
+        genomes: The genomes to compare, such as those placed in the scheme.
+    """
+    from operator import itemgetter
+
+    names = list(fasta)
+    indexes = [names.index(genome) for genome in genomes if genome in fasta]
+    if len(indexes) < 2:
+        return []
+    pick = itemgetter(*indexes)
+    nucleotides = frozenset("ACGT")
+    found: List[int] = []
+    for index, column in enumerate(zip(*fasta.values())):
+        # Most columns are the same in every genome; set() on the whole column
+        # rules them out before the chosen genomes are looked at.
+        if len(set(column)) < 2:
+            continue
+        if len(set(pick(column)) & nucleotides) >= 2:
+            found.append(index)
+    return found
+
+
+def nearest_distances(positions: Sequence[Tuple[str, int]],
+                      variable: Dict[str, List[int]]) -> List[Optional[int]]:
+    """For each (contig, 0-based position), the distance to the nearest other
+    variable position on the same contig, or None when there is none."""
+    distances: List[Optional[int]] = []
+    for contig, position in positions:
+        found = variable.get(contig, [])
+        index = bisect_right(found, position)
+        candidates = [abs(found[i] - position) for i in (index - 2, index - 1, index)
+                      if 0 <= i < len(found) and found[i] != position]
+        distances.append(min(candidates) if candidates else None)
+    return distances
+
+
+@dataclass
+class CanSnp:
+    """One variable column of the alignment, and the node it marks, if any.
+
+    ``derived`` is the base carried by every isolate below the node and by no
+    other genome, which is what makes the SNP canonical; ``ancestral`` is the
+    other base. They are only known for a canonical SNP, so both are None when
+    ``node`` is.
+    """
+
+    column: int
+    bases: Tuple[str, ...]
+    node: Optional[str] = None
+    derived: Optional[str] = None
+    ancestral: Optional[str] = None
+    also_matched: Tuple[str, ...] = ()
+    """Further nodes separated by the same column, which makes it ambiguous."""
+    missing: int = 0
+    """Genomes without a base (gap or N) in the column."""
+
+    @property
+    def is_canonical(self) -> bool:
+        return self.node is not None
+
+
+def canSNP_extractor(alignment: Dict[str, str], groups: Dict[str, List[str]],
+                     snps: List[Dict[str, Union[int, Dict[str, int]]]],
+                     min_called: float = 1.0) -> List[CanSnp]:
+    """
+    Find which of the SNPs separate exactly the isolates below one node.
+
+    A SNP is canonical for a node when every isolate below that node carries
+    the same base and no genome outside it does. The base they carry is the
+    derived one, so the polarity of the SNP follows from the node it marks.
+
+    In a column with missing bases (``min_called`` below 1.0) only the genomes
+    with a base are compared: at least ``min_called`` of the node's isolates
+    must be called, all of them with the derived base, and no called genome
+    outside the node may carry it.
+
+    Args:
+        alignment: The aligned sequences, keyed by name.
+        groups: The isolates below each node, which for an internal node means
+            the isolates of every leaf beneath it.
+        snps: The variable columns, as snp_extractor reports them.
 
     Returns:
-        List[List[Union[str, int]]]: A list containing the canonical SNPs. Each element is a list containing the SNP index,
-                                     the group it belongs to, and the variants present at that position.
+        One record per SNP, in the order given, canonical or not.
 
-    Example:
-        Return value might look like:
-        [
-            ['5', 'Group1', 'A', 'T'],
-            ['9', 'Group2', 'G', 'C'],
-            ...
-        ]
-
+    Raises:
+        ValueError: If a group names an isolate that the alignment does not hold,
+            which would otherwise be a KeyError part way through the run.
     """
-    logging.info("Starting canSNP extraction...")
-    total_snps = len(snps)
-    cansnps = []
+    logging.info(f"Looking for canSNPs among {len(snps)} SNPs over {len(groups)} nodes")
 
-    canSNP_count = 0  # Counter for the number of canSNPs
-    last_logged_percent = -1  # Initialize to an impossible value
+    wanted = {isolate for isolates in groups.values() for isolate in isolates}
+    missing = sorted(wanted - set(alignment))
+    if missing:
+        raise ValueError(
+            f"the genome map names {len(missing)} isolates that the alignment does not hold: "
+            f"{', '.join(missing[:5])}")
 
-    for i, snp in enumerate(snps):
-        variant = snp['index']
-        frequencies = snp['variants']
-        cansnp = "None"
+    # Nodes with no isolates cannot be marked by any SNP. They are reported
+    # once here rather than silently never matching.
+    empty = sorted(node for node, isolates in groups.items() if not isolates)
+    if empty:
+        logging.warning(
+            f"{len(empty)} nodes have no isolates, so no canSNP can mark them: "
+            f"{', '.join(empty[:5])}")
 
-        for group in groups:
-            nucleotide = ""
-            frequency = 1
+    members = {
+        node: list(isolates)
+        for node, isolates in groups.items() if isolates
+    }
 
-            for index, isolate in enumerate(groups[group]):
-                current = alignment[clean_name(isolate)][variant]
+    cansnps: List[CanSnp] = []
+    canonical = 0
+    ambiguous = 0
+    complementary = 0
 
-                if index == 0:
-                    nucleotide = current
-                else:
-                    if nucleotide == current:
-                        frequency += 1
-                    else:
-                        break
+    for snp in snps:
+        column = snp['index']
+        counts = snp['variants']
+        bases = tuple(counts)
+
+        missing = snp.get('missing', 0)
+        matches: List[Tuple[str, str]] = []
+        for node, isolates in members.items():
+            if not missing:
+                shared = alignment[isolates[0]][column]
+                if any(alignment[isolate][column] != shared for isolate in isolates[1:]):
+                    continue
+                if counts.get(shared, 0) == len(isolates):
+                    matches.append((node, shared))
+                continue
+            called = [alignment[isolate][column] for isolate in isolates]
+            called = [base for base in called if base in counts]
+            if len(called) < called_needed(len(isolates), min_called):
+                continue
+            shared = called[0]
+            if any(base != shared for base in called[1:]):
+                continue
+            if counts.get(shared, 0) == len(called):
+                matches.append((node, shared))
+
+        if not matches:
+            cansnps.append(CanSnp(column=column, bases=bases, missing=missing))
+            continue
+
+        node, derived = matches[0]
+        other = [base for base in bases if base != derived]
+        cansnps.append(
+            CanSnp(
+                column=column,
+                bases=bases,
+                node=node,
+                derived=derived,
+                ancestral=other[0] if other else None,
+                also_matched=tuple(name for name, _base in matches[1:]),
+                missing=missing,
+            )
+        )
+        canonical += 1
+        if len(matches) > 1:
+            first = set(members[matches[0][0]])
+            if any(set(members[other]) == first for other, _base in matches[1:]):
+                ambiguous += 1
             else:
-                if frequency == frequencies.get(nucleotide, 0):
-                    cansnp = group
+                complementary += 1
 
-        cansnps.append([str(variant), cansnp] + list(frequencies.keys()))
-
-        # Increment canSNP counter if cansnp is not "None"
-        if cansnp != "None":
-            canSNP_count += 1
-
-        # Log progress every 10%
-        current_percent = int(((i + 1) / total_snps) * 100)
-        if current_percent >= last_logged_percent + 10:
-            logging.info(f"Writing progress: {current_percent}%")
-            last_logged_percent = current_percent  # Update the last logged percentage only when it changes
-
-    logging.info(f"CanSNP extraction complete. Total canSNPs extracted: {canSNP_count}")
+    if ambiguous:
+        logging.warning(
+            f"{ambiguous} canSNPs separate more than one node, because those nodes hold the "
+            "same isolates; each is reported against the first of them")
+    if complementary:
+        logging.warning(
+            f"{complementary} canSNPs separate two nodes whose isolates together are every "
+            f"genome of the alignment, so which side carries the derived base cannot be told "
+            f"without a genome outside both; each is reported against the first of them. An "
+            f"outgroup genome in the alignment, placed at no node, settles it")
+    logging.info(f"Found {canonical} canSNPs")
 
     return cansnps
 
 
-def filter_scores_by_cutoff(scores, cutoff, top=None):
-    """
-    Filters scores based on a specified cutoff for the 'Score' field and selects the top scoring SNPs for each node_id.
+def ranking(score):
+    """The order SNPs of a node are taken in: those with fewer genomes missing
+    a base first, then the best total, then by contig and position, so that
+    the same scores always give the same choice."""
+    return (getattr(score, "missing", 0), -score.total, score.contig, score.position)
 
-    Args:
-        scores: List of score entries, each entry is a list containing the SNP position, SNP variant, total score, and individual scores.
-        cutoff: A score cutoff value. Only scores higher than this value are retained.
-        top: Number of top scores to retain for each node_id. If None, all scores above cutoff are retained.
+
+def select_per_node(scores, top=None, spacing=0):
+    """The best ``top`` SNPs of each node, at least ``spacing`` bases apart.
+
+    The SNPs of a node are taken in order of :func:`ranking`, passing over any
+    that lie within ``spacing`` bases of one already taken, so that those
+    chosen for a node do not share a locus that one deletion or recombination
+    event could remove. With ``top`` None every SNP so spaced is taken.
 
     Returns:
-        filtered_scores: List of score entries that have a 'Score' higher than the cutoff and are in the top n for their node_id.
+        For each node, the chosen SNPs, best first.
     """
-    # Score is the third item in each score entry based on the ScoringManager's final_score structure.
-    # Adjust the index if the structure changes.
-    SCORE_INDEX = 2
-    NODE_ID_INDEX = 1
+    by_node = defaultdict(list)
+    for score in scores:
+        by_node[score.node].append(score)
+    chosen = {}
+    for node, node_scores in by_node.items():
+        picked = []
+        for score in sorted(node_scores, key=ranking):
+            if top is not None and len(picked) >= top:
+                break
+            if any(other.contig == score.contig
+                   and abs(other.position - score.position) < spacing for other in picked):
+                continue
+            picked.append(score)
+        chosen[node] = picked
+    return chosen
 
-    # First, filter scores by the cutoff
-    filtered_scores = [score for score in scores if score[SCORE_INDEX] > cutoff]
+
+def apply_filters(scores, cutoff, top=None, spacing=0):
+    """
+    Mark the scores that fail the cutoff, or are not among the best of their node.
+
+    Nothing is dropped: a score at or below the cutoff gains the FILTER code
+    LowScore, and one that passes it but is not among the ``top`` best of its
+    node gains NotTop, so that the output still shows what was considered. The
+    best are taken in order of score, passing over any within ``spacing`` bases
+    of one already taken for the node, so that the SNPs chosen for a node do not
+    share a locus that a single deletion or recombination event could remove.
+
+    Args:
+        scores: Scored SNPs, each with a total, a node and a list of filters.
+        cutoff: A score must be above this to pass.
+        top: How many of the best scores of each node pass. All of them if None.
+        spacing: The fewest bases between two SNPs taken for the same node.
+
+    Returns:
+        The same scores, in the order given.
+    """
+    for score in scores:
+        if score.total <= cutoff and "LowScore" not in score.filters:
+            score.filters.append("LowScore")
 
     if top is not None:
-        # Group scores by node_id
-        scores_by_node = defaultdict(list)
-        for score in filtered_scores:
-            node_id = score[NODE_ID_INDEX]
-            # We use negative scores because heapq is a min-heap, but we want the max scores
-            heapq.heappush(scores_by_node[node_id], (-score[SCORE_INDEX], score))
+        candidates = [score for score in scores if not score.filters]  # not LowScore, Masked
+        chosen = {id(score) for picked in select_per_node(candidates, top, spacing).values()
+                  for score in picked}
+        for score in candidates:
+            if id(score) not in chosen:
+                score.filters.append("NotTop")
 
-        # Now select the top n scores for each node_id
-        top_scores_by_node = {}
-        for node_id, node_scores in scores_by_node.items():
-            top_scores_by_node[node_id] = [heapq.heappop(node_scores)[1] for _ in range(min(len(node_scores), top))]
-
-        # Flatten the dictionary of top scores into a list
-        top_scores = [score for scores_list in top_scores_by_node.values() for score in scores_list]
-        filtered_scores = top_scores
-
-    return filtered_scores
+    return scores
 
 
 def summarize_scores(nodes_data, scores):
     """
-    Provides a summary of the scores, including the count of occurrences for each node.
+    Count the SNPs kept for each node, and report the nodes left without one.
 
     Args:
-        nodes_data: Set of node identifiers.
-        scores: List of score entries that have been filtered by a score cutoff.
+        nodes_data: The node identifiers of the scheme.
+        scores: The scored SNPs that passed filtering.
 
     Returns:
-        dict: A dictionary with nodes as keys and their counts as values.
+        dict: The nodes that have at least one SNP, and how many.
     """
-    # Assuming that the second element (index 1) of each score list is the node identifier.
-    NODE_ID_INDEX = 1
-
-    # Initialize a dictionary to count occurrences
     node_counts = {node: 0 for node in nodes_data}
 
-    # Count occurrences of each node in scores
     for score in scores:
-        node_id = score[NODE_ID_INDEX]
-        if node_id in node_counts:
-            node_counts[node_id] += 1
+        if score.node in node_counts:
+            node_counts[score.node] += 1
 
-    # Log info or warnings and build the export dictionary
-    export_dict = {}
-    for node_id, count in node_counts.items():
-        if count > 0:
-            logging.info(f"ID: {node_id}, Count: {count}")
-            export_dict[node_id] = count
-        else:
-            logging.warning(f"ID: {node_id} is not represented by a CanSNP!!.")
+    represented = {node: count for node, count in node_counts.items() if count}
+    for node, count in represented.items():
+        logging.info(f"{node}: {count} canSNPs")
 
-    return export_dict
+    without = [node for node, count in node_counts.items() if not count]
+    if without:
+        logging.warning(
+            f"{len(without)} of {len(node_counts)} nodes have no canSNP above the cutoff, so "
+            f"they cannot be typed: {', '.join(without)}")
+
+    # CanSNPer2 calls a node only when enough of the SNPs on its path are
+    # observed, three by default, so a node with fewer is worth naming.
+    shallow = [node for node, count in represented.items() if count < MINIMUM_SNPS_PER_NODE]
+    if shallow:
+        logging.warning(
+            f"{len(shallow)} nodes have fewer than {MINIMUM_SNPS_PER_NODE} canSNPs, which is "
+            f"what CanSNPer2 requires on a path by default: {', '.join(shallow)}")
+
+    return represented

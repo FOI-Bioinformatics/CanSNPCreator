@@ -1,841 +1,568 @@
 
-import re
-import os.path
-import sys
-import csv
+import gzip
 import logging
-from ruamel.yaml import YAML
-from typing import List, Dict, Union, NoReturn, Tuple, Optional
+from collections import Counter
+from dataclasses import dataclass, field
 from operator import itemgetter
-import json
-from collections import defaultdict
-from io import StringIO
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import unquote
 
-def read_yaml_file(file: str) -> Union[Dict, None]:
+from cansnpscorer.helpers.names import strip_fasta_suffix
+from cansnpscorer.hierarchy import Hierarchy, HierarchyError
+from cansnpscorer.model import Reference
+
+HIERARCHY_FORMATS = ("table", "newick")
+
+
+def open_text(path: str, newline: Optional[str] = None):
+    """Open a text file for reading, gzip or bgzip compressed or not.
+
+    NCBI distributes genomes and annotations gzipped, and VCF is often
+    bgzipped; both are recognised by their first two bytes.
     """
-    Read and load the first YAML document from a file.
+    with open(path, "rb") as probe:
+        compressed = probe.read(2) == b"\x1f\x8b"
+    # utf-8-sig drops a byte order mark, which would otherwise become part of
+    # the first header or column name.
+    if compressed:
+        return gzip.open(path, "rt", newline=newline, encoding="utf-8-sig")
+    return open(path, newline=newline, encoding="utf-8-sig")
 
-    Parameters:
-        file (str): Path to the YAML file.
+
+def hierarchy_format(path: str) -> str:
+    """Tell a Newick tree from a child and parent table by their first character.
 
     Returns:
-        Union[Dict, None]: Dictionary containing the loaded data, or None if an error occurs.
+        'newick' or 'table'.
+
+    Raises:
+        HierarchyError: If the file is empty or is neither.
     """
-
-    logging.info(f"Attempting to read YAML data from {file}")
-
-    try:
-        yaml = YAML(typ='safe')
-        with open(file, 'r') as yam:
-            yaml_data = next(yaml.load_all(yam))
-        logging.info(f"Successfully read YAML data from {file}")
-        return yaml_data
-    except FileNotFoundError:
-        logging.error(f"File {file} not found")
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {file}")
-    except Exception as e:
-        logging.error(f"Failed to read YAML data from {file}. Exception: {e}")
-    return None
+    with open_text(path) as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("("):
+                return "newick"
+            columns = stripped.split("\t")
+            if "child" in columns and "parent" in columns:
+                return "table"
+            raise HierarchyError(
+                f"{path}: is neither a Newick tree nor a tab separated table with 'child' and "
+                f"'parent' columns; its first line is '{stripped[:60]}'")
+    raise HierarchyError(f"{path}: is empty")
 
 
-def read_hc_file(file_path: str, file_format: str) -> Optional[Dict]:
+def read_hierarchy(path: str) -> Hierarchy:
     """
-    Read and load data from a hierarchical clustering file which may be in YAML or repgenr format.
+    Read the hierarchy of a scheme: which node lies under which.
 
-    Parameters:
-        file_path (str): Path to the hierarchical clustering file.
-        file_format (str): The format of the file ('yaml' or 'repgenr_group').
+    Two formats are read. A tab separated table with a header naming 'child'
+    and 'parent' columns holds one row per node; the root's parent is empty,
+    or the root is the one node named only as a parent. This is the layout of
+    FlexTaxD's taxonomy and RepGenR2's tree2tax.tsv, and other columns, such as
+    tree2tax's rank, are ignored. A root given as its own parent, as NCBI's
+    nodes.dmp gives it, is read as the root. A Newick tree names its nodes in its labels;
+    every label is read as a name, so a node called 2.1 stays 2.1.
 
-    Returns:
-        Optional[Dict]: Dictionary containing the loaded data, or None if an error occurs.
+    Raises:
+        HierarchyError: If the file is in neither format, or the nodes do not
+            form a single rooted tree.
+        OSError: If the file cannot be read.
     """
+    file_format = hierarchy_format(path)
+    logging.info(f"Reading the hierarchy in {path} as a {file_format}")
 
-    if file_format == 'yaml':
-        logging.info(f"Attempting to read YAML data from {file_path}")
-        try:
-            yaml = YAML(typ='safe')
-            with open(file_path, 'r') as file:
-                yaml_data = next(yaml.load_all(file))
-            logging.info(f"Successfully read YAML data from {file_path}")
-            return yaml_data
-        except FileNotFoundError:
-            logging.error(f"File {file_path} not found")
-        except PermissionError:
-            logging.error(f"Permission denied: Cannot read {file_path}")
-        except Exception as e:
-            logging.error(f"Failed to read YAML data from {file_path}. Exception: {e}")
-
-    elif file_format == 'repgenr':
-        logging.info(f"Attempting to read repgenr HC data from {file_path}")
-        try:
-            with open(file_path, 'r') as file:
-                reader = csv.DictReader(file, delimiter='\t')
-                hc_data = {row['child']: row['parent'] for row in reader}
-            logging.info(f"Successfully read repgenr HC data from {file_path}")
-            return hc_data
-        except FileNotFoundError:
-            logging.error(f"File {file_path} not found")
-        except PermissionError:
-            logging.error(f"Permission denied: Cannot read {file_path}")
-        except Exception as e:
-            logging.error(f"Failed to read repgenr HC data from {file_path}. Exception: {e}")
-
+    if file_format == "newick":
+        with open_text(path) as handle:
+            hierarchy = Hierarchy.from_newick(handle.read())
     else:
-        logging.error(f"Unrecognized file format '{file_format}' provided for file: {file_path}")
-        return None
+        pairs = []
+        with open_text(path, newline="") as handle:
+            lines = [line.rstrip("\r\n") for line in handle
+                     if line.strip() and not line.startswith("#")]
+        header = lines[0].split("\t")
+        child_at, parent_at = header.index("child"), header.index("parent")
+        for number, line in enumerate(lines[1:], 2):
+            fields = line.split("\t")
+            if len(fields) <= child_at or not fields[child_at].strip():
+                raise HierarchyError(f"{path}: row {number} names no child")
+            parent = fields[parent_at] if len(fields) > parent_at else ""
+            if parent.strip() == fields[child_at].strip():
+                parent = ""  # NCBI's nodes.dmp names the root as its own parent
+            pairs.append((fields[child_at], parent))
+        if not pairs:
+            raise HierarchyError(f"{path}: holds no rows below its header")
+        hierarchy = Hierarchy.from_child_parent(pairs)
 
-def extract_yaml_data(data, data_set=None):
+    logging.info(
+        f"Read a hierarchy of {len(hierarchy)} nodes rooted at '{hierarchy.root}', "
+        f"with {len(hierarchy.leaves)} leaves")
+    return hierarchy
+
+
+#: IUPAC nucleotide codes, and the gap and unknown characters aligners write.
+SEQUENCE_CHARACTERS = frozenset("ACGTURYSWKMBDHVN-.~*?")
+
+
+def read_fasta(fasta_file: str) -> List[Tuple[str, str]]:
     """
-    Recursively extract all keys and values from a nested structure (dict or list)
-    and store them in a set. The set is then sorted and returned as a list.
+    Read a FASTA file into (name, sequence) pairs, in file order.
+
+    A record is named by its ID, the first word of its header, as GFF3, VCF,
+    BED and samtools faidx all name a sequence; the rest of the header is a
+    description. Sequences are upper cased, so that soft masked regions are
+    not mistaken for unusable bases.
 
     Args:
-    - data (Union[dict, list]): The input data structure.
-    - data_set (set, optional): Set to store the keys and values. Defaults to an empty set.
+        fasta_file: Path to the FASTA file.
 
     Returns:
-    - list: A sorted list containing all unique keys and values from the data.
+        The records in file order.
+
+    Raises:
+        ValueError: If the file holds no records, has sequence before its first
+            header, has a header without an ID, or names a sequence more than once.
     """
-    if data_set is None:
-        data_set = set()
+    logging.info(f"Reading FASTA records from {fasta_file}")
 
-    if isinstance(data, dict):
-        for key, value in data.items():
-            data_set.add(key)
-            extract_yaml_data(value, data_set)
-    elif isinstance(data, list):
-        for item in data:
-            extract_yaml_data(item, data_set)
-    else:
-        data_set.add(data)
+    records: List[Tuple[str, str]] = []
+    name: Optional[str] = None
+    chunks: List[str] = []
+    masked = 0
 
-    return sorted(data_set)
+    with open_text(fasta_file) as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line or line.startswith(";"):
+                continue  # ';' opens a comment line in the original FASTA format
+            if line.startswith(">"):
+                if name is not None:
+                    records.append((name, "".join(chunks)))
+                words = line[1:].split()
+                if not words or line[1:2].isspace():
+                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
+                                     f"directly after '>'")
+                name = words[0]
+                chunks = []
+            else:
+                if name is None:
+                    raise ValueError(
+                        f"{fasta_file}: sequence before the first header, at line {line_number}")
+                line = "".join(line.split())
+                invalid = set(line.upper()) - SEQUENCE_CHARACTERS
+                if invalid:
+                    raise ValueError(
+                        f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
+                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
+                masked += sum(1 for base in line if base.islower())
+                chunks.append(line.upper())
+
+    if name is not None:
+        records.append((name, "".join(chunks)))
+
+    if not records:
+        raise ValueError(f"{fasta_file}: holds no FASTA records")
+    empty = [record_name for record_name, sequence in records if not sequence]
+    if empty:
+        raise ValueError(f"{fasta_file}: records hold no sequence: {', '.join(empty[:5])}")
+
+    counts = Counter(record_name for record_name, _ in records)
+    repeated = sorted(record_name for record_name, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"{fasta_file}: names {', '.join(repeated)} more than once; sequence IDs, the first "
+            "word of each header, must be unique")
+
+    if masked:
+        logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
+    logging.info(f"Read {len(records)} records from {fasta_file}")
+    return records
 
 
-def clean_name(name: str) -> str:
+def fasta_ids(path: str) -> List[str]:
+    """The record IDs of a FASTA file, in order, without keeping the sequences."""
+    ids: List[str] = []
+    with open_text(path) as handle:
+        for line in handle:
+            if line.startswith(">"):
+                words = line[1:].split()
+                if words:
+                    ids.append(words[0])
+    return ids
+
+
+def read_alignment(alignment_file: str) -> Dict[str, str]:
     """
-    Cleans a given string by removing all characters that are not alphanumeric.
+    Read a whole genome alignment, with the reference genome as its first record.
 
     Args:
-        name (str): The string to clean.
+        alignment_file: Path to the alignment in FASTA format.
 
     Returns:
-        str: A cleaned string containing only alphanumeric characters.
+        The aligned sequences, keyed by name, with the reference first.
 
-    Example:
-        >>> clean_name("Example String!")
-        'ExampleString'
+    Raises:
+        ValueError: If the alignment holds fewer than two records, or if the
+            records are not all of the same length.
     """
+    records = read_fasta(alignment_file)
 
-    logging.debug(f"Cleaning the name: {name}")
-    cleaned_name = re.sub('[^A-Za-z0-9]+', '', name)
-    logging.debug(f"Cleaned name: {cleaned_name}")
+    if len(records) < 2:
+        raise ValueError(
+            f"{alignment_file}: an alignment needs the reference and at least one other "
+            f"genome, found {len(records)}")
 
-    return cleaned_name
+    lengths = {len(sequence) for _name, sequence in records}
+    if len(lengths) > 1:
+        shortest = min(records, key=lambda record: len(record[1]))
+        longest = max(records, key=lambda record: len(record[1]))
+        raise ValueError(
+            f"{alignment_file}: the records are not aligned; '{longest[0]}' holds "
+            f"{len(longest[1])} columns and '{shortest[0]}' holds {len(shortest[1])}")
+
+    logging.info(
+        f"Read an alignment of {len(records)} genomes over {len(records[0][1])} columns, "
+        f"with '{records[0][0]}' as the reference")
+    return dict(records)
 
 
 
-def fasta_parser(fasta_file: str, output_format: str = 'list') -> Union[List[str], List[Tuple[str, str]], Dict[str, str]]:
+
+def read_genome_map(path: str) -> Dict[str, List[str]]:
     """
-    Parse a FASTA file.
+    Read which genomes sit at each node: two tab separated columns, genome and
+    node, and no header.
+
+    This is the layout of FlexTaxD's --genomeid2taxid file and of RepGenR2's
+    genomes_map.tsv. A genome may sit at an internal node. Genome names are
+    kept as written and matched to alignment records later, so a name may be
+    a file name, a record ID or an assembly accession. Lines beginning with
+    '#' are comments.
+
+    Returns:
+        The genomes at each node, in file order.
+
+    Raises:
+        ValueError: If a line does not hold exactly a genome and a node, or a
+            genome is placed at two nodes.
+        OSError: If the file cannot be read.
+    """
+    logging.info(f"Reading the genome map {path}")
+    clusters: Dict[str, List[str]] = {}
+    placed: Dict[str, str] = {}
+    with open_text(path, newline="") as handle:
+        for number, line in enumerate(handle, 1):
+            line = line.rstrip("\r\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if not placed and [field.strip().lower() for field in fields] == ["genome", "node"]:
+                continue  # a header naming the columns, which the format does not need
+            if len(fields) != 2 or not fields[0].strip() or not fields[1].strip():
+                raise ValueError(
+                    f"{path}: line {number} should hold a genome and a node separated by one "
+                    f"tab, with no header line")
+            genome = strip_fasta_suffix(fields[0].strip())
+            node = fields[1].strip()
+            if genome in placed and placed[genome] != node:
+                raise ValueError(
+                    f"{path}: line {number} places {genome} at {node}, but it is already "
+                    f"placed at {placed[genome]}")
+            if genome not in placed:
+                placed[genome] = node
+                clusters.setdefault(node, []).append(genome)
+    if not clusters:
+        raise ValueError(f"{path}: places no genome")
+    logging.info(f"Read {len(placed)} genomes placed at {len(clusters)} nodes")
+    return clusters
+
+
+def reference_parser(reference: str) -> Reference:
+    """
+    Parse a reference genome file into contigs.
 
     Args:
-    fasta_file: Path to the FASTA file.
-    output_format: Output format ('list', 'dict', 'named_list').
+        reference: The path to the reference genome in FASTA format.
 
     Returns:
-    Parsed genomes in the specified output format.
+        The reference, with one contig per record in file order.
+
+    Raises:
+        ValueError: If the file is not usable as a reference.
+    """
+    logging.info(f"Reading the reference genome from {reference}")
+    parsed = Reference.from_records(read_fasta(reference))
+    logging.info(
+        f"Read {len(parsed)} contigs totalling {parsed.length} bases: {', '.join(parsed.names)}")
+    return parsed
+
+#: GFF3 feature types that place a SNP inside a gene. A CDS counts as well as a
+#: gene, since Prokka writes CDS features without gene features by default.
+GENE_FEATURES = frozenset({"gene", "CDS"})
+
+#: Genetic codes whose codons translate as the standard table does. Table 11,
+#: for bacteria, differs from table 1 only in its start codons.
+STANDARD_CODES = frozenset({"1", "11"})
+
+GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE, GFF_ATTRIBUTES = (
+    0, 2, 3, 4, 6, 7, 8)
+
+
+@dataclass
+class GeneModel:
+    """The genes of a GFF3 file, by sequence ID, 0-based and inclusive.
+
+    ``genes`` holds the bases covered by any gene or CDS as (start, end),
+    joined where they overlap, and decides whether a SNP lies in a gene.
+    ``cds`` holds the CDS features that give a reading frame as (start, end,
+    strand, phase). ``sequences`` holds the sequences a ##FASTA section
+    carries, as Prokka and Bakta write them, by which the annotated sequences
+    can be matched to the reference's contigs when their names differ.
     """
 
-    logging.info(f"Starting to parse the FASTA file {fasta_file} with output format {output_format}.")
+    genes: Dict[str, List[Tuple[int, int]]]
+    cds: Dict[str, List[Tuple[int, int, str, int]]]
+    sequences: Dict[str, str] = field(default_factory=dict)
 
-    genomes = [] if output_format != 'dict' else {}
-    processed_entries = 0
 
-    try:
-        with open(fasta_file, 'r') as f:
-            name, genome = "", ""
-            for line in f:
+def gff3_attributes(text: str) -> Dict[str, str]:
+    """The attributes of a GFF3 feature, percent-decoding their values."""
+    attributes = {}
+    for item in text.strip().split(";"):
+        key, _equals, value = item.partition("=")
+        if key:
+            attributes[key.strip()] = unquote(value)
+    return attributes
+
+
+def read_gff3(gff_file: str) -> GeneModel:
+    """
+    Read the genes and coding sequences of a GFF3 file.
+
+    Prokka's, Bakta's and NCBI's GFF3 are read alike. Columns are read by
+    position, as GFF3 fixes them, and sequences are named by their seqid. A
+    line beginning with '#' is a comment or directive; a ##FASTA directive ends
+    the features, and the sequences after it are kept.
+
+    A CDS gives no reading frame when it is a pseudogene's (NCBI marks it
+    pseudo=true) or uses a genetic code whose codons translate differently from
+    the standard code (transl_table other than 1 or 11). It still places the
+    SNP in a gene.
+
+    Raises:
+        ValueError: If a feature is malformed.
+        OSError: If the file cannot be read.
+    """
+    logging.info(f"Reading genes from {gff_file}")
+    genes: Dict[str, List[Tuple[int, int, str]]] = {}
+    cds: Dict[str, List[Tuple[int, int, str, int]]] = {}
+    sequences: Dict[str, List[str]] = {}
+    pseudo = 0
+    other_code: Counter = Counter()
+
+    with open_text(gff_file) as gff:
+        in_fasta = False
+        name = None
+        for line_number, line in enumerate(gff, 1):
+            line = line.rstrip("\r\n")
+            if in_fasta:
                 if line.startswith(">"):
-                    if name:
-                        genome = genome.replace("\n", "")
-                        if output_format == 'dict':
-                            genomes[name] = genome
-                        elif output_format == 'named_list':
-                            genomes.append((name, genome))
-                        else:
-                            genomes.append(genome)
-                        processed_entries += 1
-
-                    name = clean_name(line[1:].strip())
-                    genome = ""
-                else:
-                    genome += line
-
-            if name:
-                genome = genome.replace("\n", "")
-                if output_format == 'dict':
-                    genomes[name] = genome
-                elif output_format == 'named_list':
-                    genomes.append((name, genome))
-                else:
-                    genomes.append(genome)
-
-            logging.info(f"Successfully parsed {processed_entries} entries from the FASTA file {fasta_file}.")
-            return genomes
-
-    except FileNotFoundError:
-        logging.error(f"File {fasta_file} not found.")
-        return None
-    except PermissionError:
-        logging.error(f"Permission denied. Cannot read {fasta_file}")
-        return None
-    except Exception as e:
-        logging.error(f"An error occurred while parsing the FASTA file {fasta_file}. Exception: {e}")
-        return None
-
-
-def parse(fasta, names = False, dictonary = False):
-	if not os.path.isfile(fasta):
-		print("File input does not exist. Enter a correct filepath")
-		return -1
-	if isinstance(names,bool) and isinstance(dictonary, bool):
-		return fasta_parser(fasta, names, dictonary)
-	else:
-		print("Second and third arguments must be booleans")
-		return -1
-
-
-
-
-class HCParser:
-    """
-    A class to handle hierarchical clustering data from CSV and YAML files.
-    """
-
-    def __init__(self, group_data: str, data_format: str = 'csv') -> None:
-        """
-        Initialize the HCParser object.
-
-        Args:
-            group_data (str): The path to the file containing group and strain information.
-            data_format (str): The format of the group data ('csv' or 'repgenr_group').
-        """
-        logging.info(f"Initializing HCParser with data file: {group_data}")
-        self.dictionary: Dict[str, List[str]] = {}
-        self.group_label = "Group"
-        self.strain_label = "Strain"
-        self.isolates: Dict[str, List[str]] = {}
-        if data_format == 'csv':
-            self._group_handler(group_data)
-        elif data_format == 'repgenr_group':
-            self._repgenr_group_handler(group_data)
-        else:
-            raise ValueError(f"Unknown data format: {data_format}")
-
-    def _repgenr_group_handler(self, repgenr_group_data_file: str) -> None:
-        """
-        Process the repgenr_group data file and populate the 'isolates' dictionary.
-
-        Args:
-            repgenr_group_data_file (str): The path to the repgenr_group data file.
-        """
-        logging.info(f"Processing repgenr_group data file: {repgenr_group_data_file}")
-        with open(repgenr_group_data_file, 'r') as file:
-            reader = csv.DictReader(file, delimiter='\t')
-            for row in reader:
-                representative = row['representative'].replace('.fasta', '')
-                contained = row['contained'].replace('.fasta', '')
-                is_self = row['is_self'] == 'True'
-                if is_self:
-                    # If the row indicates that the strain is representative of itself, create a new group
-                    self.isolates[representative] = [contained]
-                else:
-                    # Otherwise, add the strain to the group of its representative
-                    self.isolates.setdefault(representative, []).append(contained)
-
-
-    def _group_handler(self, csv_file: str) -> None:
-        """
-        Process the CSV file and populate the 'isolates' dictionary.
-
-        Args:
-            csv_file (str): The path to the CSV file.
-        """
-        logging.info(f"Processing CSV file: {csv_file}")
-        with open(csv_file, 'r') as csvfile:
-            reader = csv.reader(csvfile)
-            for index, row in enumerate(reader):
-                if index == 0:
-                    if self.group_label in row and self.strain_label in row:
-                        self.group_index = row.index(self.group_label)
-                        self.strain_index = row.index(self.strain_label)
-                    else:
-                        logging.error("Group or Strain column not found in csv file. Exiting...")
-                        sys.exit(1)
-                else:
-                    group = row[self.group_index]
-                    strain = clean_name(row[self.strain_index])
-                    self.isolates.setdefault(group, []).append(strain)
-
-    def _dictionary_reader(self, yaml_data: Dict[str, Union[str, Dict]]) -> List[str]:
-        """
-        Recursively read YAML data and populate the 'dictionary'.
-
-        Args:
-            yaml_data (Dict): Dictionary containing YAML data.
-
-        Returns:
-            List[str]: A list of isolates.
-        """
-        isolates: List[str] = []
-        name = list(yaml_data.keys())[0]
-        items = list(yaml_data.values())[0]
-        for group in items:
-            if isinstance(group, dict):
-                isolates += self._dictionary_reader(group)
-            else:
-                group_isolate = self.isolates.get(group, [])
-                isolates += group_isolate
-                self.dictionary[group] = group_isolate
-
-        self.dictionary[name] = isolates
-        return isolates
-
-    def reader(self, lista: List[Union[str, Dict]]) -> Dict[str, List[str]]:
-        """
-        Read a list containing either strings or dictionaries and populate the 'dictionary'.
-
-        Args:
-            lista (List): The list containing either strings or dictionaries.
-
-        Returns:
-            Dict: The populated dictionary.
-        """
-        logging.info("Reading list to populate dictionary.")
-        for item in lista:
-            if isinstance(item, dict):
-                self._dictionary_reader(item)
-            else:
-                self.dictionary[item] = self.isolates.get(item, [])
-
-        return self.dictionary
-
-
-def snp_file_parser(snpfile: str) -> List[List[Union[int, str]]]:
-    """
-    Parse a SNP file.
-
-    Args:
-    snpfile (str): The path to the SNP file.
-
-    Returns:
-    List[List[Union[int, str]]]: A list of lists, where each inner list represents a line in the SNP file
-                                 and contains an integer representing the SNP position and a string for the variant.
-
-    Raises:
-    FileNotFoundError: If the SNP file is not found.
-    PermissionError: If the permission to read the SNP file is denied.
-    """
-
-    logging.info(f"Starting to parse SNP file: {snpfile}")
-    snps: List[List[Union[int, str]]] = []  # Explicitly mention the type for better readability
-
-    try:
-        with open(snpfile, 'r') as snp_file:
-            for line_number, line in enumerate(snp_file, 1):  # Added line_number for better logging
-                line = line.strip()
-                if not line:
-                    logging.debug(f"Ignoring empty line at line {line_number}.")
-                    continue
-                if line.startswith("#"):
-                    logging.debug(f"Ignoring comment line at line {line_number}.")
-                    continue
-
-                variants = line.split(" ")
-                try:
-                    variants[0] = int(variants[0])
-                    snps.append(variants)
-                except ValueError:
-                    logging.error(f"ValueError: Could not convert SNP {line} to an integer at line {line_number}. Ignoring SNP.")
-
-        logging.info(f"Successfully parsed {len(snps)} SNPs from {snpfile}.")
-        return snps
-    except FileNotFoundError:
-        logging.error(f"File {snpfile} not found.")
-        return []
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {snpfile}")
-        return []
-
-def reference_parser(reference: str) -> List[Union[str, int]]:
-    """
-    Parse a reference genome file.
-
-    Args:
-    reference (str): The path to the reference genome file.
-
-    Returns:
-    List[Union[str, int]]: A list containing the reference genome as a string and the lengths of each chromosome as integers.
-
-    Raises:
-    FileNotFoundError: If the reference file is not found.
-    PermissionError: If the permission to read the reference file is denied.
-    """
-
-    logging.info(f"Starting to parse reference file: {reference}")
-    ref: str = ""
-    chromosomes: int = 0
-    chro_lengths: List[int] = []
-
-    try:
-        with open(reference, 'r') as fil:
-            for line_number, line in enumerate(fil, 1):
-                line = line.strip()
-                if not line:
-                    logging.debug(f"Ignoring empty line at line {line_number}.")
-                    continue
-
-                if ">" not in line:
-                    ref += line
-                else:
-                    if chromosomes != 0:
-                        chro_lengths.append(len(ref))
-                    chromosomes += 1
-                    logging.debug(f"Found chromosome header at line {line_number}, total chromosomes now {chromosomes}.")
-
-        return_list: List[Union[str, int]] = [ref] + chro_lengths
-        logging.info(f"Successfully parsed {chromosomes} chromosomes from {reference}.")
-        return return_list
-    except FileNotFoundError:
-        logging.error(f"File {reference} not found.")
-        return []
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {reference}")
-        return []
-
-def gff_parser(gff_file: str) -> Dict[int, List[List[Union[int, str]]]]:
-    """
-    Parse a GFF (General Feature Format) file to extract gene information.
-
-    Args:
-        gff_file (str): The path to the GFF file.
-
-    Returns:
-        Dict[int, List[List[Union[int, str]]]]: A dictionary where keys are region numbers and
-                                                 values are lists of lists containing gene information.
-                                                 Each inner list contains the start position, end position,
-                                                 and type of the gene.
-
-    Raises:
-        FileNotFoundError: If the GFF file is not found.
-        PermissionError: If the permission to read the GFF file is denied.
-    """
-
-    logging.info(f"Starting to parse GFF file: {gff_file}")
-    genes: Dict[int, List[List[Union[int, str]]]] = {}
-
-    try:
-        with open(gff_file, 'r') as gff:
-            current_region: int = 0
-            for line_number, line in enumerate(gff, 1):
-                line = line.strip()
-                if "#" in line:
-                    logging.debug(f"Ignoring comment line at line {line_number}.")
-                    continue
-
-                gene = line.split("\t")
-                if "region" in gene:
-                    current_region += 1
-                    genes[current_region] = []
-                    logging.debug(f"Found region header at line {line_number}, total regions now {current_region}.")
-                elif "gene" in gene:
-                    index = gene.index("gene")
-                    genes[current_region].append([int(gene[index + 1]) - 1, int(gene[index + 2]) - 1, gene[index + 4]])
-
-        logging.info(f"Successfully parsed {len(genes)} regions from {gff_file}.")
-        return genes
-
-    except FileNotFoundError:
-        logging.error(f"File {gff_file} not found.")
-        return {}
-    except PermissionError:
-        logging.error(f"Permission denied: Cannot read {gff_file}")
-        return {}
-
-def trf_parser(trf_file_path: str) -> Dict[int, List[Tuple[int, int]]]:
-    """
-    Parses a TRF (Tandem Repeats Finder) file and returns intervals for each chromosome.
-
-    Args:
-    trf_file_path: The file path of the TRF output.
-
-    Returns:
-    A dictionary where keys are chromosome numbers and values are lists of intervals.
-    Each interval is represented as a tuple (start, end).
-    """
-    intervals_by_chromosome = {}
-    chromosome_number = 0
-
-    with open(trf_file_path, 'r') as trf_file:
-        for line in trf_file:
-            if "@" in line:
-                chromosome_number += 1
-                intervals_by_chromosome[chromosome_number] = []
+                    words = line[1:].split()
+                    name = words[0] if words else None
+                    if name is not None:
+                        sequences[name] = []
+                elif name is not None and line.strip():
+                    sequences[name].append(line.strip().upper())
                 continue
-
-            interval_data = line.strip("\n").split(" ")
-
+            if line.startswith("##FASTA"):
+                in_fasta = True
+                continue
+            if line.startswith("#") or not line.strip():
+                continue
+            fields = line.split("\t")
+            if len(fields) != 9:
+                raise ValueError(
+                    f"{gff_file}: line {line_number} holds {len(fields)} tab separated columns "
+                    f"where GFF3 has 9")
+            if fields[GFF_TYPE] not in GENE_FEATURES:
+                continue
             try:
-                start, end = map(int, interval_data[:2])
-                intervals_by_chromosome[chromosome_number].append((start, end))
+                start = int(fields[GFF_START]) - 1
+                end = int(fields[GFF_END]) - 1
             except ValueError:
+                raise ValueError(
+                    f"{gff_file}: line {line_number} has no readable start and end") from None
+            if end < start or start < 0:
+                raise ValueError(f"{gff_file}: line {line_number} has an impossible interval")
+            sequence = unquote(fields[GFF_SEQID])
+            strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
+            genes.setdefault(sequence, []).append((start, end, strand))
+            if fields[GFF_TYPE] != "CDS":
                 continue
+            phase = fields[GFF_PHASE]
+            if phase not in {"0", "1", "2"}:
+                raise ValueError(
+                    f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
+            attributes = gff3_attributes(fields[GFF_ATTRIBUTES])
+            if attributes.get("pseudo", "").lower() == "true" or "pseudogene" in attributes:
+                pseudo += 1
+                continue
+            code = attributes.get("transl_table", "11")
+            if code not in STANDARD_CODES:
+                other_code[code] += 1
+                continue
+            cds.setdefault(sequence, []).append((start, end, strand, int(phase)))
 
-    for chromosome in intervals_by_chromosome:
-        intervals_by_chromosome[chromosome] = sorted(intervals_by_chromosome[chromosome], key=itemgetter(0))
+    # Whether a SNP is in a gene does not depend on the strand, and the genes
+    # are searched with a binary search, which needs intervals that do not
+    # overlap: a gene with its CDS, or a gene holding smaller features, would
+    # otherwise hide the bases it covers.
+    merged = {sequence: merge_intervals([(start, end) for start, end, _ in found])
+              for sequence, found in genes.items()}
+    for sequence in cds:
+        cds[sequence].sort(key=itemgetter(0, 1))
+    if pseudo:
+        logging.info(f"{pseudo} pseudogene CDS of {gff_file} give no reading frame")
+    for code, count in sorted(other_code.items()):
+        logging.warning(
+            f"{count} CDS of {gff_file} use genetic code {code}, whose codons translate "
+            f"differently from the standard code, and give no reading frame")
+    logging.info(
+        f"Read {sum(len(found) for found in genes.values())} genes and CDS features, "
+        f"{sum(len(found) for found in cds.values())} CDS with a reading frame, over "
+        f"{len(genes)} sequences from {gff_file}"
+        + (f", and {len(sequences)} sequences after ##FASTA" if sequences else ""))
+    return GeneModel(genes=merged, cds=cds,
+                     sequences={key: "".join(value) for key, value in sequences.items()})
 
-    return intervals_by_chromosome
 
-
-def score_file_writer(snp_data: List[List[Union[str, int, float]]], output_file_path: str) -> None:
+def read_contig_aliases(path: str) -> List[Set[str]]:
     """
-    Writes SNP data to a CSV file.
+    Read which names denote the same sequence.
 
-    Args:
-    snp_data: A list of lists, where each inner list represents a row of SNP data.
-    output_file_path: The file path where the CSV file will be saved.
+    Two standard layouts are read. NCBI's assembly_report.txt, which sits
+    beside every assembly NCBI distributes, gives each molecule's sequence
+    name, GenBank accession, RefSeq accession and UCSC name; a RefSeq GFF3
+    names the chromosome of Coxiella burnetii RSA 493 NC_002971.4 where the
+    GenBank FASTA names it AE016828.3. A UCSC chromAlias table gives every
+    name of one sequence on one tab separated line.
 
     Returns:
-    None
+        One set of names per sequence.
+
+    Raises:
+        ValueError: If the file holds no names.
     """
-    header = ["Position", "Group", "Score", "NeighborDistanceScore", "GCContentScore", "TandemRepeatProximityScore", "GeneProximityScore", "MutationTypeScore"]
-
-    # Log the number of CanSNPs entries
-    logging.info(f"Writing {len(snp_data)} CanSNP entries to the file {output_file_path}.")
-
-    with open(output_file_path, 'w', newline='') as out_file:
-        csv_writer = csv.writer(out_file, delimiter=',')
-        csv_writer.writerow(header)
-        csv_writer.writerows(snp_data)
-
-
-def check_files_exist(files: List[str]) -> bool:
-    """
-    Check if all the specified files exist.
-
-    Args:
-        files (List[str]): A list of file paths to check for existence.
-
-    Returns:
-        bool: True if all files exist, otherwise False.
-
-    Example:
-        >>> check_files_exist(["file1.txt", "file2.txt"])
-        True
-    """
-    logging.info("Checking if all specified files exist.")
-
-    for file in files:
-        if not os.path.isfile(file):
-            logging.warning(f"File {file} does not exist.")
-            return False
-
-    logging.info("All specified files exist.")
-    return True
-
-def cansnp_file_writer(cansnp_data: List[List[Union[str, int]]], output_filepath: str) -> None:
-    """
-    Write Canonical SNPs (canSNPs) data to an output file.
-
-    Args:
-    cansnp_data: List of canSNP data, each represented as a list of strings or integers.
-    output_filepath: Path to the output file where the canSNP data will be saved.
-
-    Returns:
-    None
-    """
-    try:
-        logging.info(f"Starting to write canSNP data to {output_filepath}...")
-
-        with open(output_filepath, 'w') as out_file:
-            for i, cansnp_entry in enumerate(cansnp_data):
-                formatted_entry = " ".join(map(str, cansnp_entry))
-                out_file.write(f"{formatted_entry}\n")
-
-                # Log progress every 10% if the data size is large enough
-                if len(cansnp_data) > 10000:
-                    current_percent = int(((i + 1) / len(cansnp_data)) * 100)
-                    if current_percent % 10 == 0:
-                        logging.info(f"Writing canSNP data progress: {current_percent}%")
-
-        logging.info(f"Successfully wrote {len(cansnp_data)} canSNP entries to {output_filepath}.")
-
-    except Exception as e:
-        logging.error(f"Failed to write canSNP data to {output_filepath}. Error: {str(e)}")
-
-def recognize_group_file_format(file_path: str) -> str:
-    """
-    Recognize the file format by inspecting the first few lines.
-
-    Args:
-        file_path (str): The path to the file to inspect.
-
-    Returns:
-        str: The recognized file format ('csv' or 'repgenr_group').
-    """
-    logging.basicConfig(level=logging.INFO)
-    try:
-        with open(file_path, 'r') as file:
-            lines: List[str] = [file.readline().strip() for _ in range(5)]  # Read the first 5 lines
-            header: str = lines[0]  # Typically the header should be the first line
-
-            # Define headers for the formats
-            csv_header: str = 'Strain,Group'
-            repgenr_group_header: str = 'representative\tcontained\tis_self'
-
-            # Check if any of the first five lines starts with the expected headers
-            if any(line.startswith(csv_header) for line in lines):
-                logging.info(f"The file at '{file_path}' is recognized as CSV format.")
-                return 'csv'
-            elif any(line.startswith(repgenr_group_header) for line in lines):
-                logging.info(f"The file at '{file_path}' is recognized as repgenr_group format.")
-                return 'repgenr_group'
-            else:
-                raise ValueError(f"Unknown file format for file: {file_path}")
-
-    except FileNotFoundError:
-        logging.error(f"The file at '{file_path}' was not found.")
-        raise
-    except Exception as e:
-        logging.error(f"An error occurred while trying to read the file: {e}")
-        raise
-
-def recognize_hc_file_format(file_path: str) -> Union[str, None]:
-    logging.info(f"Attempting to recognize the format of file: {file_path}")
-
-    with open(file_path, 'r') as f:
-        first_line = f.readline().strip()  # Read the first line which should be the header
-
-    # Check if the file is empty or only contains whitespace
-    if not first_line:
-        logging.warning("The file appears to be empty or only contains whitespace.")
-        return None
-
-    # Check if it's a Newick format
-    if ";" in first_line:
-        logging.info(f"The file {file_path} appears to be in Newick format.")
-        return "newick"
-
-    # Check if it's a JSON format
-    if first_line.startswith("{") or first_line.startswith("["):
-        logging.info(f"The file {file_path} appears to be in JSON format.")
-        return "json"
-
-    # Check if it's a YAML format
-    if ":" in first_line and not first_line.startswith("#"):
-        logging.info(f"The file {file_path} appears to be in YAML format.")
-        return "yaml"
-
-    # Check if it's the repgenr HC format
-    if "child" in first_line and "parent" in first_line and "\t" in first_line:
-        logging.info(f"The file {file_path} appears to be in repgenr HC format.")
-        return "repgenr"
-
-    logging.warning(f"Unable to determine the format of the file {file_path}.")
-    return "unknown"
-
-
-def convert_data(data: str, input_format: str, output_format: str) -> str:
-    logging.info(f"Starting conversion from {input_format} to {output_format}")
-
-    def hier_to_child_parent_with_leaf(hier: Union[Dict, List], parent=None, cp_list=[]):
-        logging.debug(f"Converting hierarchy to child-parent: {hier} with parent {parent}")
-        if isinstance(hier, dict):
-            for k, v in hier.items():
-                cp_list.append((k, parent))
-                hier_to_child_parent_with_leaf(v, k, cp_list)
-        elif isinstance(hier, list):
-            for i in hier:
-                hier_to_child_parent_with_leaf(i, parent, cp_list)
+    groups: List[Set[str]] = []
+    with open_text(path, newline="") as handle:
+        lines = [line.rstrip("\r\n") for line in handle]
+    ncbi = any(line.startswith("# Sequence-Name") for line in lines)
+    for line in lines:
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if ncbi:
+            if len(fields) < 7:
+                continue
+            names = [fields[index] for index in (0, 4, 6, 9) if index < len(fields)]
         else:
-            cp_list.append((hier, parent))
-        logging.debug(f"Child-parent list so far: {cp_list}")
-        return cp_list
-
-    def child_parent_to_hier_with_leaf(cp_list: List[Tuple[str, str]], root_is_list: bool = False) -> Union[Dict, List]:
-        logging.debug(f"Converting child-parent list to hierarchy: {cp_list}")
-        parent_to_children = defaultdict(list)
-
-        for child, parent in cp_list:
-            parent_to_children[parent].append(child)
-
-        def build_hier_from_parent_with_leaf(parent: Optional[str]) -> Union[Dict, List]:
-            children = parent_to_children.get(parent, [])
-            if not children:
-                return None
-            if len(children) != len(set(children)):
-                return [build_hier_from_parent_with_leaf(child) for child in children]
-            else:
-                return {child: build_hier_from_parent_with_leaf(child) for child in children}
-
-        hier = build_hier_from_parent_with_leaf(None)
-        logging.debug(f"Hierarchy so far: {hier}")
-
-        return hier
-
-        def hier_to_child_parent(hier: Union[Dict, List], parent=None, cp_list=[]):
-            if isinstance(hier, dict):
-                for k, v in hier.items():
-                    cp_list.append((k, parent))
-                    hier_to_child_parent(v, k, cp_list)
-            elif isinstance(hier, list):
-                for i in hier:
-                    hier_to_child_parent(i, parent, cp_list)
-            else:
-                cp_list.append((hier, parent))
-            return cp_list
-
-        def child_parent_to_hier(cp_list: List[Tuple[str, str]], root_is_list: bool = False) -> Union[Dict, List]:
-            parent_to_children = defaultdict(list)
-
-            for child, parent in cp_list:
-                parent_to_children[parent].append(child)
-
-            def build_hier_from_parent(parent: str) -> Union[Dict, List]:
-                children = parent_to_children.get(parent, [])
-                if not children:
-                    return None
-                if len(children) != len(set(children)):
-                    return [build_hier_from_parent(child) for child in children]
-                else:
-                    return {child: build_hier_from_parent(child) for child in children}
-
-            if root_is_list:
-                return [build_hier_from_parent(None)]
-            else:
-                return build_hier_from_parent(None)
+            names = fields
+        group = {name.strip() for name in names if name.strip() and name.strip() != "na"}
+        if len(group) > 1:
+            groups.append(group)
+    if not groups:
+        raise ValueError(f"{path}: names no sequence by more than one name")
+    logging.info(f"Read {len(groups)} sequences with more than one name from {path}")
+    return groups
 
 
-        def build_hier_from_parent_with_leaf(parent: Optional[str]) -> Union[Dict, List]:
-            children = parent_to_children.get(parent, [])
-            if not children:
-                return None
-            if len(children) != len(set(children)):
-                return [build_hier_from_parent_with_leaf(child) for child in children]
-            else:
-                return {child: build_hier_from_parent_with_leaf(child) for child in children}
-
-        if root_is_list:
-            return [build_hier_from_parent_with_leaf(None)]
+def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Sort intervals and join those that overlap or touch."""
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
-            return build_hier_from_parent_with_leaf(None)
+            merged.append((start, end))
+    return merged
 
-    def remove_leaf_colons(yaml_str: str) -> str:
-        lines = yaml_str.splitlines()
-        processed_lines = []
-        for line in lines:
-            if line.strip().endswith(":"):
-                processed_lines.append(line.rstrip(":"))
-            else:
-                processed_lines.append(line)
-        return "\n".join(processed_lines)
 
-    def newick_to_child_parent(newick_str: str, parent=None, cp_list=[]):
-        stack = []
-        child_name = ""
-        for char in newick_str:
-            if char == "(":
-                stack.append((child_name, parent))
-                parent = child_name
-                child_name = ""
-            elif char == "," or char == ")":
-                stack.append((child_name, parent))
-                cp_list.append((child_name, parent))
-                child_name = ""
-            elif char != ";":
-                child_name += char
-        return cp_list
+def read_intervals(path: str) -> Dict[str, List[Tuple[int, int]]]:
+    """
+    Read regions of the reference from BED or GFF3: tandem repeats, or regions
+    to mask such as the recombinant regions Gubbins reports.
 
-    def build_newick(node, cp_list):
-        children = [child for child, parent in cp_list if parent == node]
-        if children:
-            return f"({','.join([build_newick(child, cp_list) for child in children])}){node}"
+    A file whose leading comments hold a ##gff-version directive is GFF3, and
+    every feature in it is a region, 1-based and inclusive. Anything else is
+    BED: chrom, start and end in the first three columns, 0-based and half
+    open, with track, browser and '#' lines skipped. Sequences are named
+    exactly as the reference FASTA's IDs name them.
+
+    Returns:
+        The regions per sequence as (start, end), 0-based and inclusive,
+        sorted, with overlapping regions joined.
+
+    Raises:
+        ValueError: If a line is not a well formed region.
+        OSError: If the file cannot be read.
+    """
+    regions: Dict[str, List[Tuple[int, int]]] = {}
+    with open_text(path, newline="") as handle:
+        lines = [line.rstrip("\r\n") for line in handle]
+    is_gff = False
+    for line in lines:
+        if not line.strip():
+            continue
+        if line.startswith("##gff-version"):
+            is_gff = True
+            break
+        if not line.startswith("#"):
+            break
+
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        if is_gff:
+            if line.startswith("##FASTA"):
+                break
+            if line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if len(fields) != 9:
+                raise ValueError(
+                    f"{path}: line {number} holds {len(fields)} tab separated columns where "
+                    f"GFF3 has 9")
+            sequence, first, last = fields[0], fields[3], fields[4]
+            try:
+                start, end = int(first) - 1, int(last) - 1
+            except ValueError:
+                raise ValueError(f"{path}: line {number} has no readable start and end") from None
         else:
-            return node
+            if line.startswith("#") or line.split()[0] in ("track", "browser"):
+                continue
+            fields = line.split("\t")
+            if len(fields) < 3:
+                # BED is tab separated, but whitespace separated files exist.
+                fields = line.split()
+            if len(fields) < 3:
+                raise ValueError(
+                    f"{path}: line {number} holds {len(fields)} tab separated columns where BED "
+                    f"has at least 3")
+            sequence = fields[0]
+            try:
+                start, end = int(fields[1]), int(fields[2]) - 1
+            except ValueError:
+                raise ValueError(f"{path}: line {number} has no readable start and end") from None
+            if end == start - 1 and start >= 0:
+                continue  # BED allows an empty region, which covers no base
+        if start < 0 or end < start:
+            raise ValueError(f"{path}: line {number} has an impossible interval")
+        regions.setdefault(sequence, []).append((start, end))
 
-    # Custom representer for dictionaries with null values
-    def null_dict_representer(dumper, data):
-        return dumper.represent_dict({k: v for k, v in data.items() if v is not None})
-
-    def remove_empty_dicts(yaml_str):
-        return yaml_str.replace(": {}", "")
-
-    # Function to dump YAML with custom representer
-    # Function to dump YAML with custom representer
-    def dump_custom_yaml(data):
-        yaml = YAML()
-        yaml.default_flow_style = None  # Use block style for collections
-        yaml.indent(sequence=4, offset=2)  # Indentation settings
-        yaml.representer.add_representer(dict, null_dict_representer)  # Add custom representer to this instance
-
-        stream = StringIO()
-        yaml.dump(data, stream)
-        yaml_str = stream.getvalue()
-        yaml_str = remove_empty_dicts(yaml_str)
-
-        return yaml_str
-
-    logging.info("Reading input data...")
-    if input_format == 'yaml':
-        yaml = YAML()
-        input_data = yaml.load(data)
-    elif input_format == 'json':
-        input_data = json.loads(data)
-    elif input_format == 'newick':
-        input_data = newick_to_child_parent(data)
-    elif input_format == 'child_parent':
-        input_data = [(line.split()[0], line.split()[1] if len(line.split()) > 1 else None) for line in
-                      data.strip().split('\n') if len(line.split()) > 1]
-    else:
-        logging.error("Unsupported input format")
-        raise ValueError("Unsupported input format")
-
-    logging.info("Converting to child-parent list...")
-    if input_format in ['yaml', 'json']:
-        cp_list = hier_to_child_parent_with_leaf(input_data)
-    else:
-        cp_list = input_data
-
-    logging.info("Converting to output format...")
-    if output_format == 'yaml':
-        output_data = child_parent_to_hier_with_leaf(cp_list, root_is_list=isinstance(input_data, list))
-        return dump_custom_yaml(output_data)
-    elif output_format == 'json':
-        output_data = child_parent_to_hier_with_leaf(cp_list, root_is_list=isinstance(input_data, list))
-        return json.dumps(output_data, indent=2)
-    elif output_format == 'newick':
-        root = [node for node, parent in cp_list if parent is None][0]
-        return build_newick(root, cp_list) + ';'
-    elif output_format == 'child_parent':
-        return "\n".join([f"{child}\t{parent}" for child, parent in cp_list if parent is not None])
-    else:
-        logging.error("Unsupported output format")
-        raise ValueError("Unsupported output format")
-
-def save_to_file(data: str, filename: str, file_format: str):
-    """
-    Save converted data to a file.
-
-    Parameters:
-        - data (str): The converted data as a string
-        - filename (str): The name of the output file
-        - file_format (str): The format of the data ("yaml", "json", "newick", "child_parent")
-
-    """
-    with open(f"{filename}.{file_format}", "w") as f:
-        # Adding a header for child_parent format
-        if file_format == "child_parent":
-            f.write("child\tparent\n")
-        f.write(data)
+    merged = {sequence: merge_intervals(found) for sequence, found in regions.items()}
+    logging.info(
+        f"Read {sum(len(found) for found in merged.values())} regions over {len(merged)} "
+        f"sequences from {path}, as {'GFF3' if is_gff else 'BED'}")
+    return merged

@@ -1,134 +1,298 @@
-from cansnpscorer.helpers.data_utils import neighbour_distance, gc_content, search, gene_checker
+"""Scoring of a canSNP for its suitability as an assay target.
+
+Every score is a function of one ``SnpContext``, which carries the contig the
+SNP sits on, its position within that contig, its alleles, its neighbouring
+SNPs and the gene and repeat intervals of that contig. Nothing here works in
+concatenated genome coordinates, so no offset bookkeeping is needed and a SNP
+is scored the same way whichever contig it lies on.
+
+The five terms are, each on a scale of 0 to 1 before weighting:
+
+``neighbour``
+    distance to the closest neighbouring SNP, since a nearby SNP interferes
+    with an assay.
+``gc``
+    how close the surrounding GC content is to the goal.
+``repeat``
+    distance to the closest tandem repeat.
+``gene``
+    whether the SNP falls in a gene or CDS, which makes its context better
+    defined.
+``mutation``
+    whether the substitution is synonymous in the CDS it falls in, read in
+    that CDS's frame, which makes it more likely to be neutral; one that
+    introduces or removes a stop codon, or lies outside any CDS, scores 0.
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from cansnpscorer.helpers.data_utils import codon_comparer, gc_content, neighbour_distance, search
+from cansnpscorer.model import Contig
+from cansnpscorer.model import complement as complement_base
+
+BASES = frozenset("ACGT")
+
+#: The score terms, in the order they are reported.
+TERMS = ("neighbour_score", "gc_score", "tandem_score", "gene_score", "mutation_score")
+
+#: Weights applied before the terms are summed. The gene term counts twice,
+#: which is the behaviour the tool has had since the scoring was introduced.
+DEFAULT_WEIGHTS: Dict[str, float] = {"gene_score": 2.0}
+
+#: The highest total a SNP can reach with the default weights.
+MAXIMUM_SCORE = round(100 * sum(DEFAULT_WEIGHTS.get(term, 1.0) for term in TERMS))
 
 
-def NeighborDistanceScoring(snp_idx, snps, reference, correction, chromosome_length):
+@dataclass
+class SnpContext:
+    """One SNP and everything needed to score it, in contig coordinates."""
+
+    contig: Contig
+    position: int
+    """0-based position within the contig."""
+    node: str
+    alleles: Sequence[str]
+    previous: Optional[int] = None
+    """0-based position of the closest SNP to the left on this contig."""
+    following: Optional[int] = None
+    """0-based position of the closest SNP to the right on this contig."""
+    genes: Sequence[Sequence[int]] = field(default_factory=list)
+    """Bases covered by a gene or CDS on this contig as (start, end), sorted and joined."""
+    cds: Sequence[Sequence[int]] = field(default_factory=list)
+    """CDS intervals on this contig as (start, end, strand, phase), sorted by start."""
+    repeats: Sequence[Sequence[int]] = field(default_factory=list)
+    """Tandem repeat intervals on this contig as (start, end), sorted by start."""
+    nearest: Optional[int] = None
+    """Distance to the nearest variation among the scheme's genomes, as extract
+    measured it over every column where they differ; None when not known."""
+
+    @property
+    def derived(self) -> Optional[str]:
+        """The base carried below the node, when the polarity is known."""
+        return self.alleles[0] if self.alleles else None
+
+    @property
+    def ancestral(self) -> Optional[str]:
+        return self.alleles[1] if len(self.alleles) > 1 else None
+
+    @property
+    def global_position(self) -> int:
+        return self.contig.start + self.position
+
+    @property
+    def reported_position(self) -> int:
+        """The 1-based position within the contig, as schemes record it."""
+        return self.position + 1
+
+
+def neighbour_score(context: SnpContext, flank: int = 50) -> float:
+    """How clean the flanks of the SNP are, from 0 to 1 over ``flank`` bases.
+
+    The distance is to the nearest variation among the scheme's genomes when
+    extract measured it, which counts every column where they differ, and
+    otherwise to the nearest SNP in the SNP file. A contig end counts as well,
+    on purpose: an assay needs flanking sequence on both sides of its SNP,
+    which a SNP near the end of a contig of a draft assembly does not have.
     """
-    Wrapper around neighbour_distance for easier usage in ScoringManager.
+    # Distances are differences of position, so a neighbouring site is 1 away,
+    # and so is the first position past either end of the contig.
+    if context.nearest is not None:
+        to_ends = min(context.position + 1, context.contig.length - context.position)
+        return min(context.nearest, to_ends, flank) / float(flank)
+    left = context.previous if context.previous is not None else -1
+    right = context.following if context.following is not None else context.contig.length
+    return neighbour_distance(context.position, left, right, flank)
+
+
+def gc_score(context: SnpContext, goal: float, distance: int = 50,
+             tolerance: float = 0.1) -> float:
+    """How close the GC content around the SNP is to the goal; full marks
+    within ``tolerance`` of it, as a primer is designed in a range of GC."""
+    return gc_content(context.position, context.contig.sequence, goal, distance, tolerance)
+
+
+def repeat_score(context: SnpContext, limit: int) -> float:
+    """Distance to the closest tandem repeat, normalized to limit."""
+    score, _interval = search(context.position, context.repeats, limit)
+    return score
+
+
+def gene_score(context: SnpContext, limit: int) -> float:
+    """Whether the SNP falls in a gene or CDS.
+
+    The score is 1 inside one and falls to 0 at the limit, so a SNP in a well
+    defined coding context scores highest.
     """
-    current_snp = snps[snp_idx]
-
-    # Logic for getting left and right neighbors from original code
-    if snp_idx > 0 and snp_idx < len(snps) - 1:
-        left = snps[snp_idx - 1][0]
-        right = snps[snp_idx + 1][0]
-    elif snp_idx == 0:
-        left = 0
-        right = snps[snp_idx + 1][0]
-    elif snp_idx == len(snps) - 1:
-        left = snps[snp_idx - 1][0]
-        right = chromosome_length  # length of the chromosome
-
-    # Apply correction for chromosome switching
-    if current_snp[0] - correction > chromosome_length:
-        correction = reference[chromosome_length]
-
-    snp_pos = current_snp[0] - correction
-
-    return neighbour_distance(snp_pos, left, right)
+    distance, _interval = search(context.position, context.genes, limit)
+    return 1.0 - distance
 
 
-def GCContentScoring(snp_idx, snps, reference, correction, gc_goal, chromosome_length):
+def codons_at(context: SnpContext) -> Optional[List[str]]:
+    """The codon each allele gives, read in the frame of the CDS the SNP is in.
+
+    A CDS is read from its 5' end, skipping ``phase`` bases first, as GFF3
+    defines the phase: forward from its start on the plus strand, and backward
+    from its end on the minus strand, complemented. Returns None outside every
+    CDS, for a SNP in the skipped bases, and for a codon the CDS ends inside.
+    When CDS overlap, the first one that holds the SNP is read.
     """
-    Wrapper around gc_content for easier usage in ScoringManager.
+    if len(context.alleles) != 2:
+        return None
+    sequence = context.contig.sequence
+    position = context.position
+
+    for start, end, strand, phase in context.cds:
+        if start > position:
+            break
+        if position > end:
+            continue
+        if strand == "-":
+            # Transcribed from the end: the first codon begins at end - phase
+            # and each codon reads towards lower coordinates.
+            first = end - phase
+            if position > first:
+                continue
+            index = (first - position) % 3
+            top = position + index
+            positions = [top, top - 1, top - 2]
+            if positions[-1] < start:
+                continue
+            codon = [complement_base(sequence[at]) for at in positions]
+            alleles = [complement_base(allele) for allele in context.alleles]
+        else:
+            first = start + phase
+            if position < first:
+                continue
+            index = (position - first) % 3
+            positions = [position - index + offset for offset in range(3)]
+            if positions[-1] > end:
+                continue
+            codon = [sequence[at] for at in positions]
+            alleles = list(context.alleles)
+        if not set(codon) <= BASES:
+            return None
+        codons = []
+        for allele in alleles:
+            changed = list(codon)
+            changed[index] = allele
+            codons.append("".join(changed))
+        return codons
+    return None
+
+
+def mutation_score(context: SnpContext) -> float:
+    """1 for a synonymous substitution, 0.5 for one that changes the amino acid,
+    and 0 for one that gains or loses a stop codon or lies outside every CDS."""
+    codons = codons_at(context)
+    if codons is None:
+        return 0.0
+    return codon_comparer(codons, "+")
+
+
+#: The INFO key each term is written under.
+INFO_KEYS = {
+    "neighbour_score": "NEIGHBOUR",
+    "gc_score": "GC",
+    "tandem_score": "TANDEM",
+    "gene_score": "GENE",
+    "mutation_score": "MUTATION",
+}
+
+
+@dataclass
+class ScoredSnp:
+    """One scored canSNP, addressed by contig and 1-based position."""
+
+    contig: str
+    position: int
+    node: str
+    total: int
+    terms: Dict[str, int]
+    derived: Optional[str] = None
+    ancestral: Optional[str] = None
+    filters: List[str] = field(default_factory=list)
+    """The FILTER codes it failed: LowScore, NotTop or Masked. Empty when it passed."""
+    missing: int = 0
+    """Genomes of the alignment without a base at the SNP; fewer is ranked first."""
+
+    @property
+    def passed(self) -> bool:
+        return not self.filters
+
+
+def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
+              gc_goal: float = 0.5, weights: Optional[Dict[str, float]] = None,
+              flank: int = 50, gc_tolerance: float = 0.1) -> ScoredSnp:
+    """Score one SNP.
+
+    Every term is a percentage rounded to a whole number, and the total is
+    their weighted sum.
     """
-    current_snp = snps[snp_idx]
+    weights = DEFAULT_WEIGHTS if weights is None else weights
 
-    # Apply correction for chromosome switching
-    if current_snp[0] - correction > chromosome_length:
-        correction = reference[chromosome_length]
-
-    snp_pos = current_snp[0] - correction
-
-    return gc_content(snp_pos, reference[0], gc_goal)
-
-
-def TandemRepeatProximityScoring(snp_idx, snps, trf, correction, chromosome, tandem_limit, chromosome_length):
-    """
-    Wrapper around search for tandem repeats for easier usage in ScoringManager.
-    """
-    current_snp = snps[snp_idx]
-
-    # Apply correction for chromosome switching
-    if current_snp[0] - correction > chromosome_length:
-        correction = trf[chromosome]
-        chromosome += 1
-
-    snp_pos = current_snp[0] - correction
-
-    return search(snp_pos, trf[chromosome], tandem_limit)[0]
-
-def GeneProximityScoring(snp_idx, snps, ref_gb, correction, chromosome, gene_limit, chromosome_length):
-    """
-    Wrapper around search for gene proximity for easier usage in ScoringManager.
-    """
-    current_snp = snps[snp_idx]
-
-    # Apply correction for chromosome switching
-    if current_snp[0] - correction > chromosome_length:
-        correction = ref_gb[chromosome]
-        chromosome += 1
-
-    snp_pos = current_snp[0] - correction
-
-    gene_proximity = search(snp_pos, ref_gb[chromosome], gene_limit)
-
-    # Adjust the gene score for aggregation
-    adjusted_gene_score = (1 - gene_proximity[0])
-
-    return adjusted_gene_score, gene_proximity
-
-
-
-def MutationTypeScoring(snp_idx, snps, reference, gene_score, correction):
-    """
-    Wrapper around gene_checker for mutation type scoring for easier usage in ScoringManager.
-    """
-    current_snp = snps[snp_idx]
-
-    # If gene_score[0] is 1, it means the SNP is not within or near any gene; thus mutation type is irrelevant
-    if gene_score[0] != 0:
-        gene_proximity = gene_score[1]
-        gene_interval = gene_proximity[1]
-        mutation_type_score = gene_checker(current_snp, reference, gene_interval, correction)
-        return mutation_type_score
-    else:
-        return 0
-
-
-
-
-def ScoringManager(i, snps, reference, ref_gb, trf, chromosome_length, correction, chromosome,
-                   tandem_limit=50, gene_limit=0, gc_goal=0.5, modifier=[]):
-    """
-    Aggregates all the scoring functions and calculates the final score.
-    """
-    # Individual Scoring Functions
-    neighbour_score = NeighborDistanceScoring(i, snps, reference, correction, chromosome_length)
-    gc_score = GCContentScoring(i, snps, reference, correction, gc_goal, chromosome_length)
-    tandem_score = TandemRepeatProximityScoring(i, snps, trf, correction, chromosome, tandem_limit, chromosome_length)
-    gene_score = GeneProximityScoring(i, snps, ref_gb, correction, chromosome, gene_limit, chromosome_length)
-    mutation_score = MutationTypeScoring(i, snps, reference, gene_score, correction)
-
-    # Mapping scores to their names
-    scores_dict = {
-        'neighbour_score': neighbour_score,
-        'gc_score': gc_score,
-        'tandem_score': tandem_score,
-        'gene_score': gene_score[0],
-        'mutation_score': mutation_score
+    raw = {
+        "neighbour_score": neighbour_score(context, flank),
+        "gc_score": gc_score(context, gc_goal, tolerance=gc_tolerance),
+        "tandem_score": repeat_score(context, tandem_limit),
+        "gene_score": gene_score(context, gene_limit),
+        "mutation_score": mutation_score(context),
     }
 
-    # Apply the modifier factor to selected scores and multiply all by 100
-    for score_name, value in scores_dict.items():
-        factor = 2 if score_name in modifier else 1
-        scores_dict[score_name] = round(value * factor * 100)
+    terms = {term: round(raw[term] * weights.get(term, 1.0) * 100) for term in TERMS}
+    return ScoredSnp(
+        contig=context.contig.name,
+        position=context.reported_position,
+        node=context.node,
+        total=sum(terms.values()),
+        terms=terms,
+        derived=context.derived,
+        ancestral=context.ancestral,
+    )
 
-    # Aggregate the scores
-    score = list(scores_dict.values())
 
-    total = sum(score)
+def contexts_for(snps: Sequence[Tuple[Contig, int, str, Sequence[str]]],
+                 genes: Dict[str, Sequence[Sequence[int]]],
+                 repeats: Dict[str, Sequence[Sequence[int]]],
+                 cds: Optional[Dict[str, Sequence[Sequence[int]]]] = None) -> List[SnpContext]:
+    """Build the contexts for a set of SNPs, filling in each SNP's neighbours.
 
-    # The final score array consists of SNP position, SNP variant, total score, and individual scores.
-    final_score = [snps[i][0], snps[i][1], total] + score
+    Args:
+        snps: (contig, 0-based position within the contig, node, alleles) per SNP.
+        genes: Gene and CDS intervals per contig name.
+        repeats: Tandem repeat intervals per contig name.
+        cds: CDS intervals with their phase per contig name.
 
-    return final_score
+    Returns:
+        One context per SNP, ordered by contig and position. Neighbours are the
+        adjacent SNPs on the same contig, whether or not they are canonical.
+    """
+    ordered = sorted(snps, key=lambda snp: (snp[0].start, snp[1]))
+
+    positions: Dict[str, List[int]] = {}
+    for snp in ordered:
+        positions.setdefault(snp[0].name, []).append(snp[1])
+
+    contexts: List[SnpContext] = []
+    seen: Dict[str, int] = {}
+    for snp in ordered:
+        contig, position, node, alleles = snp[:4]
+        nearest = snp[4] if len(snp) > 4 else None
+        index = seen.get(contig.name, 0)
+        seen[contig.name] = index + 1
+        on_contig = positions[contig.name]
+        contexts.append(
+            SnpContext(
+                contig=contig,
+                position=position,
+                node=node,
+                alleles=tuple(alleles),
+                previous=on_contig[index - 1] if index > 0 else None,
+                following=on_contig[index + 1] if index + 1 < len(on_contig) else None,
+                genes=sorted(genes.get(contig.name, []), key=lambda interval: interval[0]),
+                repeats=sorted(repeats.get(contig.name, []), key=lambda interval: interval[0]),
+                cds=sorted((cds or {}).get(contig.name, []), key=lambda interval: interval[0]),
+                nearest=nearest,
+            )
+        )
+    return contexts
