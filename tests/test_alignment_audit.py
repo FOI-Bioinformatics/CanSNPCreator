@@ -429,3 +429,18 @@ def test_the_cli_takes_the_genome_conflicts_threshold(written, dataset, tmp_path
             "--alignment", path, "--genome-map", dataset.genome_map,
             "--genome-conflicts", "2", "-o", str(output))
     assert "discordant-genome" in output.read_text()
+
+
+def test_a_genome_at_a_node_the_scheme_lacks_tests_no_snp(written, dataset, tmp_path):
+    # As after export --prune: the genome map still names a node the scheme
+    # left out. Its genome carries the derived base of the nodes above it, and
+    # is not evidence that their SNPs are homoplastic.
+    outdir, _scores = written
+    placements = {node: list(genomes) for node, genomes in CLUSTERS.items() if node != "B.2"}
+    placements["B.2.1"] = ["s4"]
+    findings = audit(outdir, dataset, group_path=write_groups(tmp_path, placements))
+    assert not of(findings, "homoplasy") and not of(findings, "not-canonical")
+    assert not of(findings, "missing-genome")
+    unknown = of(findings, "unknown-cluster")
+    assert len(unknown) == 1 and "1 genomes at 1 nodes" in unknown[0].detail
+    assert all("s4" not in finding.detail for finding in of(findings, "ungrouped"))

@@ -61,12 +61,21 @@ class Placement:
                  genomes: Sequence[str]) -> None:
         hierarchy = scheme.hierarchy
         self.hierarchy = hierarchy
-        self.genomes: list[str] = list(genomes)
-        known = set(genomes)
-
         self.unknown_clusters = sorted(set(clusters) - set(hierarchy.parents))
+        # A genome the map puts at a node the scheme does not hold, such as
+        # one export --prune left out, has no known place in this scheme. It
+        # is neither below any node nor known to be outside one, so it tests
+        # no SNP: counted as outside, it would carry the derived base of
+        # every node above the one it was placed at, and each of those SNPs
+        # would be reported as homoplastic.
+        self.unplaced: list[str] = sorted(
+            {name for node in self.unknown_clusters for name in clusters[node]} & set(genomes))
+        without_place = set(self.unplaced)
+        self.genomes: list[str] = [name for name in genomes if name not in without_place]
+        known = set(self.genomes)
+
         self.missing_genomes = sorted(
-            {name for node, names in clusters.items() for name in names} - known)
+            {name for node, names in clusters.items() for name in names} - set(genomes))
 
         usable = {
             node: [name for name in names if name in known]
@@ -580,8 +589,12 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
     if placement.unknown_clusters:
         findings.append(problem(
             CHECK, "unknown-cluster", "",
-            f"the genome map places genomes at {len(placement.unknown_clusters)} nodes the scheme "
-            f"does not hold, and they were left out: {_names(placement.unknown_clusters)}"))
+            f"the genome map places {len(placement.unplaced)} genomes at "
+            f"{len(placement.unknown_clusters)} nodes the scheme does not hold: "
+            f"{_names(placement.unknown_clusters)}. Where they belong in this scheme is not "
+            f"known, so they were left out of every check, as genomes neither below nor "
+            f"outside a node. If export --prune left those nodes out, the genomes file it "
+            f"writes places their genomes at the nearest node kept"))
     if placement.missing_genomes:
         findings.append(recommendation(
             CHECK, "missing-genome", "",
