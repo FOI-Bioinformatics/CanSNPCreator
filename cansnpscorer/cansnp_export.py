@@ -40,8 +40,13 @@ from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
 from cansnpscorer.validate import report
 
-GENBANK = re.compile(r"GCA_\d{9}\.\d+")
-REFSEQ = re.compile(r"GCF_\d{9}\.\d+")
+#: The version of an accession has one or two digits, as CanSNPer2-data's
+#: validate.py requires; a longer one is refused here rather than there. The
+#: names module matches any version, since it only finds a genome by its name
+#: and writes nothing.
+VERSION = r"\.\d{1,2}(?!\d)"
+GENBANK = re.compile(r"GCA_\d{9}" + VERSION)
+REFSEQ = re.compile(r"GCF_\d{9}" + VERSION)
 #: An organism names the files, so it is limited to what a file name holds safely.
 ORGANISM = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 BASES = frozenset("ACGT")
@@ -54,7 +59,9 @@ SNP_SET_SUFFIX = "_canSNPs.txt"
 SNP_SET_COLUMNS = ("node", "rank", "genome", "position", "derived_base", "ancestral_base",
                    "score")
 GENOME_COLUMNS = ("genome", "node", "role")
-ACCESSION = re.compile(r"GC[AF]_\d{9}\.\d+")
+ACCESSION = re.compile(r"GC[AF]_\d{9}" + VERSION)
+#: An accession in any version or none, to say why a name gave no accession.
+ANY_ACCESSION = re.compile(r"GC[AF]_\d{9}")
 
 SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
                "derived_base", "ancestral_base")
@@ -92,10 +99,12 @@ def check_metadata(genome: str, strain: str, reference: str, genbank_id: str,
         problems.append("the genome name is empty")
     if not GENBANK.fullmatch(genbank_id):
         problems.append(
-            f"'{genbank_id}' is not a well formed GenBank accession, such as GCA_000007125.1")
+            f"'{genbank_id}' is not a well formed GenBank accession, such as GCA_000007125.1, "
+            f"with a version of one or two digits")
     if not REFSEQ.fullmatch(refseq_id):
         problems.append(
-            f"'{refseq_id}' is not a well formed RefSeq accession, such as GCF_000007125.1")
+            f"'{refseq_id}' is not a well formed RefSeq accession, such as GCF_000007125.1, "
+            f"with a version of one or two digits")
     if not assembly_name:
         problems.append("the assembly name is empty")
 
@@ -123,6 +132,12 @@ def check_scheme(hierarchy: Hierarchy, best: dict[str, ScoredSnp],
     for node in hierarchy.nodes:
         if ";" in node:
             problems.append(f"node '{node}' holds a semicolon, which the tree reader cannot carry")
+        # Every file of the scheme is tab separated with one row per line, so
+        # such a name would not read back. A quoted Newick label can hold one.
+        if any(character in node for character in "\t\r\n"):
+            problems.append(
+                f"node {node!r} holds a tab or a line break, which would shift the columns "
+                f"and lines of the files")
 
     unknown = sorted(set(best) - set(hierarchy.parents))
     if unknown:
@@ -163,6 +178,29 @@ def check_scheme(hierarchy: Hierarchy, best: dict[str, ScoredSnp],
     return problems, warnings
 
 
+def repeated_positions(scores: Sequence[ScoredSnp]) -> list[str]:
+    """Positions that more than one passing record of the scores gives.
+
+    Extract writes one record per alignment column, so a position given twice
+    means the scores were joined from more than one run or edited. At two
+    nodes it cannot be canonical for both, since one SNP divides the genomes
+    in one way only; at one node it would enter the canSNP set twice. Which
+    record is right cannot be told from the scores, so this is refused rather
+    than resolved by score.
+    """
+    nodes_at: dict[tuple[str, int], list[str]] = {}
+    for score in scores:
+        nodes_at.setdefault((score.contig, score.position), []).append(score.node)
+    repeated = sorted((key, nodes) for key, nodes in nodes_at.items() if len(nodes) > 1)
+    if not repeated:
+        return []
+    examples = "; ".join(f"{contig}:{position} at {', '.join(nodes)}"
+                         for (contig, position), nodes in repeated[:5])
+    return [f"the scores give {len(repeated)} positions in more than one passing record, which "
+            f"extract does not write: a position marks one branch at most, and only once. "
+            f"Were the scores joined from more than one run? {examples}"]
+
+
 def paths_for(hierarchy: Hierarchy, kept: Sequence[str]) -> list[list[str]]:
     """One path per kept node, from the root, skipping the nodes left out."""
     keeping = set(kept)
@@ -181,8 +219,18 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
     A genome placed at a node the scheme left out moves to the nearest node
     above it that was kept, as that node's children do. A genome whose
     sequence is in the alignment is a representative; one placed only through
-    the genome map is a member; an aligned genome placed at no node is the
-    outgroup. Each is written as the assembly accession its name holds.
+    the genome map is a member; an aligned genome placed at no node is an
+    outgroup, since extract counted it as outside every node. That includes
+    the reference genome, the alignment's first record, when it is placed at
+    no node; CanSNPer2-data defines no other role for it, so it is listed as
+    an outgroup and a warning says so.
+
+    Each genome is written as the assembly accession its name holds. GCA_ and
+    GCF_ accessions with the same digits, or two versions of one, are one
+    assembly and get one row, whatever order the names come in: the row of a
+    representative is kept before that of a member, and a member before an
+    outgroup, since the representative's sequence is what the canSNPs were
+    found in. One assembly given at more than one node is reported.
     """
     from cansnpscorer.helpers.names import resolve_names
 
@@ -197,22 +245,19 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
     matched, _unmatched, _ambiguous = resolve_names(list(placed), aligned)
     aligned_placed = set(matched.values())
 
-    rows: list[tuple[str, str, str]] = []
     warnings: list[str] = []
     no_accession: list[str] = []
-    seen: dict[str, str] = {}
+    bad_version: list[str] = []
+    # Every name given for an assembly, in the order met, as (accession, node, role).
+    given: dict[str, list[tuple[str, str, str]]] = {}
 
     def add(name: str, node: str, role: str) -> None:
         found = ACCESSION.search(name)
         if found is None:
-            no_accession.append(name)
+            (bad_version if ANY_ACCESSION.search(name) else no_accession).append(name)
             return
         accession = found.group(0)
-        assembly = accession[4:].split(".")[0]
-        if assembly in seen:
-            return
-        seen[assembly] = accession
-        rows.append((accession, node, role))
+        given.setdefault(accession[4:13], []).append((accession, node, role))
 
     unplaced: list[str] = []
     for genome, node in placed.items():
@@ -225,15 +270,42 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
         if record not in aligned_placed:
             add(record, "", "outgroup")
 
+    order = {"representative": 0, "member": 1, "outgroup": 2}
+    rows: list[tuple[str, str, str]] = []
+    split: list[str] = []
+    for entries in given.values():
+        rows.append(min(entries, key=lambda entry: order[entry[2]]))
+        nodes = sorted({node for _accession, node, _role in entries})
+        if len(nodes) > 1:
+            names = "/".join(sorted({accession for accession, _node, _role in entries}))
+            split.append(f"{names} at {' and '.join(node or 'no node' for node in nodes)}")
+
     if unplaced:
         warnings.append(
             f"{len(unplaced)} genomes are placed at nodes the hierarchy does not hold and were "
             f"left out of the genomes file: {', '.join(sorted(unplaced)[:5])}")
+    if split:
+        warnings.append(
+            f"{len(split)} assemblies are given at more than one node, under their GCA_ and "
+            f"GCF_ accessions or under two versions; each is listed once, at the node of its "
+            f"representative where it has one: {'; '.join(sorted(split)[:5])}")
+    if bad_version:
+        warnings.append(
+            f"{len(bad_version)} genomes hold an assembly accession without a version of one or "
+            f"two digits, which CanSNPer2-data requires, and were left out of the genomes file: "
+            f"{', '.join(sorted(bad_version)[:5])}")
     if no_accession:
         warnings.append(
             f"{len(no_accession)} genomes hold no assembly accession in their names and were "
             f"left out of the genomes file: {', '.join(sorted(no_accession)[:5])}")
-    order = {"representative": 0, "member": 1, "outgroup": 2}
+    reference = aligned[0] if aligned else None
+    if reference is not None and reference not in aligned_placed:
+        found = ACCESSION.search(reference)
+        if found is not None and (found.group(0), "", "outgroup") in rows:
+            warnings.append(
+                f"the reference genome '{reference}' is placed at no node, so the genomes file "
+                f"lists it as an outgroup, as extract counted it: outside every node. If it "
+                f"belongs to the scheme, place it in the genome map and run extract again")
     rows.sort(key=lambda row: (order[row[2]], row[1], row[0]))
     return rows, warnings
 
@@ -332,6 +404,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     chosen = select_per_node(scored, snps_per_node, spacing)
     best = {node: picked[0] for node, picked in chosen.items() if picked}
     problems, warnings = check_scheme(tree, best, sequence)
+    problems += repeated_positions(scored)
     problems += check_metadata(genome, strain, citation, genbank_id, refseq_id,
                                assembly_name, organism)
 

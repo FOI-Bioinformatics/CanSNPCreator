@@ -319,7 +319,8 @@ def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: list[str]) -> l
     """Read the optional ranked canSNPs of each node.
 
     Rank 1 of a node must be the SNP the SNP file gives it, since that is the
-    one CanSNPer2 calls; a disagreement is a problem of the scheme.
+    one CanSNPer2 calls, and the ranks of a node must run 1, 2, 3 ... without
+    a gap or a repeat; a deviation is a problem of the scheme.
     """
     name = os.path.basename(path)
     snp_set: list[SchemeSnp] = []
@@ -334,6 +335,18 @@ def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: list[str]) -> l
         snp_set.append(SchemeSnp(node=node, strain="", reference="", genome=genome,
                                  position=position_value, derived=derived,
                                  ancestral=ancestral, line=number, rank=rank_value))
+
+    # Export numbers each node's canSNPs 1, 2, 3 ... in file order. A gap or a
+    # repeat means the file was edited or joined, and a repeated rank 1 leaves
+    # open which canSNP the SNP file's is meant to be.
+    ranks: dict[str, list[int]] = {}
+    for snp in snp_set:
+        ranks.setdefault(snp.node, []).append(snp.rank)
+    for node, found in sorted(ranks.items()):
+        if found != list(range(1, len(found) + 1)):
+            problems.append(
+                f"{name} gives node '{node}' the ranks {', '.join(map(str, found))}, where "
+                f"1 to {len(found)} in order are expected")
 
     called = {snp.node: (snp.genome, snp.position, snp.derived, snp.ancestral) for snp in snps}
     first = {snp.node: (snp.genome, snp.position, snp.derived, snp.ancestral)
