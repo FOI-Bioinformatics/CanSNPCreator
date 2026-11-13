@@ -11,7 +11,7 @@ import pytest
 from conftest import PLANTED, vcf_lines, vcf_records
 
 from cansnpscorer.cansnp_scorer import main, score_weights
-from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS
+from cansnpscorer.helpers.scoring_methods import DEFAULT_WEIGHTS, TYPING_WEIGHTS
 
 
 def run(monkeypatch, *arguments):
@@ -184,8 +184,13 @@ def test_no_subcommand_prints_help_and_exits_two(monkeypatch, capsys):
 # -- arguments ---------------------------------------------------------------
 
 
-def test_score_weights_default_to_the_doubled_gene_term():
-    assert score_weights(None) == DEFAULT_WEIGHTS
+def test_score_weights_default_to_those_of_the_typing_profile():
+    assert score_weights(None) == TYPING_WEIGHTS
+
+
+def test_the_assay_profile_doubles_the_gene_term():
+    assert score_weights(None, "assay") == DEFAULT_WEIGHTS
+    assert score_weights(["gc_score=0.5"], "assay") == {"gene_score": 2.0, "gc_score": 0.5}
 
 
 def test_score_weights_are_parsed():
@@ -207,8 +212,9 @@ def test_weighting_the_gene_term_once_lowers_the_total(monkeypatch, dataset, tmp
     doubled = str(tmp_path / "doubled.vcf")
     plain = str(tmp_path / "plain.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
-    assert evaluate(monkeypatch, dataset, snp_file, doubled) == 0
-    assert evaluate(monkeypatch, dataset, snp_file, plain, "--score-weight", "gene_score=1") == 0
+    assert evaluate(monkeypatch, dataset, snp_file, doubled, "--profile", "assay") == 0
+    assert evaluate(monkeypatch, dataset, snp_file, plain, "--profile", "assay",
+                    "--score-weight", "gene_score=1") == 0
 
     def totals(path):
         return {record.node: int(record.info["SCORE"]) for record in vcf_records(path)}

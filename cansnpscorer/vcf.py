@@ -386,7 +386,8 @@ def snp_record(reference: Reference, contig: str, position: int, alleles: tuple[
 # -- the files of extract and evaluate ---------------------------------------
 
 SCORE = Info("SCORE", "1", "Integer",
-             "Weighted sum of the five score terms; higher suits an assay better")
+             "Weighted sum of the five score terms, weighted as ##CanSNPCreatorWeights gives; "
+             "higher is a better context for calling the SNP")
 
 
 def term_infos() -> list[Info]:
