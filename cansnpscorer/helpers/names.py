@@ -18,6 +18,10 @@ FASTA_SUFFIX = re.compile(r"\.(fasta|fna|fa|fas|ffn)(\.gz)?$", re.IGNORECASE)
 
 #: An NCBI assembly accession, with or without its version.
 ACCESSION = re.compile(r"(GC[AF]_\d{9})(?:\.(\d+))?")
+#: An accession inside a longer name, delimited on both sides: not part of a
+#: longer word before it, and not followed by a further digit. Its version is
+#: every digit after the dot, so that version 1 is not version 10.
+HELD_ACCESSION = re.compile(r"(?<![A-Za-z0-9])(GC[AF]_\d{9})(?!\d)(?:\.(\d+))?")
 
 
 def resolve_names(names, records):
@@ -52,6 +56,17 @@ def resolve_names(names, records):
             by_name.setdefault(key, set()).add(record)
         by_clean.setdefault(clean_name(strip_fasta_suffix(record)), set()).add(record)
 
+    # The accessions each record name holds, delimited as described above, so
+    # that an accession is looked up rather than searched for in every record.
+    by_stem = {}
+    by_version = {}
+    for record in records:
+        for found in HELD_ACCESSION.finditer(record):
+            stem, version = found.groups()
+            by_stem.setdefault(stem, set()).add(record)
+            if version is not None:
+                by_version.setdefault((stem, version), set()).add(record)
+
     exact = set(records)
     matched = {}
     unmatched = []
@@ -72,12 +87,8 @@ def resolve_names(names, records):
         accession = ACCESSION.fullmatch(stripped)
         if not found and accession:
             stem, version = accession.groups()
-            # Delimited on both sides: not part of a longer word before it,
-            # and the version not followed by a further digit.
-            inside = re.compile(
-                r"(?<![A-Za-z0-9])" + re.escape(stem)
-                + (r"\." + version if version else r"(?:\.\d+)?") + r"(?!\d)")
-            found = {record for record in records if inside.search(record)}
+            found = (by_version.get((stem, version), set()) if version
+                     else by_stem.get(stem, set()))
         if len(found) == 1:
             matched[name] = next(iter(found))
         elif found:

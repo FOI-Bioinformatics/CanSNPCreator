@@ -398,10 +398,12 @@ def main():
     collapse.add_argument("--outgroup", action="append", default=[], metavar="LEAF",
                           help="A leaf that is an outgroup: it sits at no node and stays in the "
                                "alignment as a genome outside every node, which gives the root a "
-                               "polarity. Repeatable.")
+                               "polarity. The leaf name, or an assembly accession it holds, as "
+                               "RepGenR2's outgroup_accession.txt gives it. Repeatable.")
     collapse.add_argument("--rename", default=None, metavar="PREFIX",
                           help="Name the nodes PREFIX, PREFIX.1, PREFIX.1.2 and so on, largest "
-                               "first, instead of the tree's own names.")
+                               "first and, among children of one size, by their first genome "
+                               "name, instead of the tree's own names.")
     collapse.add_argument("--outdir", default=".", help="Where to write the files.")
     collapse.add_argument("--prefix", default="collapsed",
                           help="Names the files PREFIX_hierarchy.tsv, PREFIX_genomes.tsv and "
