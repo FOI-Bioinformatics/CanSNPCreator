@@ -227,7 +227,8 @@ def main():
     evaluate.add_argument("--flank", type=at_least(1), default=50,
                           help="How many bases on either side of a canSNP must be free of "
                                "variation among the scheme's genomes, and of a contig end, for "
-                               "the full neighbour term. Default: 50.")
+                               "the full neighbour term. Default: 50. Distances beyond 1000 "
+                               "bases are not recorded by extract.")
     evaluate.add_argument("--profile", choices=sorted(PROFILES), default=DEFAULT_PROFILE,
                           help="What the scheme is for, which sets the weights and the cutoff "
                                "used unless --score-weight and --cutoff give others. 'typing', "
@@ -363,9 +364,13 @@ def main():
                        help="With --alignment, type every genome with the scheme, by the "
                             "rule of CanSNPer2 (one canSNP per node) and by the majority of "
                             "each node's canSNPs, and write PREFIX_genomes.tsv, _snps.tsv, "
-                            "_nodes.tsv and _summary.tsv. No genome map is needed; with one, "
+                            "_nodes.tsv, _ranks.tsv, _summary.tsv and _run.tsv. No genome map "
+                            "is needed; with one, "
                             "each call is compared with the node it gives. evaluate "
                             "--observed reads the _snps.tsv table.")
+    audit.add_argument("--report", default=None, metavar="FILE",
+                       help="Write the findings, and with --alignment the typing of its "
+                            "genomes, as one Markdown report for reading.")
     audit.add_argument("-o", "--output", default=None,
                        help="Also write the findings to this tab separated file.")
     audit.add_argument("--strict", action="store_true",
@@ -393,10 +398,12 @@ def main():
     collapse.add_argument("--outgroup", action="append", default=[], metavar="LEAF",
                           help="A leaf that is an outgroup: it sits at no node and stays in the "
                                "alignment as a genome outside every node, which gives the root a "
-                               "polarity. Repeatable.")
+                               "polarity. The leaf name, or an assembly accession it holds, as "
+                               "RepGenR2's outgroup_accession.txt gives it. Repeatable.")
     collapse.add_argument("--rename", default=None, metavar="PREFIX",
                           help="Name the nodes PREFIX, PREFIX.1, PREFIX.1.2 and so on, largest "
-                               "first, instead of the tree's own names.")
+                               "first and, among children of one size, by their first genome "
+                               "name, instead of the tree's own names.")
     collapse.add_argument("--outdir", default=".", help="Where to write the files.")
     collapse.add_argument("--prefix", default="collapsed",
                           help="Names the files PREFIX_hierarchy.tsv, PREFIX_genomes.tsv and "
@@ -501,7 +508,8 @@ def run(args, parser, evaluate) -> int:
             min_clade_size=args.min_clade_size, min_clade_snps=args.min_clade_snps,
             tree=args.tree, members=args.members, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
-            genome_conflicts=args.genome_conflicts, typing_report=args.typing_report)
+            genome_conflicts=args.genome_conflicts, typing_report=args.typing_report,
+            report=args.report)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,

@@ -40,6 +40,9 @@ BASES = frozenset("ACGT")
 
 #: At most this many genome names are written into one finding.
 SHOWN = 5
+#: A canSNP without a base in more than this share of the genomes is reported
+#: on its own; the others are counted in one finding.
+MISSING_SHARE = 0.05
 #: At most this many new clades are reported one by one; the rest are counted.
 REPORTED_CLADES = 50
 
@@ -139,6 +142,11 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
     findings: list[Finding] = []
     failed: set[str] = set()
     untested: list[str] = []
+    # Genomes without a base at a canSNP, summed over the canSNPs that lack
+    # few of them: one finding per canSNP hid the rest of the report, and
+    # which genomes are behind them was not visible at all.
+    rarely_missing: list[tuple[str, int]] = []
+    missing_by_genome: Counter = Counter()
     canonical = 0
     not_canonical = 0
 
@@ -218,7 +226,11 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
                 f"'{derived}' {where}: {_names(derived_outside)}; they are placed at {nodes}. "
                 f"The SNP does not mark this branch alone")))
 
-        if missing:
+        for name in missing:
+            missing_by_genome[name] += 1
+        if missing and len(missing) <= MISSING_SHARE * len(placement.genomes):
+            rarely_missing.append((snp.node, len(missing)))
+        elif missing:
             findings.append(recommendation(
                 CHECK, "missing-data", snp.node, snp.tag(
                 f"{len(missing)} genomes have no base {where}: {_names(missing)}. The SNP cannot "
@@ -232,6 +244,23 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
         if snp.rank == 1:
             # Only the SNP CanSNPer2 calls is offered a replacement.
             failed.add(snp.node)
+
+    if rarely_missing:
+        rarely_missing.sort(key=lambda item: (-item[1], item[0]))
+        nodes = ", ".join(f"{node} ({count})" for node, count in rarely_missing[:SHOWN])
+        findings.append(recommendation(
+            CHECK, "missing-data", "",
+            f"{len(rarely_missing)} further canSNPs have no base in a few genomes each, at most "
+            f"{MISSING_SHARE:.0%} of them; the most affected are at {nodes}"))
+    if missing_by_genome:
+        worst = ", ".join(f"{name} ({count})"
+                          for name, count in sorted(missing_by_genome.items(),
+                                                    key=lambda item: (-item[1], item[0]))[:SHOWN])
+        findings.append(recommendation(
+            CHECK, "missing-data-genomes", "",
+            f"{len(missing_by_genome)} genomes have no base at one canSNP or more, and the ones "
+            f"lacking most are {worst}. A genome that lacks many is more likely incomplete or "
+            f"poorly aligned than evidence against the canSNPs"))
 
     if untested:
         findings.append(recommendation(
@@ -471,11 +500,23 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
                 "these genomes it is not a clade. Check the placement of its isolates, or "
                 "whether the node should be merged with its parent"))
         elif len(found) == 1 and node != scheme.hierarchy.root:
+            # found[0] is 0-based over the reference; the scheme counts from 1.
+            own = {snp.position for snp in scheme.checked_snps if snp.node == node}
+            others = len(own - {found[0][0] + 1})
+            if found[0][0] + 1 in own:
+                which = "one of the scheme's own canSNPs"
+            else:
+                which = f"which is not a canSNP of the scheme ({described(found)})"
             findings.append(recommendation(
                 CHECK, "single-site", node,
-                "one site of the alignment separates exactly the isolates below this node, the "
-                "scheme's own. A sequencing error in that one base moves a sample off the "
-                "branch, and nothing else in these genomes supports it"))
+                f"one site of the alignment at which every genome has a base separates exactly "
+                f"the isolates below this node, {which}. "
+                + (f"The node's {others} other canSNP{'s' if others != 1 else ''} lack a base "
+                   f"in some genome or do not separate these isolates exactly, so the branch "
+                   f"rests on little"
+                   if others else
+                   "A sequencing error in that one base moves a sample off the branch, and "
+                   "nothing else in these genomes supports it")))
 
     ranked = sorted(clades.items(), key=lambda item: (-len(item[1]), item[0][0],
                                                       sorted(item[0][1])))

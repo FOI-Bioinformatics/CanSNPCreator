@@ -110,6 +110,10 @@ def neighbour_score(context: SnpContext, flank: int = 50) -> float:
     otherwise to the nearest SNP in the SNP file. A contig end counts as well,
     on purpose: an assay needs flanking sequence on both sides of its SNP,
     which a SNP near the end of a contig of a draft assembly does not have.
+
+    Extract records the distance only up to vcf.NEAREST_CAP, so with a
+    ``flank`` beyond that cap a SNP with no variation within it gets the cap
+    over ``flank``, a lower bound, rather than the full term.
     """
     # Distances are differences of position, so a neighbouring site is 1 away,
     # and so is the first position past either end of the contig.

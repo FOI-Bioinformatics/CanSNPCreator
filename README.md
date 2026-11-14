@@ -106,7 +106,10 @@ both as VCF 4.3:
 - `INFO/NEAREST` is the distance, in bases, to the nearest other column where
   the genomes placed in the scheme differ, capped at 1000. It counts every such
   column, also those the strict core leaves out (a third base, or a genome
-  without a base), and leaves the outgroup out.
+  without a base), and leaves the outgroup out. Either end of an insertion or
+  deletion among those genomes counts as well, and a column where the
+  reference has a gap counts at the reference bases on either side of it.
+  1000 means at least 1000.
 - `INFO/MISSING` is the number of genomes without a base at the SNP, which is
   0 unless `extract --min-called` is below 1.
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
@@ -117,7 +120,8 @@ both as VCF 4.3:
   sequence, more in a repeat, 0 when every such k-mer holds a base other than
   A, C, G or T.
 - A canSNP that fails is kept, with a `FILTER` code: `LowScore` (not above
-  `--cutoff`), `NotTop` (not among the `--top-n` best of its node that lie
+  `--cutoff`), `NotTop` (not among the `--top-n` chosen for its node: by
+  reliability first, then by score, from different genes where possible and
   `--min-spacing` apart) or `Masked` (in a region given with `--masks`).
 - `##contig` lines give each contig's ID and length. A VCF read against
   another reference is refused, and so is one whose `REF` disagrees with the
@@ -181,7 +185,7 @@ Five terms, each 0 to 100 before weighting:
 | Term | Meaning |
 | ---- | ------- |
 | `neighbour_score` | distance to the nearest variation among the scheme's genomes (`INFO/NEAREST`), or to a contig end, over `--flank` bases (default 50); variation under a primer or probe interferes with an assay |
-| `gc_score` | how close the GC content of the 100 bases around the SNP is to `--gc-goal`; full marks within `--gc-tolerance` (default 0.1) of it |
+| `gc_score` | how close the GC content of the 100 bases around the SNP, over A, C, G and T only, is to `--gc-goal`; full marks within `--gc-tolerance` (default 0.1) of it |
 | `tandem_score` | distance to the closest tandem repeat |
 | `gene_score` | whether the SNP lies in a gene or CDS, where its context is better defined |
 | `mutation_score` | in the frame of the CDS it lies in: 100 if synonymous, 50 if it changes the amino acid, 0 if a stop codon is gained or lost or if it lies outside every CDS |
@@ -274,8 +278,11 @@ With `--genome-map` and `--alignment` it also writes `<organism>_genomes.txt`,
 the genomes the scheme was made from: each by its versioned assembly
 accession, the node it sits at, and its role, `representative` (its sequence
 was in the alignment), `member` (placed through a representative, as
-dereplication folds it in) or `outgroup` (aligned, at no node). A genome whose
-name holds no accession is left out with a warning. CanSNPer2 does not read
+dereplication folds it in) or `outgroup` (aligned, at no node). A reference
+genome placed at no node is listed as an outgroup, with a warning. The GCA
+and GCF names of one assembly get one row, the representative's, and an
+accession version has one or two digits, as `validate.py` requires. A genome
+whose name holds no accession is left out with a warning. CanSNPer2 does not read
 the file; CanSNPer2-data's `validate.py` checks it, and `audit` uses it, so
 that a published scheme carries what is needed to check it again.
 
@@ -301,16 +308,21 @@ CanSNPCreator collapse \
 | `--min-genomes` | fewer genomes lie below it (default 2) |
 
 A node holding exactly its parent's genomes is joined into the parent too.
-`--outgroup` names a leaf placed at no node, so that it stays in the alignment
+`--outgroup` names a leaf, by its name or by an assembly accession the name
+holds, placed at no node, so that it stays in the alignment
 as a genome outside every node: that is what lets `extract` find the root's
 canSNP and tell which side of each split is derived. Without one, `extract`
-warns that the two sides of the root cannot be told apart. `--members` reads
+warns that the two sides of the root cannot be told apart, and takes the
+base of the reference genome as ancestral, so that such a SNP marks the side
+without the reference. `--members` reads
 RepGenR2's `genomes_map.tsv`, so that genomes dereplication folded into a
 representative count towards its node and are placed with it. `--rename Cb`
-names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first.
+names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first and, among
+children of one size, by their first genome name.
 
 A Newick genome tree carries its support values and branch lengths; its
-numeric internal labels are read as support. For `tree2tax.tsv`,
+numeric internal labels are read as support, and comments in square brackets,
+such as `[&R]`, are skipped. For `tree2tax.tsv`,
 `--nodes-file tree2tax_nodes.tsv` supplies them. RepGenR2 keeps the outgroup as
 a leaf in both unless `tree2tax --remove-outgroup` was given, and names it in
 `outgroup_accession.txt`.
@@ -341,14 +353,14 @@ modified.
 | alleles | | a base outside A, C, G and T, which can never be called derived; equal derived and ancestral bases; two nodes at one position |
 | references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
 | callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes at or below a node without a SNP (`unreachable`), neither of which CanSNPer2 can call |
-| spacing | | two canSNPs closer than `--proximity` bases, where one falls inside the other's assay |
+| spacing | | two SNPs of the SNP file closer than `--proximity` bases, which a deletion or a poorly aligned stretch removes together |
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
 | masked | `--reference`, `--masks` | a SNP in a masked region, such as a recombinant one |
 | better SNPs | `--reference`, `--scores` | a node where a higher scoring passing canSNP is available, or one the scores do not cover |
 | genomes | `--reference`, `--alignment`, and `--genome-map`, `--tree` or the scheme's own genomes file | the checks below |
 
 When the scheme has an `<organism>_canSNPs.txt`, every rank in it is checked
-by the reference base, masked, spacing and genome checks, and a finding about
+by the reference base, masked and genome checks, and a finding about
 a rank other than 1 says which rank it is about. Only a failing rank 1, the SNP
 CanSNPer2 calls, is offered a replacement.
 
@@ -356,9 +368,13 @@ The genome checks are the only ones that test what defines a canSNP. For each
 SNP of the scheme the audit reports genomes below the node without the derived
 base (`not-canonical`) and genomes outside it with it (`homoplasy`), by name
 and by the node they sit at; swapped alleles (`polarity`); genomes with no base
-at the site (`missing-data`); for a failed SNP, other sites that separate
+at the site (`missing-data`, for a canSNP lacking a base in more than one
+genome in twenty; the others are counted in one finding, and
+`missing-data-genomes` names the genomes that lack most); for a failed SNP, other sites that separate
 exactly that node's genomes (`replacement`), or that none does
-(`unsupported-node`); a node that one site alone supports (`single-site`); and
+(`unsupported-node`); a node that one site alone separates among the sites
+where every genome has a base (`single-site`, which says whether that site is
+the scheme's and how many further canSNPs the node has); and
 a SNP that every genome carries, which nothing tests without an outgroup
 (`no-outgroup`).
 
@@ -399,7 +415,10 @@ at, the one with the most derived nodes on its path from the root is taken,
 so that one homoplastic canSNP below a run of undecided nodes does not
 outweigh a well supported path. Two equally supported branches give no call.
 The single rule's column was compared with CanSNPer2 2.2.0 itself on 20,000
-random trees, without a difference. Four tables are written:
+random trees, without a difference. The reference genome and the outgroups
+of the scheme's genomes file are typed and listed, with their role, but the
+summary does not count them. A field that does not apply holds `NA`. These
+tables are written:
 
 - `PREFIX_genomes.tsv`: the call under each rule, and in `single_stop_node`
   and `single_stop_reason` why the single rule did not give the set call: the
@@ -411,14 +430,28 @@ random trees, without a difference. Four tables are written:
   the node expected.
 - `PREFIX_snps.tsv`: for each canSNP, in how many genomes it has no base,
   disagrees with the other canSNPs of its node, is ancestral on the genome's
-  path or derived off it. Genomes that contradict the scheme at
+  path or derived off it, with its contig and position there. Genomes that contradict the scheme at
   `--genome-conflicts` nodes or more are left out of these counts. This is
   the table `evaluate --observed` reads.
 - `PREFIX_nodes.tsv`: for each node, the genomes passing through it, how many
   carry every canSNP of its set, the smallest margin between derived and
   ancestral canSNPs, and how many genomes the single rule lost there.
-- `PREFIX_summary.tsv`: genomes typed, mean depth of the call and, where
-  known, agreement with the expected node, under each rule.
+- `PREFIX_ranks.tsv`: the counts of the canSNP table summed over the canSNPs
+  of each rank, which shows whether rank 1 behaves better than the others.
+- `PREFIX_summary.tsv`: under each rule, as a count and as a percentage of
+  the genomes: genomes typed, mean depth of the call, how the single call
+  compares with the set call, why the single rule stopped and at which nodes
+  most often, nodes no genome passes through and, where known, agreement
+  with the expected node.
+- `PREFIX_run.tsv`: the version, the files and the settings the report was
+  made with.
+
+`--report FILE` writes one Markdown report for reading: the run, the scheme,
+the findings counted by category with the first ten of each written out, and,
+with `--alignment`, the typing summary, where the single rule stopped, the
+canSNPs by rank, the canSNPs that disagreed or lacked a base most often, the
+nodes the genomes do not test and the genomes the two rules type differently.
+It holds no number that is not in the tables.
 
 The difference between the two rules is what a set of canSNPs per node would
 gain on those genomes. In a *Brucella* scheme of 94 nodes with up to five

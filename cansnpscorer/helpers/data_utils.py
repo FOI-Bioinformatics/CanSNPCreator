@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from itertools import groupby
 
 from cansnpscorer.helpers.genetic_code import codon_table
+from cansnpscorer.model import GAP_CHARACTERS
 
 #: CanSNPer2 calls a node only when at least this many SNPs on its path are
 #: seen, which is its --min_required_hits default.
@@ -48,7 +49,10 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50,
             as primers are designed within a range of GC content. Defaults to 0.
 
     Returns:
-        float: Normalized deviation from the target GC content.
+        float: Normalized deviation from the target GC content. The GC content
+        is taken over the A, C, G and T of the window only, so an N or other
+        ambiguity code neither raises nor lowers it; a window with none of
+        them, like an empty one, scores 0, as nothing is known of it.
     """
     if not 0 < goal < 1:
         raise ValueError(f"the GC goal must lie between 0 and 1, got {goal}")
@@ -56,12 +60,12 @@ def gc_content(snp: int, reference: str, goal: float, distance: int = 50,
     # Extract the sequence around the SNP, clamped to the ends of the sequence.
     # Slicing with a negative start would otherwise wrap and give a window that
     # is short, in the wrong place, or empty.
-    sequence = reference[max(snp - distance, 0):snp + distance]
-    if not sequence:
-        return 0.0
-
+    sequence = reference[max(snp - distance, 0):snp + distance].upper()
     gc_count = sequence.count('G') + sequence.count('C')
-    observed = gc_count / float(len(sequence))
+    known = gc_count + sequence.count('A') + sequence.count('T')
+    if not known:
+        return 0.0
+    observed = gc_count / float(known)
 
     # Normalized deviation from the target, clamped so that a sequence far from
     # a low goal cannot contribute a negative score.
@@ -217,8 +221,15 @@ def variable_columns(fasta: dict[str, str], genomes: Sequence[str]) -> list[int]
 
     Unlike snp_extractor this keeps columns where a third base occurs or where
     other genomes have no base, since any of them spoils the flank of an assay
-    as much as a canonical SNP does. A gap is not counted as a difference,
-    because in an alignment it cannot be told apart from missing sequence.
+    as much as a canonical SNP does, and columns where the reference has a gap.
+
+    An insertion or deletion among the genomes, where some carry a base and
+    others a gap, is counted at its first and last column only: at either end
+    of the gap of a genome that has a gap in a column where another of these
+    genomes has a base. Inside a long gap a genome may simply lack the
+    sequence, which cannot be told apart from an indel, so the columns within
+    it are not counted. An N or other ambiguity code is missing data and not
+    counted at all.
 
     Args:
         fasta: The aligned sequences, keyed by name.
@@ -231,6 +242,8 @@ def variable_columns(fasta: dict[str, str], genomes: Sequence[str]) -> list[int]
     if len(indexes) < 2:
         return []
     pick = itemgetter(*indexes)
+    rows = [fasta[names[index]] for index in indexes]
+    length = len(rows[0])
     nucleotides = frozenset("ACGT")
     found: list[int] = []
     for index, column in enumerate(zip(*fasta.values(), strict=True)):
@@ -238,18 +251,76 @@ def variable_columns(fasta: dict[str, str], genomes: Sequence[str]) -> list[int]
         # rules them out before the chosen genomes are looked at.
         if len(set(column)) < 2:
             continue
-        if len(set(pick(column)) & nucleotides) >= 2:
+        present = set(pick(column))
+        called = present & nucleotides
+        # Two bases differ, or a base stands against the end of a gap.
+        indel_end = bool(called) and bool(present & GAP_CHARACTERS) and any(
+            row[index] in GAP_CHARACTERS
+            and ((index > 0 and row[index - 1] not in GAP_CHARACTERS)
+                 or (index + 1 < length and row[index + 1] not in GAP_CHARACTERS))
+            for row in rows)
+        if len(called) >= 2 or indel_end:
             found.append(index)
     return found
+
+
+def reference_anchors(columns: Sequence[int], to_reference, length: int) -> list[int]:
+    """The 0-based reference positions that stand for these columns.
+
+    A column the reference has a base in stands at that base. A column where
+    the reference has a gap, such as an insertion among the other genomes, has
+    no position of its own, so it stands at the nearest reference base on
+    either side of it, both of them: a SNP right beside an insertion is then 1
+    base from it, on whichever side it lies.
+
+    Args:
+        columns: Alignment columns, in ascending order.
+        to_reference: Gives the 0-based reference position of a column, or
+            None when the reference is gapped there.
+        length: The number of columns of the alignment.
+
+    Returns:
+        The positions, sorted and without repeats.
+    """
+    found: set[int] = set()
+    # Walks to the left and right of a gapped column are remembered, so a long
+    # insertion holding many variable columns is walked once, not once each.
+    left_seen, left_at = -1, None
+    right_seen, right_at = -1, None
+    for column in columns:
+        position = to_reference(column)
+        if position is not None:
+            found.add(position)
+            continue
+        step = column - 1
+        while step > left_seen and (at := to_reference(step)) is None:
+            step -= 1
+        if step > left_seen:
+            left_at = at
+        left_seen = column
+        if left_at is not None:
+            found.add(left_at)
+        if column >= right_seen:
+            step = column + 1
+            while step < length and (at := to_reference(step)) is None:
+                step += 1
+            right_seen = step
+            right_at = at if step < length else None
+        if right_at is not None:
+            found.add(right_at)
+    return sorted(found)
 
 
 def nearest_distances(positions: Sequence[tuple[str, int]],
                       variable: dict[str, list[int]]) -> list[int | None]:
     """For each (contig, 0-based position), the distance to the nearest other
-    variable position on the same contig, or None when there is none."""
+    variable position on the same contig, or None when there is none.
+
+    The variable positions of each contig may come in any order and repeat."""
     distances: list[int | None] = []
+    unique = {contig: sorted(set(found)) for contig, found in variable.items()}
     for contig, position in positions:
-        found = variable.get(contig, [])
+        found = unique.get(contig, [])
         index = bisect_right(found, position)
         candidates = [abs(found[i] - position) for i in (index - 2, index - 1, index)
                       if 0 <= i < len(found) and found[i] != position]
@@ -297,8 +368,18 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
     must be called, all of them with the derived base, and no called genome
     outside the node may carry it.
 
+    When two nodes hold every called genome between them, as the two sides of
+    the root do when no outgroup is called, both match and the column cannot
+    tell which carries the derived base. The base of the reference genome
+    (the first record of the alignment, which always has a base in a SNP
+    column) is then taken as ancestral, and the SNP is reported for the node
+    that does not hold the reference. This is the role the reference has when
+    it is placed at no node, and it does not depend on the order of the rows
+    of any input file. A genome placed at no node and called at the site
+    settles the polarity from the data instead.
+
     Args:
-        alignment: The aligned sequences, keyed by name.
+        alignment: The aligned sequences, keyed by name, the reference first.
         groups: The isolates below each node, which for an internal node means
             the isolates of every leaf beneath it.
         snps: The variable columns, as snp_extractor reports them.
@@ -331,6 +412,7 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
         node: list(isolates)
         for node, isolates in groups.items() if isolates
     }
+    reference = next(iter(alignment))
 
     # For each node, the nodes that hold all of its isolates and more, with
     # those further isolates: a column where they all lack a base cannot tell
@@ -395,6 +477,16 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
             cansnps.append(CanSnp(column=column, bases=bases, missing=missing))
             continue
 
+        if len(matches) > 1:
+            # Two nodes that hold every called genome between them, such as
+            # the two sides of the root, leave the polarity open. The base of
+            # the reference genome is then taken as ancestral, the role it has
+            # when it is placed at no node, so the node that does not hold it
+            # is reported first. The sort is stable, so nodes with the same
+            # isolates keep their order.
+            reference_base = alignment[reference][column]
+            matches.sort(key=lambda match: match[1] == reference_base)
+
         node, derived = matches[0]
         other = [base for base in bases if base != derived]
         cansnps.append(
@@ -424,9 +516,10 @@ def canSNP_extractor(alignment: dict[str, str], groups: dict[str, list[str]],
         logging.warning(
             f"{complementary} canSNPs separate two nodes whose isolates together are every "
             f"genome with a base at the site, so which side carries the derived base cannot be "
-            f"told without a genome outside both; each is reported against the first of them. "
-            f"An outgroup genome in the alignment, placed at no node and called at the site, "
-            f"settles it")
+            f"told without a genome outside both; the reference genome's base is taken as "
+            f"ancestral, so each is reported against the node that does not hold the "
+            f"reference. An outgroup genome in the alignment, placed at no node and called at "
+            f"the site, settles it")
     if undecided:
         logging.warning(
             f"{undecided} SNPs fit both a node and a node below it, because the genomes that "

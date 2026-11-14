@@ -551,12 +551,13 @@ def test_variation_is_counted_among_the_chosen_genomes_only():
         "z": "AAAATAAA",
     }
     # Column 1 and 2 differ among x, y and z, a third base included; column 4
-    # differs in one genome; column 6 only by a gap and 7 by an N, which are
-    # no evidence of a different base.
-    assert variable_columns(alignment, ["x", "y", "z"]) == [1, 2, 4]
+    # differs in one genome; column 6 by a one base deletion in x, which is
+    # both ends of it; column 7 only by an N, which is no evidence of a
+    # difference.
+    assert variable_columns(alignment, ["x", "y", "z"]) == [1, 2, 4, 6]
     # A genome left out, as the outgroup is, does not count: without z,
     # column 4 no longer differs.
-    assert variable_columns(alignment, ["out", "x", "y"]) == [1, 2]
+    assert variable_columns(alignment, ["out", "x", "y"]) == [1, 2, 6]
     assert variable_columns(alignment, ["x"]) == []
 
 

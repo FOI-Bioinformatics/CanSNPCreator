@@ -101,12 +101,15 @@ NODE = Info("NODE", "1", "String",
             "not AA, and that no other genome carries")
 
 
-#: Distances are reported up to this many bases; beyond it a flank counts as clean.
+#: Distances are reported up to this many bases; what lies further is not known.
 NEAREST_CAP = 1000
 NEAREST = Info("NEAREST", "1", "Integer",
-               f"Distance in bases to the nearest other column where two genomes placed in the "
-               f"scheme carry different bases, a third allele or a partly missing column "
-               f"included, up to {NEAREST_CAP}")
+               f"Distance in bases to the nearest other variation among the genomes placed in "
+               f"the scheme: a column where two of them carry different bases, a third allele "
+               f"or a partly missing column included, or either end of an insertion or deletion "
+               f"among them. A column where the reference has a gap counts at the reference "
+               f"bases on either side of it. Up to {NEAREST_CAP}, which means at least "
+               f"{NEAREST_CAP}")
 
 MISSING = Info("MISSING", "1", "Integer",
                "Number of genomes of the alignment without a base (gap or N) at the SNP; "
@@ -184,6 +187,22 @@ class Record:
         ])
 
 
+def check_contig_names(reference: Reference) -> None:
+    """Refuse contig names VCF 4.3 does not allow as IDs, such as one holding a
+    comma, a bracket or whitespace. Called before any work is done, so that a
+    run does not fail only when its output is written.
+
+    Raises:
+        VcfError: If any contig name is not allowed.
+    """
+    illegal = [contig.name for contig in reference if not CONTIG_ID.match(contig.name)]
+    if illegal:
+        raise VcfError(
+            f"the reference names {len(illegal)} contigs VCF 4.3 does not allow as IDs: "
+            f"{', '.join(repr(name) for name in illegal[:3])}. Rename them in the reference "
+            f"FASTA, which the alignment and annotations must then follow")
+
+
 def header_lines(reference: Reference, reference_path: str, command: str,
                  infos: Sequence[Info], filters: Sequence[Filter] = (),
                  extra: Sequence[str] = ()) -> list[str]:
@@ -193,12 +212,7 @@ def header_lines(reference: Reference, reference_path: str, command: str,
         f"##source=CanSNPCreator {__version__} {command}",
         f"##reference=file://{os.path.abspath(reference_path)}",
     ]
-    illegal = [contig.name for contig in reference if not CONTIG_ID.match(contig.name)]
-    if illegal:
-        raise VcfError(
-            f"the reference names contigs VCF 4.3 does not allow as IDs: "
-            f"{', '.join(illegal[:3])}. Rename them in the reference FASTA, which the alignment "
-            f"and annotations must then follow")
+    check_contig_names(reference)
     lines += [f"##contig=<ID={contig.name},length={contig.length}>" for contig in reference]
     lines += [info.header() for info in infos]
     lines += [definition.header() for definition in filters]
@@ -406,12 +420,18 @@ def term_infos() -> list[Info]:
             for term, key in INFO_KEYS.items()]
 
 
-def score_filters(cutoff: int | None, top: int | None) -> list[Filter]:
+def score_filters(cutoff: int | None, top: int | None, spacing: int = 0) -> list[Filter]:
     filters = [Filter("LowScore", f"SCORE is not above the cutoff of {cutoff}"
                                   if cutoff is not None else "Not applied: no cutoff was set")]
     if top is not None:
-        filters.append(Filter("NotTop", f"Not among the {top} highest scoring canSNPs of its "
-                                        f"node"))
+        apart = (f", and none within {spacing} bases of one already chosen"
+                 if spacing > 0 else "")
+        filters.append(Filter(
+            "NotTop", f"Neither LowScore nor Masked, but not among the {top} canSNPs chosen for "
+                      f"its node. These are taken by reliability first (copy number in the "
+                      f"reference, disagreement in a typing report, whether a typing report "
+                      f"observed it, missing bases), then by SCORE, from different genes where "
+                      f"they can be{apart}"))
     filters.append(Filter("Masked", "Lies in a region given as masked, such as a recombinant "
                                     "region"))
     return filters
@@ -469,10 +489,12 @@ def read_snps(path: str, reference: Reference) -> list[Snp]:
 
 def write_scores(path: str, scores, reference: Reference, reference_path: str,
                  cutoff: int | None, top: int | None, weights: dict[str, float],
-                 copies: bool = False, observed: bool = False) -> int:
+                 copies: bool = False, observed: bool = False, spacing: int = 0) -> int:
     """Write scored canSNPs, each with its terms and the filters it failed;
     with ``copies``, with the copy number of their context as well, and with
-    ``observed``, with how they behaved in a typing report."""
+    ``observed``, with how they behaved in a typing report. ``spacing`` is
+    the fewest bases between two canSNPs chosen for a node, which the
+    description of NotTop names."""
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS, TERMS
 
     records = []
@@ -499,7 +521,7 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str,
                           [NODE, ANCESTRAL, SCORE, *term_infos(), MISSING,
                            *([COPIES] if copies else []), LOCUS,
                            *([OBS_GENOMES, OBS_DISCORDANT, OBS_MISSING] if observed else [])],
-                          score_filters(cutoff, top),
+                          score_filters(cutoff, top, spacing),
                           [f"##CanSNPCreatorWeights={weighting}"])
     return write(path, header, records)
 

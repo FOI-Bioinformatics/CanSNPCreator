@@ -12,7 +12,12 @@ genome may sit at an internal node.
 import re
 from collections.abc import Iterable, Mapping, Sequence
 
-SUPPORT_LABEL = re.compile(r"^\d+(\.\d+)?(/\d+(\.\d+)?)*$")
+#: A non-negative decimal number, as tree builders write support values:
+#: 95, 95.0, 0.95, .95, 1. or 1e-1.
+NUMBER = r"(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+#: One number, or several separated by slashes as IQ-TREE writes SH-aLRT and
+#: ultrafast bootstrap together; a field may be empty where a value is missing.
+SUPPORT_LABEL = re.compile(rf"^(?=.*\d)(?:{NUMBER})?(?:/(?:{NUMBER})?)*$")
 #: Marks a token that was a quoted label, so that a quoted "(" or ":" is a
 #: name and never structure.
 QUOTED = "\x00"
@@ -68,10 +73,16 @@ def _newick_tokens(text: str) -> list[str]:
 
 
 def _support_value(label: str) -> float | None:
-    """The support a numeric internal label carries, or None for a name."""
+    """The support a numeric internal label carries, or None for a name.
+
+    Of several values separated by slashes the last is taken. A label whose
+    last field is empty, as ``80/``, is a support label without that value,
+    and gives NaN, which the caller reads as no support.
+    """
     if not SUPPORT_LABEL.match(label):
         return None
-    return float(label.split("/")[-1])
+    last = label.split("/")[-1]
+    return float(last) if last else float("nan")
 
 
 class Hierarchy:
@@ -110,15 +121,17 @@ class Hierarchy:
             if parent is not None:
                 self.children.setdefault(parent, []).append(child)
         for node in list(self.children):
-            self.parents.setdefault(node, None)
-            if node not in self.order:
+            if node not in self.parents:
+                self.parents[node] = None
                 self.order.append(node)
         for node in self.order:
             self.children.setdefault(node, [])
 
-        self._check_is_a_tree()
+        self._root, self._nodes, self._leaves = self._check_is_a_tree()
 
-    def _check_is_a_tree(self) -> None:
+    def _check_is_a_tree(self) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+        """Check the nodes form one rooted tree; return its root, its nodes
+        with parents before their children, and its leaves in that order."""
         roots = self.roots
         if not roots:
             raise HierarchyError("the hierarchy has no root; every node has a parent")
@@ -128,18 +141,22 @@ class Hierarchy:
                 f"{', '.join(sorted(roots))}")
 
         reached: set[str] = set()
+        ordered: list[str] = []
         stack = list(roots)
         while stack:
             node = stack.pop()
             if node in reached:
                 raise HierarchyError(f"the hierarchy is not a tree; node '{node}' is reached twice")
             reached.add(node)
-            stack.extend(self.children[node])
+            ordered.append(node)
+            stack.extend(reversed(self.children[node]))
 
         unreached = set(self.order) - reached
         if unreached:
             raise HierarchyError(
                 f"these nodes are not connected to the root: {', '.join(sorted(unreached))}")
+        return (roots[0], tuple(ordered),
+                tuple(node for node in ordered if not self.children[node]))
 
     # -- constructors --------------------------------------------------------
 
@@ -166,9 +183,11 @@ class Hierarchy:
         label that is a number, or numbers separated by slashes as IQ-TREE
         writes SH-aLRT and ultrafast bootstrap together, is a support value: it
         is kept in ``support``, as a fraction, from the last number of the
-        label. Unnamed internal nodes are given a generated name, since a canSNP
+        label; a label whose last field is empty gives no support value.
+        Unnamed internal nodes are given a generated name, since a canSNP
         scheme addresses its branches by name. Single-quoted labels may hold
-        any character.
+        any character, and comments in square brackets are skipped. The tree
+        is read without recursion, so its depth is not limited.
         """
         tokens = _newick_tokens(text)
         if not tokens:
@@ -192,23 +211,9 @@ class Hierarchy:
         def peek() -> str | None:
             return tokens[position] if position < len(tokens) else None
 
-        def parse_node() -> str:
+        def finish_node(children: list[str]) -> str:
+            """Read the label and branch length after a node, and name it."""
             nonlocal position, generated
-            children: list[str] = []
-            if peek() == "(":
-                position += 1
-                while True:
-                    children.append(parse_node())
-                    if peek() == ",":
-                        position += 1
-                        continue
-                    if peek() == ")":
-                        position += 1
-                        break
-                    if peek() is None:
-                        raise HierarchyError("the Newick string ends inside a group")
-                    raise HierarchyError(f"unexpected '{peek()}' in the Newick string")
-
             label = ""
             quoted = False
             if is_label(peek()):
@@ -239,7 +244,7 @@ class Hierarchy:
                     f"the Newick string names '{name}' twice; every node of a tree needs its "
                     f"own name")
             names_seen.add(name)
-            if value is not None:
+            if value is not None and value == value:
                 support[name] = value
             if length is not None:
                 lengths[name] = length
@@ -248,7 +253,30 @@ class Hierarchy:
                 pairs.append((child, name))
             return name
 
-        root = parse_node()
+        # Read without recursion, so that a deep tree, such as a caterpillar
+        # of thousands of genomes, is read as any other: each open group is a
+        # list of the children read so far.
+        groups: list[list[str]] = []
+        while True:
+            while peek() == "(":
+                position += 1
+                groups.append([])
+            name = finish_node([])
+            while groups:
+                if peek() == ",":
+                    position += 1
+                    groups[-1].append(name)
+                    break
+                if peek() == ")":
+                    position += 1
+                    name = finish_node([*groups.pop(), name])
+                    continue
+                if peek() is None:
+                    raise HierarchyError("the Newick string ends inside a group")
+                raise HierarchyError(f"unexpected '{peek()}' in the Newick string")
+            else:
+                break
+        root = name
         if peek() == ";":
             position += 1
         if peek() is not None:
@@ -271,35 +299,33 @@ class Hierarchy:
     def roots(self) -> list[str]:
         return [node for node, parent in self.parents.items() if parent is None]
 
+    # The root, the node order and the leaves are found once, when the tree
+    # is checked; a Hierarchy is not changed after it is built.
+
     @property
     def root(self) -> str:
-        return self.roots[0]
+        return self._root
 
     @property
     def nodes(self) -> list[str]:
         """Every node, parents before their children."""
-        ordered: list[str] = []
-        stack = [self.root]
-        while stack:
-            node = stack.pop(0)
-            ordered.append(node)
-            stack = self.children[node] + stack
-        return ordered
+        return list(self._nodes)
 
     @property
     def leaves(self) -> list[str]:
-        return [node for node in self.nodes if not self.children[node]]
+        return list(self._leaves)
 
     def descendants(self, node: str) -> list[str]:
-        """Every node below this one, excluding itself."""
+        """Every node below this one, excluding itself, parents before their
+        children."""
         if node not in self.parents:
             raise HierarchyError(f"the hierarchy has no node '{node}'")
         found: list[str] = []
-        stack = list(self.children[node])
+        stack = list(reversed(self.children[node]))
         while stack:
-            current = stack.pop(0)
+            current = stack.pop()
             found.append(current)
-            stack = self.children[current] + stack
+            stack.extend(reversed(self.children[current]))
         return found
 
     def leaves_below(self, node: str) -> list[str]:
