@@ -55,7 +55,7 @@ genomes, which says more about those assemblies than about the SNPs.
 import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.names import resolve_clusters, resolve_names
@@ -709,6 +709,8 @@ class Observed:
     the genome's path."""
     derived: str = ""
     ancestral: str = ""
+    derived_genomes: int = 0
+    """Genomes in which it had the derived base."""
 
 
 def read_observed(path: str) -> dict[tuple[str, int], Observed]:
@@ -746,7 +748,8 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
                                    int(fields[at["ancestral_on_path"]])
                                    + int(fields[at["derived_off_path"]])),
                     derived=fields[at["derived_base"]].upper(),
-                    ancestral=fields[at["ancestral_base"]].upper())
+                    ancestral=fields[at["ancestral_base"]].upper(),
+                    derived_genomes=int(fields[at["derived"]]))
                 earlier = observed.get(key)
                 if earlier is not None:
                     # Listed twice, as a node with two ranks at one position:
@@ -754,7 +757,8 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
                     row = Observed(min(row.genomes, earlier.genomes),
                                    max(row.missing, earlier.missing),
                                    max(row.discordant, earlier.discordant),
-                                   row.derived, row.ancestral)
+                                   row.derived, row.ancestral,
+                                   min(row.derived_genomes, earlier.derived_genomes))
                 observed[key] = row
             except (IndexError, ValueError):
                 raise ValueError(f"{path}: line {number} is not a row of the table") from None
@@ -765,3 +769,81 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
             f"{path}: holds canSNPs of {len(genomes)} reference genomes "
             f"({', '.join(sorted(genomes))}); run the typing report with --genome")
     return observed
+
+
+def width_tolerance(genomes: int) -> int:
+    """How far the derived counts of two canSNPs may lie apart and still count
+    as the same width: one genome in a hundred, and at least two."""
+    return max(2, genomes // 100)
+
+
+def width_groups(rows: Sequence[Observed]) -> list[list[Observed]]:
+    """The canSNPs of one node grouped by the number of genomes they are
+    derived in, widest group first.
+
+    Two canSNPs are of one group when their counts are joined by steps of at
+    most the tolerance. A canSNP that lacks a base in more genomes than the
+    tolerance has no known width and is in no group.
+    """
+    groups: list[list[Observed]] = []
+    known = [row for row in rows
+             if row.genomes and row.missing <= width_tolerance(row.genomes + row.missing)]
+    for row in sorted(known, key=lambda row: -row.derived_genomes):
+        tolerance = width_tolerance(row.genomes + row.missing)
+        if groups and groups[-1][-1].derived_genomes - row.derived_genomes <= tolerance:
+            groups[-1].append(row)
+        else:
+            groups.append([row])
+    return groups
+
+
+def judge_by_narrowest_group(
+        observed: Mapping[tuple[str, int], Observed]
+) -> tuple[dict[tuple[str, int], Observed], list[str]]:
+    """Judge the canSNPs of nodes that hold no majority by their narrowest group.
+
+    The typing report counts a canSNP as disagreeing where it differs from
+    the majority of its node's canSNPs. That presumes the canSNPs of a node
+    mark one group of genomes. They do among the genomes the scheme was made
+    from, but genomes typed later may join the node's branch partway along
+    it and carry its earlier mutations only, so that the canSNPs fall into
+    nested groups of different width. When one group holds more than half of
+    the canSNPs the majority is that group, and the count stands. When none
+    does, the majority follows no group, and the canSNPs it favours are a
+    mixture.
+
+    For such a node the canSNPs are judged against one group instead: the
+    narrowest that holds at least two canSNPs, whose genomes carry every
+    mutation of the branch and so are the clade of the node's own genomes.
+    The disagreement of each canSNP becomes the number of genomes by which
+    its derived count must differ from that group's most common count, the
+    genomes without a base allowing for either state.
+
+    Groups are told apart by their size alone, which nested groups always
+    differ in.
+
+    Returns:
+        The observations, changed for those nodes, and the nodes.
+    """
+    by_node: dict[str, list[tuple[tuple[str, int], Observed]]] = {}
+    for key, row in observed.items():
+        by_node.setdefault(key[0], []).append((key, row))
+    judged = dict(observed)
+    changed = []
+    for node, found in by_node.items():
+        groups = width_groups([row for _key, row in found])
+        if len(groups) < 2 or max(len(group) for group in groups) * 2 > len(found):
+            continue
+        narrowest = next((group for group in reversed(groups) if len(group) > 1), None)
+        if narrowest is None:
+            continue
+        counts = Counter(row.derived_genomes for row in narrowest)
+        width = min(counts, key=lambda count: (-counts[count], count))
+        for key, row in found:
+            if not row.genomes:
+                continue
+            apart = max(0, row.derived_genomes - width,
+                        width - row.derived_genomes - row.missing)
+            judged[key] = replace(row, discordant=apart)
+        changed.append(node)
+    return judged, changed

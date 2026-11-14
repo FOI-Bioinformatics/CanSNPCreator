@@ -127,7 +127,10 @@ LOCUS = Info("LOCUS", "1", "String",
 
 OBS_DISCORDANT = Info("OBS_DISCORDANT", "1", "Integer",
                       "Number of genomes of a typing report in which the SNP disagreed with "
-                      "the other canSNPs of its node or with the genome's path")
+                      "the other canSNPs of its node or with the genome's path. At a node "
+                      "whose canSNPs are derived in groups of genomes of different width, none "
+                      "of them holding more than half of the canSNPs: the number of genomes by "
+                      "which the SNP differs from the narrowest group")
 OBS_GENOMES = Info("OBS_GENOMES", "1", "Integer",
                    "Number of genomes of the typing report the SNP was observed in; 0 when "
                    "the scheme the report typed with did not hold it")

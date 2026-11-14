@@ -258,6 +258,30 @@ describe agreement between the two rules and not accuracy. Measured against
 the node of each genome's dereplication representative, the *Legionella* test
 half went from 345 to 347 of 417 single calls at the expected node.
 
+The disagreement of a canSNP is counted against the majority of its node's
+canSNPs, which presumes that they mark one group of genomes. Genomes that
+join a node's branch partway carry its earlier mutations only, so the canSNPs
+of the node can be derived in nested groups of different width. Where no such
+group holds more than half of the node's canSNPs, the majority follows none
+of them, and `evaluate` then ranks the canSNPs by their distance to the
+narrowest group that holds at least two: the genomes carrying every mutation
+of the branch. Groups are told apart by the number of genomes a canSNP is
+derived in, within one genome in a hundred. `evaluate` names these nodes in a
+warning; representatives of the wider groups would divide their branches.
+
+The same test on four further species found one such node in two of them:
+
+| | *Vibrio cholerae* | *Mycobacterium tuberculosis* |
+| --- | --- | --- |
+| genomes in the test half | 409 | 556 |
+| single call equals set call, before | 403 | 530 |
+| after, judged against the majority only | 389 | 540 |
+| after, with the narrowest group | 406 | 552 |
+
+In *Listeria monocytogenes*, *Legionella pneumophila* and *Staphylococcus
+aureus* no node met the condition and the result was the same with and
+without it (449 of 460, 411 of 417 and 382 of 383).
+
 `--top-n` passes the best N canSNPs of each node, chosen so that one event
 removes as few of them as possible. The first is the best ranked, which is the
 SNP a scheme of one canSNP per node carries. After it, among canSNPs of equal
