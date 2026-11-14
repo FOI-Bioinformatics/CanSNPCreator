@@ -19,6 +19,7 @@ from cansnpscorer.typing_report import (
     DERIVED,
     MISSING,
     derived_off,
+    judge_by_narrowest_group,
     read_observed,
     set_path,
     type_alignment,
@@ -262,3 +263,71 @@ def test_a_node_is_placed_by_its_best_cansnp_not_only_its_first():
     tree = Hierarchy.from_newick("(r,((x1,x2,x3),(y1,y2)));", support_labels=True)
     placement = place(scheme, tree, alignment, reference)
     assert sorted(placement.clusters["X"]) == ["x1", "x2", "x3"]
+
+
+def widths(tmp_path, counts, genomes=400):
+    """A table of one node 'A' whose canSNPs are derived in these numbers of
+    genomes; a count may be given with its number of genomes without a base."""
+    rows = []
+    for index, count in enumerate(counts):
+        derived, missing = count if isinstance(count, tuple) else (count, 0)
+        rows.append(("A", index + 1, "T", 100 + index, "C", "G", genomes, genomes - missing,
+                     missing, derived, genomes - missing - derived, 0, 7, 0, 0))
+    return read_observed(observed_table(tmp_path, rows))
+
+
+def test_a_node_without_a_majority_group_is_judged_by_its_narrowest_group(tmp_path):
+    # Genomes that join the branch partway: three nested groups, none of
+    # them more than half of the canSNPs.
+    observed = widths(tmp_path, [125] * 5 + [96] * 2 + [68, 68, 67, 68])
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == ["A"]
+    apart = [judged[("A", 100 + index)].discordant for index in range(11)]
+    assert apart == [57] * 5 + [28] * 2 + [0, 0, 1, 0]
+
+
+def test_a_node_with_a_majority_group_keeps_what_the_report_counted(tmp_path):
+    observed = widths(tmp_path, [125] * 5 + [68] * 6)
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == [] and judged == observed
+
+
+def test_counts_within_the_tolerance_are_one_group(tmp_path):
+    observed = widths(tmp_path, [125, 124, 123, 121, 120, 119])
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == [] and judged == observed
+
+
+def test_one_stray_canSNP_is_not_the_narrowest_group(tmp_path):
+    observed = widths(tmp_path, [200] * 3 + [150] * 3 + [20])
+    judged, _nodes = judge_by_narrowest_group(observed)
+    apart = [judged[("A", 100 + index)].discordant for index in range(7)]
+    assert apart == [50] * 3 + [0] * 3 + [130]
+
+
+def test_genomes_without_a_base_may_make_up_the_width(tmp_path):
+    # Derived in 60 and without a base in 10: it may be derived in 68.
+    observed = widths(tmp_path, [125] * 3 + [68] * 3 + [(60, 10), (40, 10)])
+    judged, _nodes = judge_by_narrowest_group(observed)
+    assert judged[("A", 106)].discordant == 0
+    assert judged[("A", 107)].discordant == 18
+
+
+def test_evaluate_names_the_nodes_it_judged_by_a_group(written, dataset, tmp_path, caplog):
+    _status, prefix = run_report(written, dataset, tmp_path)
+    real = next(row for row in table(prefix + "_snps.tsv") if row["node"] == "A")
+    # The canSNP of the scheme and one more are derived in 150 genomes, two
+    # further candidates of the node in 50.
+    nested = observed_table(tmp_path, [
+        ["A", rank, real["reference_genome"], position, real["derived_base"],
+         real["ancestral_base"], 300, 300, 0, derived, 300 - derived, 0, 0, 0, 0]
+        for rank, (position, derived) in enumerate(
+            [(real["position"], 150), (9001, 150), (9002, 50), (9003, 50)], start=1)])
+    scores = str(tmp_path / "nested.vcf")
+    with caplog.at_level(logging.WARNING):
+        assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
+                       dataset.reference, "--genes", dataset.gff, "--repeats",
+                       dataset.repeats, "-o", scores, "--observed", nested) == 0
+    assert "judged against the narrowest group and not against the majority" in caplog.text
+    by_node = {record.node: record for record in vcf_records(scores)}
+    assert by_node["A"].info["OBS_DISCORDANT"] == "100"

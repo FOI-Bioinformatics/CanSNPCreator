@@ -247,7 +247,10 @@ def main():
                           help="The _snps.tsv table audit --typing-report wrote for a scheme "
                                "exported from these canSNPs. CanSNPs that disagreed with their "
                                "node, or had no base, in the genomes typed are ranked after "
-                               "the others of their node, ahead of the score.")
+                               "the others of their node, ahead of the score. Where the "
+                               "canSNPs of a node are derived in groups of genomes of "
+                               "different width and no group holds more than half of them, "
+                               "they are ranked by their distance to the narrowest group.")
     evaluate.add_argument("--top-n", type=at_least(1), default=None,
                           help="Only pass the best this many canSNPs of each node.")
     evaluate.add_argument("--min-spacing", type=at_least(0), default=1000,

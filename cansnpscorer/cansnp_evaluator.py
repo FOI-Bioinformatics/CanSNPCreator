@@ -23,7 +23,7 @@ from cansnpscorer.helpers.scoring_methods import (
 )
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
-from cansnpscorer.typing_report import read_observed
+from cansnpscorer.typing_report import judge_by_narrowest_group, read_observed
 from cansnpscorer.validate import check_annotations, report
 
 NUCLEOTIDES = frozenset("ACGT")
@@ -318,6 +318,14 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
         if gene is not None:
             score.locus = f"{gene[0] + 1}-{gene[1] + 1}"
     if behaviour:
+        behaviour, regrouped = judge_by_narrowest_group(behaviour)
+        if regrouped:
+            logging.warning(
+                f"At {len(regrouped)} nodes the canSNPs are derived in groups of genomes of "
+                f"different width and no group holds more than half of them, so the genomes "
+                f"typed join these branches partway. Their canSNPs were judged against the "
+                f"narrowest group and not against the majority of the node; representatives "
+                f"of the other groups would divide these branches: {', '.join(regrouped)}")
         matched = 0
         other_alleles = 0
         for score in scores:
