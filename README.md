@@ -77,6 +77,11 @@ one using a genetic code whose codons translate differently from the standard
 code (`transl_table` other than 1 or 11) still places a SNP in a gene but gives
 no frame. Prokka writes CDS features without gene features, which is enough.
 
+A feature across the origin of a circular chromosome or plasmid ends, in
+GFF3, beyond the length of its sequence, as NCBI writes it. Such a feature is
+split at the origin into two, with a warning, and a CDS keeps its reading
+frame across the split. A feature longer than its contig is still an error.
+
 The annotation's sequence names are matched to the reference's contigs in
 three ways, in order:
 

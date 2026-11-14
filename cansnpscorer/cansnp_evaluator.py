@@ -67,6 +67,49 @@ def contig_of(names: Sequence[str], reference: Reference,
     return found
 
 
+def wrap_origin(intervals: Sequence, length: int, cds: bool = False) -> tuple[list, int]:
+    """Split the features that run past the end of a circular contig.
+
+    GFF3 gives a feature that spans the origin of a circular sequence an end
+    beyond the sequence's length, and NCBI writes such features for circular
+    chromosomes and plasmids. Each is split into the part up to the contig's
+    end and the part from its start. A CDS keeps its reading frame: the part
+    read first keeps the phase, and the other gets the phase that continues
+    the codons across the origin.
+
+    Only a feature that starts within the contig, runs past its end, and is
+    shorter than the contig is split, so that its two parts do not overlap;
+    any other stays as it is, for check_annotations to report.
+
+    Returns:
+        The intervals, sorted by start and end, and how many were split.
+    """
+    kept = []
+    split = 0
+    for interval in intervals:
+        start, end = interval[0], interval[1]
+        if not (0 <= start < length <= end and end - length < start):
+            kept.append(interval)
+            continue
+        split += 1
+        upper, lower = (start, length - 1), (0, end - length)
+        rest = tuple(interval[2:])
+        if cds:
+            strand, phase = interval[2], interval[3]
+            # The part read first keeps the phase; the bases it carries past
+            # its last whole codon decide where the other part's codon begins.
+            first, second = (upper, lower) if strand != "-" else (lower, upper)
+            carried = (first[1] - first[0] + 1 - phase) % 3
+            following = (3 - carried) % 3
+            kept.append((*first, strand, phase, *interval[4:]))
+            kept.append((*second, strand, following, *interval[4:]))
+        else:
+            kept.append((*upper, *rest))
+            kept.append((*lower, *rest))
+    kept.sort(key=lambda interval: (interval[0], interval[1]))
+    return kept, split
+
+
 def annotations_by_contig(annotations: dict[str, Sequence], reference: Reference,
                           description: str,
                           aliases: Sequence[set[str]] | None = None,
@@ -113,7 +156,13 @@ def annotations_by_contig(annotations: dict[str, Sequence], reference: Reference
                 f"the {description} file describes the contig {contig} twice, as "
                 f"{claimed[contig]} and as {name}")
         claimed[contig] = name
-        attached[contig] = list(annotations[name])
+        attached[contig], split = wrap_origin(annotations[name], reference.contig(contig).length,
+                                              cds=description == "CDS")
+        if split:
+            logging.warning(
+                f"{split} {description} intervals on '{contig}' run past its end, as GFF3 "
+                f"gives a feature across the origin of a circular sequence; each was split at "
+                f"the origin into two")
     # A contig without annotation is reported by check_annotations where it
     # matters; a contig without repeats or masked regions is ordinary.
     return attached
@@ -305,8 +354,8 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
     # The gene each canSNP lies in, from the genes one by one: joined intervals
     # would make a run of abutting genes one locus.
     contig_names = contig_of(list(model.loci), genome, aliases, model.sequences)
-    loci = {contig_names[name]: found for name, found in model.loci.items()
-            if name in contig_names}
+    loci = {contig_names[name]: wrap_origin(found, genome.contig(contig_names[name]).length)[0]
+            for name, found in model.loci.items() if name in contig_names}
     lookup = {contig: ([start for start, _end in found],
                        max(end - start + 1 for start, end in found))
               for contig, found in loci.items() if found}
