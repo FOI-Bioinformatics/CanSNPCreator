@@ -235,10 +235,28 @@ for a scheme exported from these canSNPs, and records in
 canSNP behaved in the genomes typed. A canSNP that was typed with and held is
 ranked before one that was never observed, and one that disagreed with its
 node after both. For a ranking of every candidate, export the scheme the
-report types with using `--snps-per-node all --min-spacing 0`. In 1,229
-*Brucella* genomes left out of a scheme's tree, ranking by held-out behaviour
-changed the rank-1 SNP of few nodes, so the gain on a clonal organism is
-expected to be small.
+report types with using `--snps-per-node all --min-spacing 0`.
+
+Two split-half tests give an indication of what this ranking changes. Genomes
+left out of a scheme's tree were divided in two, every candidate was typed on
+one half and ranked again, and both rankings were typed on the other half:
+
+| | *Brucella melitensis* | *Legionella pneumophila* |
+| --- | --- | --- |
+| nodes in the scheme | 94 | 164 |
+| genomes in the test half | 614 | 417 |
+| nodes whose rank 1 canSNP changed | 42 | 22 |
+| single call equals set call, before | 95.9% | 95.9% |
+| single call equals set call, after | 98.4% | 98.6% |
+
+In *Brucella* the gain came from fewer stops at a rank 1 canSNP that was
+ancestral or had no base. In *Legionella*, which recombines, those stops did
+not change; the gain came from nodes whose canSNPs marked groups of different
+width among the genomes left out, where the ranking made the set agree with
+its rank 1 canSNP. The set call is not an independent truth, so these figures
+describe agreement between the two rules and not accuracy. Measured against
+the node of each genome's dereplication representative, the *Legionella* test
+half went from 345 to 347 of 417 single calls at the expected node.
 
 `--top-n` passes the best N canSNPs of each node, chosen so that one event
 removes as few of them as possible. The first is the best ranked, which is the
