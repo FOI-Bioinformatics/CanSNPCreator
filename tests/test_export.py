@@ -434,3 +434,14 @@ def test_the_genomes_file_passes_the_cansnper2_data_validator(dataset, tmp_path)
                                capture_output=True, text=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "All 1 schemes valid" in completed.stdout
+
+
+def test_the_region_is_set_from_the_command_line(tmp_path, dataset, several):
+    scores, outdir = several
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
+                       snps_per_node=3, spacing=0) == 0
+    found = tmp_path / "found.tsv"
+    cli_run("audit", "--scheme-dir", outdir, "--set-region", "1000000", "-o", str(found))
+    assert "clustered-set" in found.read_text()
+    cli_run("audit", "--scheme-dir", outdir, "--set-region", "0", "-o", str(found))
+    assert "clustered-set" not in found.read_text()

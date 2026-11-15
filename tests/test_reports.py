@@ -10,7 +10,12 @@ from test_review_fixes import scheme_of
 from test_typing_report import changed, run_report, table
 
 from cansnpscorer.alignment_audit import check_against_alignment
-from cansnpscorer.cansnp_audit import check_against_reference, check_spacing, summarize
+from cansnpscorer.cansnp_audit import (
+    check_against_reference,
+    check_set_region,
+    check_spacing,
+    summarize,
+)
 from cansnpscorer.findings import MODIFY, problem, recommendation
 from cansnpscorer.model import Reference
 from cansnpscorer.report import markdown
@@ -292,3 +297,28 @@ def test_the_report_is_written_without_an_alignment_too(written, dataset, tmp_pa
     assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
                    "--report", str(out)) in (0, 2)
     assert "## Typing" not in out.read_text()
+
+
+def set_scheme(positions):
+    """A node A whose ranked canSNPs lie at the given positions of genome G."""
+    scheme = scheme_of([["R"], ["R", "A"]], [("A", "G", positions[0], "T", "G")])
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", position, "T", "G", rank=rank)
+                      for rank, position in enumerate(positions, start=1)]
+    return scheme
+
+
+def test_a_node_whose_canSNPs_lie_in_one_region_is_reported():
+    (found,) = check_set_region(set_scheme([127613, 3513465, 129091, 131813, 133619]), 10000)
+    assert found.category == "clustered-set" and found.action == MODIFY and found.node == "A"
+    assert "4 of the node's 5 canSNPs lie within 6006 bases" in found.detail
+    assert "127613-133619" in found.detail
+
+
+def test_canSNPs_spread_over_the_genome_or_too_few_are_not_reported():
+    assert check_set_region(set_scheme([1000, 60000, 120000, 180000, 240000]), 10000) == []
+    # Half of them close together is not more than half.
+    assert check_set_region(set_scheme([1000, 2000, 50000, 90000]), 10000) == []
+    # Two canSNPs are too few to call a set clustered.
+    assert check_set_region(set_scheme([1000, 1500]), 10000) == []
+    # 0 turns the check off.
+    assert check_set_region(set_scheme([1000, 1100, 1200]), 0) == []
