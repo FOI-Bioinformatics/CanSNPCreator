@@ -342,6 +342,48 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> list[Finding]:
     return findings
 
 
+def check_set_region(scheme: Scheme, region: int = 10000) -> list[Finding]:
+    """Nodes most of whose ranked canSNPs lie in one stretch of the genome.
+
+    The set of a node is meant to type a genome when some of its canSNPs
+    lack a base. canSNPs close together lack it together: a deletion, an
+    unassembled stretch or a poorly aligned region removes all of them from
+    a genome at once, and the set then decides on the few left. A node is
+    reported when more than half of its canSNPs, and at least three, lie
+    within ``region`` bases of each other on one genome.
+    """
+    findings: list[Finding] = []
+    if region <= 0:
+        return findings
+    by_node: dict[tuple[str, str], list[int]] = {}
+    for snp in scheme.checked_snps:
+        by_node.setdefault((snp.node, snp.genome), []).append(snp.position)
+    counted: dict[str, int] = {}
+    for (node, _genome), positions in by_node.items():
+        counted[node] = counted.get(node, 0) + len(positions)
+
+    for (node, genome), positions in sorted(by_node.items()):
+        total = counted[node]
+        if total < 3:
+            continue
+        positions.sort()
+        best, span = 0, (0, 0)
+        start = 0
+        for end, position in enumerate(positions):
+            while position - positions[start] > region:
+                start += 1
+            if end - start + 1 > best:
+                best, span = end - start + 1, (positions[start], position)
+        if best >= 3 and best * 2 > total:
+            findings.append(recommendation(
+                MODIFY, "clustered-set", node,
+                f"{best} of the node's {total} canSNPs lie within {span[1] - span[0]} bases on "
+                f"{genome} ({span[0]}-{span[1]}). A deletion or a stretch without bases there "
+                f"removes them from a genome together, and the node is then decided by the "
+                f"rest; export with a larger --min-spacing spreads them further apart"))
+    return findings
+
+
 def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
                          reference: Reference, genome: str | None = None) -> list[Finding]:
     """Compare the scheme against scored candidates for the same nodes.
@@ -454,7 +496,8 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
                  clusters: Mapping[str, Sequence[str]] | None = None,
                  min_clade_size: int = 2, min_clade_snps: int = 1,
                  masks: Mapping[str, Sequence[tuple[int, int]]] | None = None,
-                 genome_conflicts: int = GENOME_CONFLICTS) -> list[Finding]:
+                 genome_conflicts: int = GENOME_CONFLICTS,
+                 region: int = 10000) -> list[Finding]:
     """Every check, in one list of findings, problems first.
 
     The checks against the genomes run when an alignment and the clusters
@@ -468,6 +511,7 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
     findings += check_references(scheme)
     findings += check_callability(scheme, min_required_hits)
     findings += check_spacing(scheme, proximity)
+    findings += check_set_region(scheme, region)
 
     if reference is not None:
         findings += check_against_reference(scheme, reference, genome)
@@ -549,7 +593,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
          min_clade_snps=1, tree=None, members=None, masks=None,
          masks_concatenated=False, contig_aliases=None,
-         genome_conflicts=GENOME_CONFLICTS, typing_report=None, report=None) -> int:
+         genome_conflicts=GENOME_CONFLICTS, typing_report=None, report=None,
+         region=10000) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     With ``typing_report``, a prefix, every genome of the alignment is typed
@@ -661,7 +706,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     findings = audit_scheme(scheme, sequence, scored, genome, min_required_hits, proximity,
                             aligned, clusters, min_clade_size, min_clade_snps, masked,
-                            genome_conflicts)
+                            genome_conflicts, region)
     if placement_findings:
         order = {PROBLEM: 0, RECOMMENDATION: 1}
         findings = sorted(findings + placement_findings,

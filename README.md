@@ -292,6 +292,18 @@ scores one on a contig the set does not yet use. No canSNP within
 reports the nodes whose canSNPs share a gene, and those with fewer canSNPs
 than asked for.
 
+A distance of 1000 bases does not keep a node's canSNPs out of one deleted
+region. In the B. mallei test (31 representatives, 87 held out) four of the
+five canSNPs of the root lay within 6 kb and all lacked a base in the same 8
+held-out genomes; every representative had a base there, so the deletion could
+not be seen when the scheme was made. With `--min-spacing 50000` four of the
+five had a base in every held-out genome. Across five organisms the larger
+distance did not change how often the two rules agreed (between 3 fewer and 1
+more genomes per organism), and left more nodes with fewer than five canSNPs
+(B. anthracis 24 to 31, S. aureus 43 to 55), so the default stays at 1000. The
+audit reports a node whose set lies in one region (`clustered-set`); for such a
+scheme a larger `--min-spacing` is worth trying.
+
 ### Export
 
 `export` takes the highest scoring passing canSNP of each node and writes
@@ -396,6 +408,7 @@ modified.
 | references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
 | callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes at or below a node without a SNP (`unreachable`), neither of which CanSNPer2 can call |
 | spacing | | two SNPs of the SNP file closer than `--proximity` bases, which a deletion or a poorly aligned stretch removes together |
+| clustered set | | a node more than half of whose ranked canSNPs, and at least three, lie within `--set-region` bases (default 10000; 0 turns it off), so that one deletion removes most of the node's set from a genome |
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
 | masked | `--reference`, `--masks` | a SNP in a masked region, such as a recombinant one |
 | better SNPs | `--reference`, `--scores` | a node where a higher scoring passing canSNP is available, or one the scores do not cover |

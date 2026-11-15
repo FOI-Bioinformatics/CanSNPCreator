@@ -342,6 +342,10 @@ def main():
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
     audit.add_argument("--proximity", type=at_least(0), default=50,
                        help="Report two canSNPs closer than this many bases. Default: 50.")
+    audit.add_argument("--set-region", type=at_least(0), default=10000,
+                       help="Report a node more than half of whose ranked canSNPs, and at least "
+                            "three, lie within this many bases of each other; 0 turns the "
+                            "check off. Default: 10000.")
     add_alignment(audit, required=False)
     add_genome_map(audit, required=False,
                    purpose="With --alignment, each SNP is checked in every genome. Without it "
@@ -512,7 +516,7 @@ def run(args, parser, evaluate) -> int:
             tree=args.tree, members=args.members, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
             genome_conflicts=args.genome_conflicts, typing_report=args.typing_report,
-            report=args.report)
+            report=args.report, region=args.set_region)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,
