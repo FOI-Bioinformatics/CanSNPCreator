@@ -115,7 +115,9 @@ def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
                             ("_snps.tsv", SNP_COLUMNS)):
         for row in table(prefix + suffix):
             assert list(row) == list(columns)
-            assert all(value != "" for value in row.values()), (suffix, row)
+            # derived_set is empty for a canSNP derived in no genome.
+            assert all(value != "" for column, value in row.items()
+                       if column != "derived_set"), (suffix, row)
     none = {row["genome"]: row for row in table(prefix + "_genomes.tsv")}["none"]
     assert (none["set_call"], none["set_depth"], none["single_stop_reason"]) == (
         "NA", "NA", "NA")

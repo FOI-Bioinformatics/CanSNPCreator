@@ -2,6 +2,7 @@
 import gzip
 import logging
 from collections import Counter
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from operator import itemgetter
 from urllib.parse import unquote
@@ -115,6 +116,56 @@ def read_hierarchy(path: str) -> Hierarchy:
 SEQUENCE_CHARACTERS = frozenset("ACGTURYSWKMBDHVN-.~*?")
 
 
+def iter_fasta(fasta_file: str) -> Iterator[tuple[str, str]]:
+    """
+    Read a FASTA file one record at a time, as (name, sequence) pairs.
+
+    The records are named, checked and upper cased as ``read_fasta`` does, but
+    only one is held at a time, so that an alignment of many genomes can be
+    read without holding it whole. Empty and repeated records are not checked
+    here; ``read_fasta`` checks them over the whole file.
+
+    Raises:
+        ValueError: If the file has sequence before its first header, a header
+            without an ID, or characters that are not bases or gaps.
+    """
+    name: str | None = None
+    chunks: list[str] = []
+    masked = 0
+
+    with open_text(fasta_file) as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line or line.startswith(";"):
+                continue  # ';' opens a comment line in the original FASTA format
+            if line.startswith(">"):
+                if name is not None:
+                    yield name, "".join(chunks)
+                words = line[1:].split()
+                if not words or line[1:2].isspace():
+                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
+                                     f"directly after '>'")
+                name = words[0]
+                chunks = []
+            else:
+                if name is None:
+                    raise ValueError(
+                        f"{fasta_file}: sequence before the first header, at line {line_number}")
+                line = "".join(line.split())
+                invalid = set(line.upper()) - SEQUENCE_CHARACTERS
+                if invalid:
+                    raise ValueError(
+                        f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
+                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
+                masked += sum(1 for base in line if base.islower())
+                chunks.append(line.upper())
+
+    if name is not None:
+        yield name, "".join(chunks)
+    if masked:
+        logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
+
+
 def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
     """
     Read a FASTA file into (name, sequence) pairs, in file order.
@@ -136,40 +187,7 @@ def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
     """
     logging.info(f"Reading FASTA records from {fasta_file}")
 
-    records: list[tuple[str, str]] = []
-    name: str | None = None
-    chunks: list[str] = []
-    masked = 0
-
-    with open_text(fasta_file) as handle:
-        for line_number, line in enumerate(handle, 1):
-            line = line.strip()
-            if not line or line.startswith(";"):
-                continue  # ';' opens a comment line in the original FASTA format
-            if line.startswith(">"):
-                if name is not None:
-                    records.append((name, "".join(chunks)))
-                words = line[1:].split()
-                if not words or line[1:2].isspace():
-                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
-                                     f"directly after '>'")
-                name = words[0]
-                chunks = []
-            else:
-                if name is None:
-                    raise ValueError(
-                        f"{fasta_file}: sequence before the first header, at line {line_number}")
-                line = "".join(line.split())
-                invalid = set(line.upper()) - SEQUENCE_CHARACTERS
-                if invalid:
-                    raise ValueError(
-                        f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
-                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
-                masked += sum(1 for base in line if base.islower())
-                chunks.append(line.upper())
-
-    if name is not None:
-        records.append((name, "".join(chunks)))
+    records = list(iter_fasta(fasta_file))
 
     if not records:
         raise ValueError(f"{fasta_file}: holds no FASTA records")
@@ -184,8 +202,6 @@ def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
             f"{fasta_file}: names {', '.join(repeated)} more than once; sequence IDs, the first "
             "word of each header, must be unique")
 
-    if masked:
-        logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
     logging.info(f"Read {len(records)} records from {fasta_file}")
     return records
 
@@ -235,6 +251,102 @@ def read_alignment(alignment_file: str) -> dict[str, str]:
         f"Read an alignment of {len(records)} genomes over {len(records[0][1])} columns, "
         f"with '{records[0][0]}' as the reference")
     return dict(records)
+
+
+class ColumnRow:
+    """One aligned record of which only some columns were kept.
+
+    Indexing a kept column gives its base, as indexing the whole row would;
+    indexing another column raises ``KeyError`` rather than giving a wrong base.
+    """
+
+    __slots__ = ("_kept", "_length", "_offsets")
+
+    def __init__(self, offsets: Mapping[int, int], kept: str, length: int) -> None:
+        self._offsets = offsets
+        self._kept = kept
+        self._length = length
+
+    def __getitem__(self, column: int) -> str:
+        try:
+            return self._kept[self._offsets[column]]
+        except (KeyError, TypeError):
+            raise KeyError(f"column {column} was not read") from None
+
+    def __len__(self) -> int:
+        return self._length
+
+
+def read_alignment_columns(path: str, columns_of: Callable[[str], Collection[int]]
+                           ) -> dict[str, str | ColumnRow]:
+    """
+    Read a whole genome alignment, keeping only some columns of all but its first record.
+
+    The first record, the reference, is kept whole and handed to ``columns_of``,
+    once, to learn which columns are wanted. Every later record is reduced to
+    those columns as it is read, so the alignment is never held whole. The
+    records are checked as ``read_alignment`` checks them.
+
+    Args:
+        path: Path to the alignment in FASTA format.
+        columns_of: Gives the wanted columns, counted from 0, from the reference row.
+
+    Returns:
+        The reference as a string and every other record as a ``ColumnRow``,
+        keyed by name, in file order.
+
+    Raises:
+        ValueError: As ``read_alignment`` does, and also for a name used twice or
+            a record without sequence.
+    """
+    records: dict[str, str | ColumnRow] = {}
+    offsets: dict[int, int] = {}
+    wanted: list[int] = []
+    shortest: tuple[str, int] | None = None
+    longest: tuple[str, int] | None = None
+    empty: list[str] = []
+    repeated: set[str] = set()
+
+    for name, sequence in iter_fasta(path):
+        length = len(sequence)
+        if not sequence:
+            empty.append(name)
+        if name in records:
+            repeated.add(name)
+        if not records:
+            wanted = sorted(set(columns_of(sequence)))
+            offsets = {column: offset for offset, column in enumerate(wanted)}
+            records[name] = sequence
+        else:
+            # A short record is refused below; its columns are not read until then.
+            kept = "".join(sequence[column] for column in wanted if column < length)
+            records[name] = ColumnRow(offsets, kept, length)
+        if shortest is None or length < shortest[1]:
+            shortest = (name, length)
+        if longest is None or length > longest[1]:
+            longest = (name, length)
+
+    if not records:
+        raise ValueError(f"{path}: holds no FASTA records")
+    if empty:
+        raise ValueError(f"{path}: records hold no sequence: {', '.join(empty[:5])}")
+    if repeated:
+        raise ValueError(
+            f"{path}: names {', '.join(sorted(repeated))} more than once; sequence IDs, the "
+            "first word of each header, must be unique")
+    if len(records) < 2:
+        raise ValueError(
+            f"{path}: an alignment needs the reference and at least one other "
+            f"genome, found {len(records)}")
+    if shortest[1] != longest[1]:
+        raise ValueError(
+            f"{path}: the records are not aligned; '{longest[0]}' holds "
+            f"{longest[1]} columns and '{shortest[0]}' holds {shortest[1]}")
+
+    logging.info(
+        f"Read {len(wanted)} columns of an alignment of {len(records)} genomes over "
+        f"{longest[1]} columns, with '{next(iter(records))}' as the reference")
+    return records
 
 
 

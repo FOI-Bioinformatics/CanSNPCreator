@@ -417,9 +417,16 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
                 f"alignment, an outgroup placed at no node (collapse --outgroup); with one, "
                 f"lower the evaluate cutoff, or root the scheme elsewhere")
         if prune:
-            warnings.append(
+            message = (
                 f"{len(without)} nodes have no canSNP and were left out of the scheme, so their "
                 f"children now hang from the nearest node that has one: {', '.join(without[:5])}")
+            if clusters is not None:
+                moved = sum(len(clusters.get(node, [])) for node in without)
+                depth = max(len(tree.path(node)) for node in without)
+                message += (f". {moved} genomes of the genome map sat at these nodes and now sit "
+                            f"at an ancestor; the deepest pruned depth is {depth} (the root is "
+                            f"depth 1)")
+            warnings.append(message)
         else:
             problems.append(
                 f"{len(without)} nodes have no canSNP: {', '.join(without[:5])}. Every node of a "

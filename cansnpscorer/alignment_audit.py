@@ -581,7 +581,8 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
                             clusters: Mapping[str, Sequence[str]],
                             genome: str | None = None, min_clade_size: int = 2,
                             min_clade_snps: int = 1,
-                            genome_conflicts: int = GENOME_CONFLICTS) -> list[Finding]:
+                            genome_conflicts: int = GENOME_CONFLICTS,
+                            new_clades: bool = True) -> list[Finding]:
     """Every check that needs the genomes, as one list of findings.
 
     Args:
@@ -596,6 +597,9 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
         min_clade_snps: The fewest SNPs a new clade is reported with.
         genome_conflicts: The fewest nodes a genome contradicts the scheme at
             for it to be reported.
+        new_clades: Whether to look for clades the scheme does not resolve.
+            That reads every column of the alignment; without it only the
+            columns of the scheme's SNPs are read.
     """
     findings: list[Finding] = []
 
@@ -654,11 +658,17 @@ def check_against_alignment(scheme: Scheme, alignment: Mapping[str, str], refere
     findings += check_genome_paths(scheme, alignment, mapping, placement, genome,
                                    genome_conflicts)
 
-    canonical, clades, by_node, by_genome, sites = scan_alignment(alignment, mapping, placement)
-    findings += check_extension(scheme, mapping, placement, canonical, clades, by_node,
-                                by_genome, failed, sites, min_clade_size, min_clade_snps)
-
-    logging.info(
-        f"Read {sites} variable sites over {len(names)} genomes, of which "
-        f"{len(placement.node_of)} are placed in the scheme")
+    if new_clades:
+        canonical, clades, by_node, by_genome, sites = scan_alignment(alignment, mapping,
+                                                                      placement)
+        findings += check_extension(scheme, mapping, placement, canonical, clades, by_node,
+                                    by_genome, failed, sites, min_clade_size, min_clade_snps)
+        logging.info(
+            f"Read {sites} variable sites over {len(names)} genomes, of which "
+            f"{len(placement.node_of)} are placed in the scheme")
+    else:
+        logging.info(
+            f"Checked the scheme's SNPs in {len(names)} genomes, of which "
+            f"{len(placement.node_of)} are placed in the scheme; clades the scheme does not "
+            f"resolve were not looked for")
     return findings

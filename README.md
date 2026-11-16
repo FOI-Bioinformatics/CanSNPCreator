@@ -270,8 +270,16 @@ of the node can be derived in nested groups of different width. Where no such
 group holds more than half of the node's canSNPs, the majority follows none
 of them, and `evaluate` then ranks the canSNPs by their distance to the
 narrowest group that holds at least two: the genomes carrying every mutation
-of the branch. Groups are told apart by the number of genomes a canSNP is
-derived in, within one genome in a hundred. `evaluate` names these nodes in a
+of the branch. Groups are told apart by the genomes a canSNP is derived in,
+as the `derived_set` column of the table labels them: two canSNPs are of one
+group when the genomes derived in one and ancestral in the other number no
+more than one in a hundred (at least two), a genome without a base allowing
+for either state. Two groups of equal size on different genomes are thus two
+groups. The disagreement of each canSNP is still measured by counts, however,
+so a canSNP of an equal-sized group on other genomes is judged to agree with
+the narrowest group. A table written by 0.4.0, without the
+column, tells them apart by the number of genomes a canSNP is derived in,
+within one genome in a hundred, as before. `evaluate` names these nodes in a
 warning; representatives of the wider groups would divide their branches.
 
 The same test on four further species found one such node in two of them:
@@ -286,6 +294,11 @@ The same test on four further species found one such node in two of them:
 In *Listeria monocytogenes*, *Legionella pneumophila* and *Staphylococcus
 aureus* no node met the condition and the result was the same with and
 without it (449 of 460, 411 of 417 and 382 of 383).
+
+Telling the groups apart by the genomes they are derived in, and not by
+their number, gave the same 406 of 409 on *Vibrio cholerae*, where the rule
+then applied at one further node of four canSNPs. The other species were not
+re-run.
 
 `--top-n` passes the best N canSNPs of each node, chosen so that one event
 removes as few of them as possible. The first is the best ranked, which is the
@@ -317,7 +330,9 @@ CanSNPer2-data expects them, with positions counted over the concatenated
 genome, since its SNP file has no contig column. That repository's rules are
 checked first, so the result passes its `validate.py` unchanged. A node with no
 canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
-children to the nearest node that has one.
+children to the nearest node that has one. With `--genome-map` (which needs
+`--alignment`) the warning also gives the number of genomes moved to an ancestor
+and the deepest pruned depth.
 
 CanSNPer2 calls one SNP per node, so the SNP file always holds the best of
 each. `--snps-per-node N` (or `all`) keeps up to N canSNPs of each node, chosen
@@ -464,6 +479,13 @@ how many SNPs mark them), and sites that fit no grouping the scheme can hold
 counted as conflicting rather than offered. On a 2 Mbp genome, eight genomes
 take about five seconds; the time grows with the number of genomes.
 
+`--no-new-clades` skips the search for clades the scheme does not resolve, so
+that only the alignment columns of the scheme's SNPs are read and held, which
+lowers the memory needed for a large alignment. The typing report is the same
+either way. The column reader is used except with `--tree --rule jaccard`, which
+reads every column; `--rule clade` with `--no-new-clades` reads only the
+scheme's columns.
+
 `--typing-report PREFIX` evaluates the scheme on the genomes of `--alignment`
 without being told where they belong, so it can be run on genomes the scheme
 was not made from. Every genome is typed twice: by the rule of CanSNPer2
@@ -490,9 +512,16 @@ tables are written:
   the node expected.
 - `PREFIX_snps.tsv`: for each canSNP, in how many genomes it has no base,
   disagrees with the other canSNPs of its node, is ancestral on the genome's
-  path or derived off it, with its contig and position there. Genomes that contradict the scheme at
-  `--genome-conflicts` nodes or more are left out of these counts. This is
-  the table `evaluate --observed` reads.
+  path or derived off it, with its contig and position there. A last column,
+  `derived_set`, labels the canSNPs of each node by the genomes they are
+  derived in: canSNPs of one label are derived in the same genomes, but for
+  one in a hundred (at least two), genomes without a base allowing for either
+  state, and label 1 is the set of most genomes. It is empty for a canSNP
+  derived in no genome, and for those beyond the first 200 canSNPs of a node.
+  Genomes that contradict the scheme at `--genome-conflicts` nodes or more are
+  counted in `missing`, `derived` and `ancestral`, but are left out of the
+  disagreement counts and of the `derived_set` labels.
+  This is the table `evaluate --observed` reads.
 - `PREFIX_nodes.tsv`: for each node, the genomes passing through it, how many
   carry every canSNP of its set, the smallest margin between derived and
   ancestral canSNPs, and how many genomes the single rule lost there.
@@ -552,6 +581,43 @@ accepted, and the report gives each node's match and index. A node with one or
 two genomes is matched less reliably than one with many: in a clade of two in
 which one genome lacks the derived base, the other alone matches as well as the
 clade.
+
+#### By the clades of the scheme's genomes
+
+The Jaccard rule still rests on one canSNP per node. Where the genomes the
+scheme was made from are known, `--rule clade` places other genomes without
+any canSNP: each node is the clade, in the tree rooted on `--outgroup`, of the
+most recent common ancestor of the scheme's genomes at or below the node, and a
+genome sits at the deepest node whose clade holds it. This gives an expected
+node for genomes held out of the scheme, against which a typing can be judged.
+
+The tree must hold both sets of genomes. When they were aligned separately
+against the same reference, the `sites` subcommand samples SNP positions,
+maps them to a column of each alignment by that alignment's own reference row,
+and writes one matrix for a tree builder:
+
+```sh
+CanSNPCreator sites --snps snps.vcf --reference reference.fasta \
+    --alignment full_alignment.fasta --alignment heldout_alignment.fasta \
+    --sites 50000 --seed 0 -o sites.fasta
+FastTreeMP -nt -gtr -fastest sites.fasta > sites.nwk
+CanSNPCreator place --rule clade \
+    --scheme-dir scheme --tree sites.nwk \
+    --genome-map scheme_genomes.tsv --outgroup GCF_000759775.1 \
+    --alignment sites.fasta -o expected.tsv --report expected_report.tsv
+```
+
+The sample is that of Python's `random.Random(seed).sample` over the SNP
+positions in VCF order, so the same file, `--sites` and `--seed` give the same
+columns; a record in two alignments is taken from the first. The genome map
+written holds the scheme's genomes in the tree at their own nodes and the other
+genomes at the nodes the tree gives them, so `audit --genome-map` reads it, and
+`audit --tree --rule clade` does the same in one step. With `--alignment`, any
+record the tree lacks is reported as placed nowhere, as is a genome outside the
+clade of the scheme's root; the report lists every genome with its node and how
+it was found. The clade of a node with a single genome in the tree is that
+genome's leaf alone, so a genome beside it is placed at the node above, the
+deepest that holds it with certainty.
 
 ## Exit status
 

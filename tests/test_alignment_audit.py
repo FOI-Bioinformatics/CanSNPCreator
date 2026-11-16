@@ -444,3 +444,69 @@ def test_a_genome_at_a_node_the_scheme_lacks_tests_no_snp(written, dataset, tmp_
     unknown = of(findings, "unknown-cluster")
     assert len(unknown) == 1 and "1 genomes at 1 nodes" in unknown[0].detail
     assert all("s4" not in finding.detail for finding in of(findings, "ungrouped"))
+
+
+# -- reading only the scheme's columns ---------------------------------------
+
+
+def small_alignment(tmp_path, records=None):
+    path = str(tmp_path / "small.fasta")
+    write_fasta(path, records or [("ref", "ACGTACGT"), ("g1", "ACGAACGT"), ("g2", "TCGTACGA")])
+    return path
+
+
+def test_column_rows_match_full_read(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_alignment_columns
+
+    path = small_alignment(tmp_path)
+    full = read_alignment(path)
+    kept = read_alignment_columns(path, lambda reference_row: {0, 4})
+    assert list(kept) == list(full)
+    assert kept["ref"] == full["ref"]
+    assert all(kept[name][4] == full[name][4] and kept[name][0] == full[name][0]
+               for name in full)
+    assert all(len(kept[name]) == len(full[name]) for name in full)
+
+
+def test_columns_are_asked_for_once_from_the_reference_row(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_alignment_columns
+
+    path = small_alignment(tmp_path)
+    seen = []
+    read_alignment_columns(path, lambda row: seen.append(row) or {1})
+    assert seen == ["ACGTACGT"]
+
+
+def test_unread_column_raises(tmp_path):
+    import pytest
+
+    from cansnpscorer.helpers.file_utils import read_alignment_columns
+
+    path = small_alignment(tmp_path)
+    with pytest.raises(KeyError, match="column 2 was not read"):
+        read_alignment_columns(path, lambda row: {0})["g1"][2]
+
+
+def test_ragged_alignment_message_unchanged(tmp_path):
+    import pytest
+
+    from cansnpscorer.helpers.file_utils import read_alignment_columns
+
+    path = small_alignment(tmp_path, [("ref", "ACGT"), ("g1", "ACG"), ("g2", "ACGT")])
+    with pytest.raises(ValueError, match="the records are not aligned"):
+        read_alignment_columns(path, lambda row: {0})
+    with pytest.raises(ValueError, match="the records are not aligned"):
+        read_alignment(path)
+
+
+def test_a_single_record_and_a_repeated_name_are_refused(tmp_path):
+    import pytest
+
+    from cansnpscorer.helpers.file_utils import read_alignment_columns
+
+    alone = small_alignment(tmp_path, [("ref", "ACGT")])
+    with pytest.raises(ValueError, match="needs the reference and at least one other"):
+        read_alignment_columns(alone, lambda row: {0})
+    twice = small_alignment(tmp_path, [("ref", "ACGT"), ("g1", "ACGT"), ("g1", "ACGA")])
+    with pytest.raises(ValueError, match="more than once"):
+        read_alignment_columns(twice, lambda row: {0})

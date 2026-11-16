@@ -74,7 +74,7 @@ GENOME_COLUMNS = ("genome", "role", "single_call", "single_depth", "single_stop_
 SNP_COLUMNS = ("node", "rank", "reference_genome", "position", "contig", "contig_position",
                "derived_base", "ancestral_base",
                "genomes", "called", "missing", "derived", "ancestral", "other",
-               "discordant_in_set", "ancestral_on_path", "derived_off_path")
+               "discordant_in_set", "ancestral_on_path", "derived_off_path", "derived_set")
 #: The columns evaluate --observed needs. Tables written before 0.4 name the
 #: reference genome ``genome`` and hold no contig; they are still read.
 OBSERVED_COLUMNS = ("node", "position", "derived_base", "ancestral_base", "missing", "derived",
@@ -89,6 +89,9 @@ SUMMARY_COLUMNS = ("metric", "single", "single_pct", "set", "set_pct")
 RUN_COLUMNS = ("item", "value")
 
 NA = "NA"
+#: A node of more canSNPs than this has only its first ones labelled by the
+#: genomes they are derived in, which bounds the pairwise comparison.
+MAX_SET_LABELLED = 200
 #: What a record of the alignment is to the scheme.
 REFERENCE, OUTGROUP, ISOLATE = "reference", "outgroup", "isolate"
 
@@ -452,11 +455,77 @@ def _single_stop(result: GenomeTyping, first: Mapping[str, str],
     return "", "ambiguous"
 
 
+def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[int]:
+    """Label the canSNPs of one node by the genomes they are derived in.
+
+    Two canSNPs share a label when the genomes derived in one and ancestral
+    in the other number no more than ``width_tolerance`` of the genomes, the
+    tolerance of the count rule; a genome without a base may be in either
+    state. Labels are given greedily from the canSNP derived in the most
+    genomes, each canSNP taking the first label whose first canSNP it agrees
+    with, so that label 1 is the set of most genomes. A canSNP without a base
+    in more genomes than the tolerance, which ``width_groups`` leaves out,
+    founds no label others may join: it takes the first label it agrees
+    with, or else a label of its own. Genomes marked discordant are left
+    out, as in the disagreement counts. A canSNP derived in none of the
+    remaining genomes gets 0, as do the canSNPs beyond the first
+    ``MAX_SET_LABELLED`` of a node; 0 is written as an empty field. Missing
+    bases here are counted over the non-discordant genomes, whereas
+    ``width_groups`` counts them over all genomes.
+    """
+    judged = [result.states for result in typed if not result.discordant]
+    tolerance = width_tolerance(len(judged))
+    width = min(count, MAX_SET_LABELLED)
+    sets = []
+    for index in range(start, start + width):
+        column = [states[index] for states in judged]
+        sets.append((frozenset(g for g, state in enumerate(column) if state == DERIVED),
+                     frozenset(g for g, state in enumerate(column) if state == ANCESTRAL)))
+    order = sorted((index for index in range(width) if sets[index][0]),
+                   key=lambda index: (-len(sets[index][0]), index))
+    covered, sparse = [], []
+    for index in order:
+        missing = len(judged) - len(sets[index][0]) - len(sets[index][1])
+        (covered if missing <= tolerance else sparse).append(index)
+    labels = [0] * count
+    first: list[tuple[frozenset[int], frozenset[int]]] = []
+
+    def agreeing(index: int) -> int:
+        derived, ancestral = sets[index]
+        for label, (other_derived, other_ancestral) in enumerate(first, start=1):
+            if (len(derived & other_ancestral) + len(ancestral & other_derived)
+                    <= tolerance):
+                return label
+        return 0
+
+    for index in covered:
+        labels[index] = agreeing(index)
+        if not labels[index]:
+            first.append(sets[index])
+            labels[index] = len(first)
+    last = len(first)
+    for index in sparse:
+        label = agreeing(index)
+        if not label:
+            last += 1
+            label = last
+        labels[index] = label
+    return labels
+
+
 def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping],
               reference: Reference) -> list[list[str]]:
     rows = []
+    crowded = [node for node, snps in by_node.items() if len(snps) > MAX_SET_LABELLED]
+    if crowded:
+        logging.info(
+            f"Typing: {len(crowded)} nodes hold more than {MAX_SET_LABELLED} canSNPs; only "
+            f"their first {MAX_SET_LABELLED} are labelled in derived_set, and evaluate "
+            f"--observed groups their canSNPs by count: {', '.join(crowded[:5])}"
+            + (" and others" if len(crowded) > 5 else ""))
     for node, snps in by_node.items():
         start = starts[node]
+        labels = derived_sets(start, len(snps), typed)
         # How many of the node's canSNPs are derived and ancestral in each
         # genome, counted once, so that a node of thousands of candidates
         # costs no more per canSNP than a node of one.
@@ -491,6 +560,7 @@ def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping],
                 str(len(typed)), str(called), str(counts[MISSING]), str(counts[DERIVED]),
                 str(counts[ANCESTRAL]), str(counts[OTHER]), str(counts["discordant"]),
                 str(counts["ancestral_on_path"]), str(counts["derived_off_path"]),
+                str(labels[index]) if labels[index] else "",
             ])
     return rows
 
@@ -711,6 +781,10 @@ class Observed:
     ancestral: str = ""
     derived_genomes: int = 0
     """Genomes in which it had the derived base."""
+    derived_set: int = 0
+    """Which set of genomes it is derived in among the canSNPs of its node,
+    1 for the set of most genomes; 0 when unknown, as in tables written
+    before the column was added."""
 
 
 def read_observed(path: str) -> dict[tuple[str, int], Observed]:
@@ -734,6 +808,8 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
                 f"{path}: has no column {', '.join(lacking)}; it should be the _snps.tsv table "
                 f"of audit --typing-report")
         at = {column: header.index(column) for column in (*OBSERVED_COLUMNS, named)}
+        # Tables of 0.4.0 and earlier have no derived_set column.
+        labelled = header.index("derived_set") if "derived_set" in header else None
         for number, line in enumerate(handle, start=2):
             fields = line.rstrip("\n").split("\t")
             if not line.strip():
@@ -749,7 +825,9 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
                                    + int(fields[at["derived_off_path"]])),
                     derived=fields[at["derived_base"]].upper(),
                     ancestral=fields[at["ancestral_base"]].upper(),
-                    derived_genomes=int(fields[at["derived"]]))
+                    derived_genomes=int(fields[at["derived"]]),
+                    derived_set=(int(fields[labelled]) if labelled is not None
+                                 and labelled < len(fields) and fields[labelled] else 0))
                 earlier = observed.get(key)
                 if earlier is not None:
                     # Listed twice, as a node with two ranks at one position:
@@ -758,7 +836,9 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
                                    max(row.missing, earlier.missing),
                                    max(row.discordant, earlier.discordant),
                                    row.derived, row.ancestral,
-                                   min(row.derived_genomes, earlier.derived_genomes))
+                                   min(row.derived_genomes, earlier.derived_genomes),
+                                   row.derived_set if row.derived_set == earlier.derived_set
+                                   else 0)
                 observed[key] = row
             except (IndexError, ValueError):
                 raise ValueError(f"{path}: line {number} is not a row of the table") from None
@@ -778,16 +858,27 @@ def width_tolerance(genomes: int) -> int:
 
 
 def width_groups(rows: Sequence[Observed]) -> list[list[Observed]]:
-    """The canSNPs of one node grouped by the number of genomes they are
-    derived in, widest group first.
+    """The canSNPs of one node grouped by the genomes they are derived in,
+    widest group first.
 
-    Two canSNPs are of one group when their counts are joined by steps of at
-    most the tolerance. A canSNP that lacks a base in more genomes than the
-    tolerance has no known width and is in no group.
+    When every canSNP derived in some genome carries a ``derived_set``
+    label, the canSNPs of one label are one group, and those derived in no
+    genome a last group. Otherwise, as for a table without the column, the
+    groups are told apart by the number of genomes alone: two canSNPs are of
+    one group when their counts are joined by steps of at most the
+    tolerance. In both cases a canSNP that lacks a base in more genomes than
+    the tolerance has no known width and is in no group.
     """
     groups: list[list[Observed]] = []
     known = [row for row in rows
              if row.genomes and row.missing <= width_tolerance(row.genomes + row.missing)]
+    if any(row.derived_set for row in known) and all(
+            row.derived_set for row in known if row.derived_genomes):
+        by_label: dict[int, list[Observed]] = {}
+        for row in sorted(known, key=lambda row: -row.derived_genomes):
+            by_label.setdefault(row.derived_set if row.derived_genomes else 0, []).append(row)
+        return [by_label[label] for label in sorted(by_label, key=lambda label: (not label,
+                                                                                   label))]
     for row in sorted(known, key=lambda row: -row.derived_genomes):
         tolerance = width_tolerance(row.genomes + row.missing)
         if groups and groups[-1][-1].derived_genomes - row.derived_genomes <= tolerance:
@@ -819,7 +910,10 @@ def judge_by_narrowest_group(
     its derived count must differ from that group's most common count, the
     genomes without a base allowing for either state.
 
-    Groups are told apart by their size alone, which nested groups always
+    Groups are told apart by the genomes their canSNPs are derived in, as
+    the ``derived_set`` column of the table labels them, so that two groups
+    of equal size on different genomes are two groups. A table without the
+    column tells them apart by their size alone, which nested groups always
     differ in.
 
     Returns:

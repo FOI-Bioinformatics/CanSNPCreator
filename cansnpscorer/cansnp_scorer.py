@@ -11,6 +11,7 @@ from cansnpscorer import (
     cansnp_extractor,
     cansnp_tree,
     cansnp_trf,
+    sites,
 )
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
@@ -159,6 +160,27 @@ def add_masks(parser, purpose: str) -> None:
         help="Read the positions of --masks over the whole concatenated reference, whatever "
              "sequence name the file gives, as Gubbins reports them for an alignment in "
              "reference coordinates such as RepGenR2's full_alignment.fasta.")
+
+
+def add_outgroup(parser, purpose: str) -> None:
+    parser.add_argument(
+        "--outgroup", action="append", default=[], metavar="LEAF",
+        help=purpose + " The leaf name, or an assembly accession it holds, as RepGenR2's "
+                       "outgroup_accession.txt gives it. Repeatable.")
+
+
+RULES = ("jaccard", "clade")
+
+
+def add_rule(parser) -> None:
+    parser.add_argument(
+        "--rule", choices=RULES, default="jaccard",
+        help="How the tree places genomes on the scheme. 'jaccard': each node is matched to "
+             "the side of a branch whose genomes best match those carrying its canSNP's "
+             "derived base. 'clade': each node is the clade, in the tree rooted on --outgroup, "
+             "of the scheme's genomes at or below it, as --genome-map places them, and every "
+             "other genome sits at the deepest node whose clade holds it; no canSNP is used. "
+             "Default: jaccard.")
 
 
 def add_contig_aliases(parser) -> None:
@@ -353,7 +375,10 @@ def main():
     audit.add_argument("--tree", default=None,
                        help="Instead of --genome-map: a genome tree whose leaves are the "
                             "alignment's genomes, which places them on the scheme by the tree, "
-                            "as the place subcommand does, rather than by typing.")
+                            "as the place subcommand does, rather than by typing. With --rule "
+                            "clade, --genome-map gives the scheme's own genomes instead.")
+    add_rule(audit)
+    add_outgroup(audit, "With --tree and --rule clade, a leaf to root the tree on.")
     add_members(audit)
     audit.add_argument("--min-clade-size", type=at_least(1), default=2,
                        help="Report a clade the scheme does not resolve only when it holds at "
@@ -367,6 +392,13 @@ def main():
                             "scheme at this many nodes or more: derived off the path they type "
                             "it to, or ancestral on it. Default: "
                             f"{GENOME_CONFLICTS}.")
+    audit.add_argument("--no-new-clades", action="store_true",
+                       help="With --alignment, do not look for clades the scheme does not "
+                            "resolve, which reads every column of the alignment. Only the "
+                            "columns of the scheme's SNPs are read, which uses far less "
+                            "memory for a large alignment. The column reader is used "
+                            "except with --tree --rule jaccard, which reads every "
+                            "column; --rule clade reads only the scheme's columns.")
     audit.add_argument("--typing-report", default=None, metavar="PREFIX",
                        help="With --alignment, type every genome with the scheme, by the "
                             "rule of CanSNPer2 (one canSNP per node) and by the majority of "
@@ -424,22 +456,59 @@ def main():
                        help="The directory holding the scheme's three source files.")
     place.add_argument("--organism", default=None, help="Which scheme to read.")
     place.add_argument("--tree", required=True,
-                       help="A genome tree whose leaves are the alignment's genomes; its root "
-                            "does not matter.")
-    add_alignment(place)
-    add_reference(place)
+                       help="A genome tree whose leaves are the alignment's genomes. Its root "
+                            "does not matter; --rule clade roots it on --outgroup.")
+    add_rule(place)
+    place.add_argument(
+        "--alignment", default=None, metavar="FASTA",
+        help="The whole genome alignment in FASTA format, with the reference as its first "
+             "record, gapped or projected onto reference coordinates; needed by --rule "
+             "jaccard. With --rule clade, any FASTA whose records are the genomes to place, "
+             "such as the one the sites subcommand writes: those the tree lacks are reported "
+             "as placed nowhere.")
+    add_reference(place, required=False, purpose="Needed by --rule jaccard.")
+    add_genome_map(place, required=False,
+                   purpose="With --rule clade, the scheme's own genomes, whose clades in the "
+                           "tree define its nodes.")
+    add_outgroup(place, "With --rule clade, a leaf to root the tree on; it is placed nowhere.")
     place.add_argument("--genome", default=None,
                        help="Which of the scheme's reference genomes --reference holds, when the "
                             "scheme names more than one.")
     add_members(place)
     place.add_argument("--min-match", type=fraction, default=0.5,
                        help="The lowest Jaccard index between a node's derived genomes and a "
-                            "side of a branch that counts as a match. Default: 0.5.")
+                            "side of a branch that counts as a match, with --rule jaccard. "
+                            "Default: 0.5.")
     place.add_argument("-o", "--output", required=True,
-                       help="The genome map to write: genome and node, tab separated.")
+                       help="The genome map to write: genome and node, tab separated. With "
+                            "--rule clade it holds the scheme's genomes in the tree too.")
     place.add_argument("--report", default=None,
-                       help="Also write how each node was matched to the tree.")
+                       help="Also write how each node was matched to the tree; with --rule "
+                            "clade, the node of every genome and how it was found, including "
+                            "the genomes placed nowhere.")
     add_version(place)
+
+    # sites
+    sites_parser = subparsers.add_parser(
+        "sites", help="Sample SNP sites from one or more alignments, as one FASTA matrix for "
+                      "building a tree.")
+    sites_parser.add_argument("--snps", required=True, metavar="VCF",
+                              help="The SNPs to sample from, as extract writes them; only the "
+                                   "CHROM and POS columns are read.")
+    add_reference(sites_parser)
+    sites_parser.add_argument(
+        "--alignment", action="append", required=True, metavar="FASTA",
+        help="A whole genome alignment against --reference, with the reference as its first "
+             "record, gapped or projected. Repeatable: each is mapped to reference positions "
+             "on its own, and a record in two is taken from the first.")
+    sites_parser.add_argument("--sites", type=at_least(1), default=20000,
+                              help="How many SNP positions to sample; all of them when there "
+                                   "are fewer. Default: 20000.")
+    sites_parser.add_argument("--seed", type=int, default=0,
+                              help="The seed of the random sample. Default: 0.")
+    sites_parser.add_argument("-o", "--output", required=True, metavar="FASTA",
+                              help="The sampled sites to write, one line per record.")
+    add_version(sites_parser)
 
     # trf
     trf = subparsers.add_parser("trf", help="Find the tandem repeats of the reference genome.")
@@ -463,7 +532,7 @@ def main():
     if getattr(args, "masks_concatenated", False) and not getattr(args, "masks", None):
         parser.error("--masks-concatenated applies to --masks")
     try:
-        return run(args, parser, evaluate)
+        return run(args, parser, evaluate, place)
     except (OSError, EOFError, zlib.error) as error:
         # A file that cannot be written, or a truncated or corrupt compressed
         # file, is reported as what it is rather than as a traceback.
@@ -471,7 +540,7 @@ def main():
         return 1
 
 
-def run(args, parser, evaluate) -> int:
+def run(args, parser, evaluate, place) -> int:
     """Run the subcommand the arguments name. Returns an exit status."""
 
     if args.command == "extract":
@@ -516,14 +585,34 @@ def run(args, parser, evaluate) -> int:
             tree=args.tree, members=args.members, masks=args.masks,
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
             genome_conflicts=args.genome_conflicts, typing_report=args.typing_report,
-            report=args.report, region=args.set_region)
+            report=args.report, region=args.set_region, rule=args.rule,
+            outgroups=args.outgroup,
+            no_new_clades=args.no_new_clades)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,
             min_support=args.min_support, min_genomes=args.min_genomes,
             min_length=args.min_branch_length, prefix_names=args.rename, outdir=args.outdir,
             prefix=args.prefix, outgroups=args.outgroup)
+    if args.command == "sites":
+        return sites.main(snps=args.snps, reference=args.reference, alignments=args.alignment,
+                          sites=args.sites, seed=args.seed, output=args.output)
+    if args.command == "place" and args.rule == "clade":
+        if not args.genome_map or not args.outgroup:
+            place.error("--rule clade needs --genome-map, the scheme's genomes, and --outgroup")
+        if args.members or args.genome:
+            place.error("--members and --genome apply to --rule jaccard")
+        if args.min_match != place.get_default("min_match"):
+            place.error("--min-match applies to --rule jaccard")
+        return cansnp_tree.place_clade_main(
+            scheme_dir=args.scheme_dir, organism=args.organism, tree_file=args.tree,
+            genome_map=args.genome_map, outgroups=args.outgroup, alignment=args.alignment,
+            output=args.output, report=args.report)
     if args.command == "place":
+        if not args.alignment or not args.reference:
+            place.error("--rule jaccard needs --alignment and --reference")
+        if args.genome_map or args.outgroup:
+            place.error("--genome-map and --outgroup apply to --rule clade")
         return cansnp_tree.place_main(
             scheme_dir=args.scheme_dir, organism=args.organism, tree_file=args.tree,
             alignment=args.alignment, reference=args.reference, genome=args.genome,

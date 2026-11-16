@@ -1,15 +1,24 @@
 """The collapse and place subcommands. The work is in tree_tools."""
 
 import logging
+from dataclasses import dataclass
 
 from cansnpscorer.findings import PROBLEM
-from cansnpscorer.helpers.file_utils import read_alignment, reference_parser
+from cansnpscorer.helpers.file_utils import (
+    fasta_ids,
+    read_alignment,
+    read_genome_map,
+    reference_parser,
+)
+from cansnpscorer.helpers.names import resolve_names
 from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import ReferenceError
-from cansnpscorer.scheme import SchemeError, read_scheme
+from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 from cansnpscorer.tree_tools import (
     collapse,
+    outgroup_leaves,
     place,
+    place_by_clade,
     read_genome_tree,
     read_members,
     rename,
@@ -85,3 +94,99 @@ def place_main(scheme_dir=None, organism=None, tree_file=None, alignment=None,
         logging.error("no genome was placed at any node of the scheme; the genome map is empty")
         return 2
     return 2 if any(finding.severity == PROBLEM for finding in placement.findings) else 0
+
+
+@dataclass
+class CladePlacement:
+    """Genomes placed by the clades of the scheme's genomes in a tree."""
+
+    clusters: dict[str, list[str]]
+    """The genomes at each node: the scheme's genomes in the tree, by leaf,
+    and the genomes placed by the tree."""
+    notes: dict[str, tuple[str, str]]
+    """The node of every genome and how it was found; an empty node for a
+    genome placed nowhere."""
+
+
+def place_clade(scheme: Scheme, tree_file: str, genome_map: str, outgroups,
+                expected=None) -> CladePlacement:
+    """Place the leaves of a tree by the clades of the scheme's genomes.
+
+    Args:
+        scheme: The scheme, whose tree file gives the nodes.
+        tree_file: The genome tree.
+        genome_map: The node of each of the scheme's genomes.
+        outgroups: The leaves to root the tree on.
+        expected: Names of genomes that should be in the tree, such as the
+            records of the alignment it was built from; those the tree lacks
+            are reported as placed nowhere rather than left out.
+
+    Raises:
+        SchemeError: If the scheme's tree file is not a single rooted tree.
+    """
+    if scheme.hierarchy is None:
+        raise SchemeError("the tree file of the scheme is not a single rooted tree")
+    tree = read_genome_tree(tree_file)
+    scheme_genomes = {genome: node for node, genomes in read_genome_map(genome_map).items()
+                      for genome in genomes}
+    placed, unplaced = place_by_clade(tree, scheme_genomes, scheme.hierarchy.parents, outgroups)
+
+    notes: dict[str, tuple[str, str]] = {}
+    clusters: dict[str, list[str]] = {}
+    matched, _unmatched, _ambiguous = resolve_names(list(scheme_genomes), tree.leaves)
+    outgroup = set(outgroup_leaves(tree, outgroups))
+    for genome, leaf in matched.items():
+        if leaf not in outgroup:
+            notes[leaf] = (scheme_genomes[genome], "scheme genome")
+    for leaf, node in placed.items():
+        notes[leaf] = (node, "placed by the tree")
+    for leaf in unplaced:
+        notes[leaf] = ("", "in no clade of the scheme's genomes")
+    if expected:
+        _in_tree, absent, _ambiguous = resolve_names(list(expected), tree.leaves)
+        unplaced_scheme = [name for name in absent if name in scheme_genomes]
+        absent = [name for name in absent if name not in scheme_genomes]
+        if unplaced_scheme:
+            logging.warning(
+                f"{len(unplaced_scheme)} scheme genomes of the alignment are not leaves of the "
+                f"tree and were placed nowhere: {', '.join(sorted(unplaced_scheme)[:5])}")
+        for name in absent:
+            notes[name] = ("", "not a leaf of the tree")
+        if absent:
+            logging.warning(
+                f"{len(absent)} genomes are not leaves of the tree and were placed nowhere: "
+                f"{', '.join(sorted(absent)[:5])}")
+    if unplaced:
+        logging.warning(
+            f"{len(unplaced)} genomes lie in no clade of the scheme's genomes and were placed "
+            f"nowhere: {', '.join(unplaced[:5])}")
+    for genome, (node, _note) in notes.items():
+        if node:
+            clusters.setdefault(node, []).append(genome)
+    return CladePlacement(clusters, notes)
+
+
+def place_clade_main(scheme_dir=None, organism=None, tree_file=None, genome_map=None,
+                     outgroups=(), alignment=None, output=None, report=None) -> int:
+    """Place genomes by the clades of the scheme's genomes. Returns an exit status."""
+    try:
+        scheme = read_scheme(scheme_dir, organism)
+        expected = fasta_ids(alignment) if alignment else None
+        placement = place_clade(scheme, tree_file, genome_map, outgroups, expected)
+        with open(output, "w", newline="\n") as handle:
+            for node, genomes in sorted(placement.clusters.items()):
+                handle.writelines(f"{genome}\t{node}\n" for genome in sorted(genomes))
+        if report:
+            with open(report, "w", newline="\n") as handle:
+                handle.write("genome\tnode\tnote\n")
+                handle.writelines(f"{genome}\t{node}\t{note}\n" for genome, (node, note)
+                                  in sorted(placement.notes.items()))
+    except (OSError, ValueError, HierarchyError, SchemeError) as error:
+        logging.error(error)
+        return 1
+    logging.info(f"Wrote the genome map to {output}" + (f" and the report to {report}"
+                                                         if report else ""))
+    if not placement.clusters:
+        logging.error("no genome was placed at any node of the scheme; the genome map is empty")
+        return 2
+    return 0
