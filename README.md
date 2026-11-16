@@ -304,8 +304,11 @@ without it (449 of 460, 411 of 417 and 382 of 383).
 
 Telling the groups apart by the genomes they are derived in, and not by
 their number, gave the same 406 of 409 on *Vibrio cholerae*, where the rule
-then applied at one further node of four canSNPs. The other species were not
-re-run.
+then applied at one further node of four canSNPs. Measuring disagreement
+against the genomes of the narrowest group as well, and not by counts, again
+gave 406 of 409: it reordered the four canSNPs of that node, with another
+first, and left every call of the test half unchanged. The other species
+were not re-run.
 
 `--top-n` passes the best N canSNPs of each node, chosen so that one event
 removes as few of them as possible. The first is the best ranked, which is the
