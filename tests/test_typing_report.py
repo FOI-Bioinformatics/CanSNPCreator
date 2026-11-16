@@ -14,7 +14,10 @@ from cansnpscorer.typing_report import (
     ANCESTRAL,
     DERIVED,
     MISSING,
+    OTHER,
+    derived_off,
     node_state,
+    set_path,
     read_observed,
     set_call,
     single_call,
@@ -93,6 +96,42 @@ def test_two_deepest_nodes_on_different_branches_give_no_call():
     states = {"root": DERIVED, "A": DERIVED, "A.1": DERIVED, "A.2": DERIVED}
     assert set_call(states, LINEAGE) is None
     assert single_call(states, LINEAGE, 3) is None
+
+
+def test_a_node_does_not_count_a_base_that_is_neither_allele():
+    assert node_state([OTHER, OTHER, DERIVED]) == DERIVED
+    assert node_state([OTHER, OTHER]) == MISSING
+
+
+def test_the_set_rule_has_no_minimum_chain_and_a_derived_root_is_a_call():
+    assert set_call({"root": DERIVED}, LINEAGE) == "root"
+    assert set_call({"root": MISSING, "A": MISSING}, LINEAGE) is None
+    assert set_call({"root": ANCESTRAL, "A": DERIVED}, LINEAGE) is None
+
+
+def test_the_set_rule_takes_the_node_with_most_derived_nodes_above_it():
+    # B is derived but has one derived node on its lineage; A.1 has three.
+    states = {"root": DERIVED, "A": DERIVED, "A.1": DERIVED, "B": DERIVED}
+    call, path = set_path(states, LINEAGE)
+    assert call == "A.1" and path == frozenset({"A.1", "A", "root"})
+    # An unknown node on the way does not lower the choice of the deepest.
+    call, _path = set_path({"root": DERIVED, "A": MISSING, "A.1": DERIVED}, LINEAGE)
+    assert call == "A.1"
+
+
+def test_tied_branches_leave_the_shared_path_and_count_the_fewest_derived_off_it():
+    states = {"root": DERIVED, "A": DERIVED, "A.1": DERIVED, "A.2": DERIVED}
+    call, path = set_path(states, LINEAGE)
+    assert call is None and path == frozenset({"A", "root"})
+    # One of the two tied branches may be the genome's own: one node contradicts.
+    assert derived_off(states, LINEAGE, call, path) == 1
+
+
+def test_derived_nodes_off_the_path_of_a_call_all_contradict_it():
+    states = {"root": DERIVED, "A": DERIVED, "A.1": DERIVED, "B": DERIVED}
+    call, path = set_path(states, LINEAGE)
+    assert derived_off(states, LINEAGE, call, path) == 1
+    assert derived_off({"root": DERIVED}, LINEAGE, "root", frozenset({"root"})) == 0
 
 
 # -- the report --------------------------------------------------------------
