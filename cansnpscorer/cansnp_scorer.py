@@ -396,7 +396,9 @@ def main():
                        help="With --alignment, do not look for clades the scheme does not "
                             "resolve, which reads every column of the alignment. Only the "
                             "columns of the scheme's SNPs are read, which uses far less "
-                            "memory for a large alignment.")
+                            "memory for a large alignment. The column reader is used "
+                            "except with --tree --rule jaccard, which reads every "
+                            "column; --rule clade reads only the scheme's columns.")
     audit.add_argument("--typing-report", default=None, metavar="PREFIX",
                        help="With --alignment, type every genome with the scheme, by the "
                             "rule of CanSNPer2 (one canSNP per node) and by the majority of "
@@ -600,6 +602,8 @@ def run(args, parser, evaluate, place) -> int:
             place.error("--rule clade needs --genome-map, the scheme's genomes, and --outgroup")
         if args.members or args.genome:
             place.error("--members and --genome apply to --rule jaccard")
+        if args.min_match != place.get_default("min_match"):
+            place.error("--min-match applies to --rule jaccard")
         return cansnp_tree.place_clade_main(
             scheme_dir=args.scheme_dir, organism=args.organism, tree_file=args.tree,
             genome_map=args.genome_map, outgroups=args.outgroup, alignment=args.alignment,

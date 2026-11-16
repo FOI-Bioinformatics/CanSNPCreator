@@ -96,3 +96,10 @@ def test_sites_reports_a_contig_the_reference_lacks(tmp_path):
     vcf.write_text("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nc9\t5\t.\tA\tT\t.\tPASS\t.\n")
     assert cli_run("sites", "--snps", str(vcf), "--reference", str(reference),
                    "--alignment", a_path, "-o", str(tmp_path / "out.fasta")) == 1
+
+
+def test_a_name_repeated_within_one_alignment_is_refused(tmp_path):
+    path = tmp_path / "dup.fasta"
+    path.write_text(">ref\nACGTACGT\n>g1\nACGTTCGT\n>g1\nACGTCCGT\n")
+    with pytest.raises(ValueError, match="'g1' is used more than once"):
+        sample_sites(vcf_with_positions(tmp_path, 5), REFERENCE, [str(path)], sites=1)

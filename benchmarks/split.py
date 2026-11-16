@@ -18,6 +18,7 @@ S = f"{D}/split"
 os.makedirs(S, exist_ok=True)
 REF = f"{D}/{REFNAME}.fasta"
 PY = sys.executable
+# The fallback file names are the Legionella defaults of the first benchmark.
 HIER = f"{D}/scheme_hierarchy.tsv" if os.path.exists(f"{D}/scheme_hierarchy.tsv") else f"{D}/lp_hierarchy.tsv"
 GFF = f"{D}/reference.gff3" if os.path.exists(f"{D}/reference.gff3") else f"{D}/GCF_000092545.1.gff3"
 META = ["--hierarchy", HIER, "--reference", REF, "--organism", ORG, "--genome", LABEL,

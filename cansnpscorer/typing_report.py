@@ -469,7 +469,9 @@ def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[
     with, or else a label of its own. Genomes marked discordant are left
     out, as in the disagreement counts. A canSNP derived in none of the
     remaining genomes gets 0, as do the canSNPs beyond the first
-    ``MAX_SET_LABELLED`` of a node; 0 is written as an empty field.
+    ``MAX_SET_LABELLED`` of a node; 0 is written as an empty field. Missing
+    bases here are counted over the non-discordant genomes, whereas
+    ``width_groups`` counts them over all genomes.
     """
     judged = [result.states for result in typed if not result.discordant]
     tolerance = width_tolerance(len(judged))

@@ -144,7 +144,12 @@ def place_clade(scheme: Scheme, tree_file: str, genome_map: str, outgroups,
         notes[leaf] = ("", "in no clade of the scheme's genomes")
     if expected:
         _in_tree, absent, _ambiguous = resolve_names(list(expected), tree.leaves)
+        unplaced_scheme = [name for name in absent if name in scheme_genomes]
         absent = [name for name in absent if name not in scheme_genomes]
+        if unplaced_scheme:
+            logging.warning(
+                f"{len(unplaced_scheme)} scheme genomes of the alignment are not leaves of the "
+                f"tree and were placed nowhere: {', '.join(sorted(unplaced_scheme)[:5])}")
         for name in absent:
             notes[name] = ("", "not a leaf of the tree")
         if absent:

@@ -51,9 +51,9 @@ ancestral give a missing node.
 The set rule has no minimum chain length: a single derived root node can be a
 call. This differs from the chain requirement of the single rule below.
 
-Note on the brief's wording: the call is not "the deepest node on a chain of
-derived nodes" in the strict sense. A missing node on the way is passed, and the
-choice is by number of derived nodes first and depth second.
+The call is not the deepest node on a chain of derived nodes in the strict
+sense. A missing node on the way is passed, and the choice is by number of
+derived nodes first and depth second.
 
 For comparison, the single rule (`single_call`) reads only the rank 1 canSNP of
 each node, counts a node as derived only when its rank 1 canSNP is derived, and
@@ -125,12 +125,12 @@ can be read. CanSNPCreator reports the same counts per canSNP and node in
 Held-out genomes were projected onto each organism's alignment and typed by both
 rules with `--snps-per-node 5` (CanSNPCreator `audit`). The table gives the
 number of held-out genomes, the number typed (a call) by each rule where stated,
-and the share of typed genomes where the single call equals the set call. The table lists the
-organisms for which the benchmark notes give a single = set agreement figure
-together with at least some typed count (S. Typhi has none), with Brucella added
-for its typed counts. Figures are as recorded in the
-benchmark notes (for Brucella the set-rule count is as recorded and exceeds the
-held-out count). "-" means not stated.
+and the share of typed genomes where the single call equals the set call. The
+table lists the organisms with a single = set agreement figure in the benchmark
+notes, plus Brucella for its typed counts. Figures are as recorded in the
+benchmark notes. The Brucella typed counts are over an alignment of the
+reference plus the 1,229 held-out genomes, which is why the set rule count
+(1,230) exceeds the held-out count. "-" means not stated.
 
 | Organism | Held out | Single rule typed | Set rule typed | Single = set |
 |---|---|---|---|---|

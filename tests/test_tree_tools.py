@@ -483,3 +483,60 @@ def test_audit_by_clade_from_the_command_line(written, dataset, tmp_path):
                    "--outgroup", "ref") == 1, "clade needs --tree"
     assert cli_run(*common, "--tree", str(tree_file), "--outgroup", "ref") == 1, \
         "--outgroup applies to clade"
+
+
+def test_place_by_clade_ties_in_depth_go_to_the_smaller_clade():
+    # B1 and B2 are siblings. B1's genomes enclose B2's, so h lies in both
+    # clades; B2's is the smaller (3 leaves against 5), and B1 would come
+    # first by name.
+    tree = read_genome_tree_text("(((b1a,((b2a,h),b2b)),b1b),out);")
+    parents = {"A": None, "B1": "A", "B2": "A"}
+    placed, unplaced = place_by_clade(
+        tree, {"b1a": "B1", "b1b": "B1", "b2a": "B2", "b2b": "B2"}, parents, ["out"])
+    assert placed == {"h": "B2"} and unplaced == []
+
+
+def test_place_by_clade_warns_of_a_scheme_genome_that_is_not_a_leaf(tmp_path, caplog):
+    from cansnpscorer.cansnp_tree import place_clade
+
+    tree_file = tmp_path / "tree.nwk"
+    tree_file.write_text("(((((r1,h1),r1b),r2),((r3,h2),r3b)),out);")
+    scheme_map = tmp_path / "scheme_genomes.tsv"
+    genomes = {**CLADE_GENOMES, "r4": "A.2"}
+    scheme_map.write_text("".join(f"{genome}\t{node}\n" for genome, node in genomes.items()))
+    scheme = read_scheme(clade_scheme(tmp_path))
+    with caplog.at_level(logging.WARNING):
+        placement = place_clade(scheme, str(tree_file), str(scheme_map), ["out"],
+                                [*genomes, "h1", "h2", "out"])
+    assert "1 scheme genomes of the alignment are not leaves of the tree" in caplog.text
+    assert "r4" in caplog.text
+    assert "r4" not in {g for genomes in placement.clusters.values() for g in genomes}
+
+
+def test_audit_by_clade_does_not_flag_a_reference_the_tree_lacks(written, dataset, tmp_path,
+                                                                caplog):
+    outdir, _scores = written
+    tree_file = tmp_path / "tree.nwk"
+    tree_file.write_text("(((s1:0.01,s1b:0.01):0.2,s2:0.3):0.4,(s3:0.2,s4:0.2):0.4,out:0.5);")
+    scheme_map = tmp_path / "scheme_genomes.tsv"
+    scheme_map.write_text("s1\tA.1\ns1b\tA.1\ns2\tA.2\ns3\tB.1\ns4\tB.2\n")
+    with caplog.at_level(logging.WARNING):
+        cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+                "--alignment", dataset.alignment, "--tree", str(tree_file), "--rule", "clade",
+                "--outgroup", "out", "--genome-map", str(scheme_map))
+    assert "not leaves of the tree" not in caplog.text
+
+
+def test_no_new_clades_needs_an_alignment(written, dataset):
+    outdir, _scores = written
+    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+                   "--no-new-clades") == 1
+
+
+def test_place_by_clade_refuses_a_min_match(tmp_path):
+    tree_file = tmp_path / "tree.nwk"
+    tree_file.write_text("((r1,h1),out);")
+    with pytest.raises(SystemExit):
+        cli_run("place", "--rule", "clade", "--scheme-dir", clade_scheme(tmp_path),
+                "--tree", str(tree_file), "--genome-map", str(tree_file), "--outgroup", "out",
+                "--min-match", "0.8", "-o", str(tmp_path / "out.tsv"))

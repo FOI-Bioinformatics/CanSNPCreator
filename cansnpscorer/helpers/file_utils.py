@@ -260,7 +260,7 @@ class ColumnRow:
     indexing another column raises ``KeyError`` rather than giving a wrong base.
     """
 
-    __slots__ = ("_offsets", "_kept", "_length")
+    __slots__ = ("_kept", "_length", "_offsets")
 
     def __init__(self, offsets: Mapping[int, int], kept: str, length: int) -> None:
         self._offsets = offsets

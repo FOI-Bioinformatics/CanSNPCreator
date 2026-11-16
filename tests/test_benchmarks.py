@@ -1,5 +1,8 @@
 import pathlib
+import shutil
 import subprocess
+
+import pytest
 
 BENCH = pathlib.Path(__file__).parent.parent / "benchmarks"
 
@@ -12,6 +15,7 @@ def test_no_hard_coded_paths():
             assert path.name == "config.sh" or "/Volumes/" not in text, path
 
 
+@pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh is not installed")
 def test_shell_scripts_parse():
     for path in BENCH.glob("*.sh"):
         subprocess.run(["zsh", "-n", str(path)], check=True)

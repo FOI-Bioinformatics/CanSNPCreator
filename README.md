@@ -330,7 +330,9 @@ CanSNPer2-data expects them, with positions counted over the concatenated
 genome, since its SNP file has no contig column. That repository's rules are
 checked first, so the result passes its `validate.py` unchanged. A node with no
 canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
-children to the nearest node that has one.
+children to the nearest node that has one. With `--genome-map` (which needs
+`--alignment`) the warning also gives the number of genomes moved to an ancestor
+and the deepest pruned depth.
 
 CanSNPer2 calls one SNP per node, so the SNP file always holds the best of
 each. `--snps-per-node N` (or `all`) keeps up to N canSNPs of each node, chosen
@@ -480,7 +482,9 @@ take about five seconds; the time grows with the number of genomes.
 `--no-new-clades` skips the search for clades the scheme does not resolve, so
 that only the alignment columns of the scheme's SNPs are read and held, which
 lowers the memory needed for a large alignment. The typing report is the same
-either way; a tree placement still reads every column.
+either way. The column reader is used except with `--tree --rule jaccard`, which
+reads every column; `--rule clade` with `--no-new-clades` reads only the
+scheme's columns.
 
 `--typing-report PREFIX` evaluates the scheme on the genomes of `--alignment`
 without being told where they belong, so it can be run on genomes the scheme

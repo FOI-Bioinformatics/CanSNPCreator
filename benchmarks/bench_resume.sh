@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Scheme and held-out test of one organism, after RepGenR2 metadata, genome and
-# dereplicate have run in WORK/NAME.
-# usage: bench.sh NAME REFERENCE_STEM OUTGROUP_STEM NODE_PREFIX GENOME_LABEL GCA GCF ASSEMBLY GFF_URL
+# Scheme and held-out test of one organism, as bench.sh, but resumed at
+# `evaluate`; RepGenR2 metadata, genome and dereplicate must have run in WORK/NAME.
+# usage: bench_resume.sh NAME REFERENCE_STEM OUTGROUP_STEM NODE_PREFIX GENOME_LABEL GCA GCF ASSEMBLY GFF_URL
 set -e
 NAME=$1; REF=$2; OUT=$3; PRE=$4; LABEL=$5; GCA=$6; GCF=$7; ASM=$8; GFFURL=$9
 B=${0:A:h}; source $B/config.sh

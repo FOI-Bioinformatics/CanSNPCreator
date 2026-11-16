@@ -669,6 +669,9 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     if members and not tree:
         logging.error("--members applies to the leaves of --tree")
         return 1
+    if no_new_clades and not alignment:
+        logging.error("--no-new-clades applies to --alignment")
+        return 1
     if typing_report and not alignment:
         logging.error("--typing-report types the genomes of --alignment, so it needs one")
         return 1
@@ -710,7 +713,9 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
             if by_clade:
                 from cansnpscorer.cansnp_tree import place_clade
 
-                clusters = place_clade(scheme, tree, genome_map, outgroups, list(aligned)).clusters
+                # The first record is the reference, which the tree need not hold.
+                clusters = place_clade(scheme, tree, genome_map, outgroups,
+                                       list(aligned)[1:]).clusters
             elif genome_map:
                 clusters = read_genome_map(genome_map)
             elif not tree:

@@ -102,12 +102,18 @@ def sample_sites(snps_vcf: str, reference: Reference, alignments: Sequence[str],
                             f"written as gaps")
         width = len(aligned_reference)
         added = repeated = 0
+        names: set[str] = set()
         # Chained rather than unpacked, so that one record is held at a time.
         for name, sequence in chain([(reference_name, aligned_reference)], records):
             if len(sequence) != width:
                 raise ValueError(
                     f"{path}: the records are not aligned; '{name}' holds {len(sequence)} "
                     f"columns and the reference row {width}")
+            if name in names:
+                raise ValueError(
+                    f"{path}: the name '{name}' is used more than once; sequence IDs, the "
+                    "first word of each header, must be unique")
+            names.add(name)
             if name in rows:
                 repeated += 1
                 continue
