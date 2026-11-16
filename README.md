@@ -275,11 +275,18 @@ as the `derived_set` column of the table labels them: two canSNPs are of one
 group when the genomes derived in one and ancestral in the other number no
 more than one in a hundred (at least two), a genome without a base allowing
 for either state. Two groups of equal size on different genomes are thus two
-groups. The disagreement of each canSNP is still measured by counts, however,
-so a canSNP of an equal-sized group on other genomes is judged to agree with
-the narrowest group. A table written by 0.4.0, without the
-column, tells them apart by the number of genomes a canSNP is derived in,
-within one genome in a hundred, as before. `evaluate` names these nodes in a
+groups. The disagreement of each canSNP is the number of genomes in which it
+has the other state than the narrowest group, as the `set_apart` column of
+the table gives it. The group's state in a genome is the one most of its
+canSNPs have there; a genome where they are split, or where either side has
+no base, counts for neither, so the two canSNPs of a group of two never
+disagree with each other. A table written by 0.4.0, without these columns,
+tells the groups apart by the number of genomes a canSNP is derived in,
+within one genome in a hundred, and measures disagreement as the difference
+in that number, as before. A node where a derived canSNP lacks a label is
+judged in the same way, and a node where a canSNP lacks `set_apart`, as a
+position listed twice does, keeps its groups but measures disagreement by
+that difference. `evaluate` names these nodes in a
 warning; representatives of the wider groups would divide their branches.
 
 The same test on four further species found one such node in two of them:
@@ -297,8 +304,11 @@ without it (449 of 460, 411 of 417 and 382 of 383).
 
 Telling the groups apart by the genomes they are derived in, and not by
 their number, gave the same 406 of 409 on *Vibrio cholerae*, where the rule
-then applied at one further node of four canSNPs. The other species were not
-re-run.
+then applied at one further node of four canSNPs. Measuring disagreement
+against the genomes of the narrowest group as well, and not by counts, again
+gave 406 of 409: it reordered the four canSNPs of that node, with another
+first, and left every call of the test half unchanged. The other species
+were not re-run.
 
 `--top-n` passes the best N canSNPs of each node, chosen so that one event
 removes as few of them as possible. The first is the best ranked, which is the
@@ -518,9 +528,12 @@ tables are written:
   one in a hundred (at least two), genomes without a base allowing for either
   state, and label 1 is the set of most genomes. It is empty for a canSNP
   derived in no genome, and for those beyond the first 200 canSNPs of a node.
-  Genomes that contradict the scheme at `--genome-conflicts` nodes or more are
-  counted in `missing`, `derived` and `ancestral`, but are left out of the
-  disagreement counts and of the `derived_set` labels.
+  A further column, `set_apart`, counts the genomes in which a canSNP has the
+  other state than the narrowest set of its node that holds at least two
+  canSNPs; it is empty for a node without such a set or of more than 200
+  canSNPs. Genomes that contradict the scheme at `--genome-conflicts` nodes
+  or more are counted in `missing`, `derived` and `ancestral`, but are left
+  out of the disagreement counts, the `derived_set` labels and `set_apart`.
   This is the table `evaluate --observed` reads.
 - `PREFIX_nodes.tsv`: for each node, the genomes passing through it, how many
   carry every canSNP of its set, the smallest margin between derived and

@@ -405,8 +405,8 @@ def labels_of(rows):
 def test_derived_set_is_the_last_column_of_the_snp_table():
     from cansnpscorer.typing_report import SNP_COLUMNS
 
-    assert SNP_COLUMNS[-1] == "derived_set"
-    assert SNP_COLUMNS[:-1][-3:] == ("discordant_in_set", "ancestral_on_path",
+    assert SNP_COLUMNS[-2:] == ("derived_set", "set_apart")
+    assert SNP_COLUMNS[:-2][-3:] == ("discordant_in_set", "ancestral_on_path",
                                      "derived_off_path")
 
 
@@ -447,12 +447,14 @@ def test_a_node_of_too_many_cansnps_is_labelled_for_the_first_ones_only(caplog):
     assert "derived_set" in caplog.text and "A" in caplog.text
 
 
-def group_table(tmp_path, rows, with_sets=True):
+def group_table(tmp_path, rows, with_sets=True, apart=None):
     """A _snps.tsv table of node 'A' from (derived, missing, derived_set) per canSNP,
-    of 300 genomes."""
+    of 300 genomes, with set_apart from ``apart`` when it is given."""
     from cansnpscorer.typing_report import SNP_COLUMNS
 
-    columns = tuple(column for column in SNP_COLUMNS if with_sets or column != "derived_set")
+    columns = tuple(column for column in SNP_COLUMNS
+                    if (with_sets or column != "derived_set")
+                    and (apart is not None or column != "set_apart"))
     lines = ["\t".join(columns)]
     for index, (derived, missing, label) in enumerate(rows):
         fields = ["A", str(index + 1), "G", str(100 + index), "c1", str(100 + index), "T", "C",
@@ -460,6 +462,8 @@ def group_table(tmp_path, rows, with_sets=True):
                   str(300 - missing - derived), "0", "5", "0", "0"]
         if with_sets:
             fields.append(str(label) if label else "")
+        if apart is not None:
+            fields.append("" if apart[index] is None else str(apart[index]))
         lines.append("\t".join(fields))
     path = tmp_path / "group_snps.tsv"
     path.write_text("\n".join(lines) + "\n")
@@ -519,3 +523,111 @@ def test_derived_set_a_cansnp_without_enough_bases_founds_no_label():
     states = {"g1": "DDD", "g2": "DDD", "g3": "DDD", "g4": "DAA", "g5": "DAA", "g6": "DAA",
               "g7": "NDD", "g8": "NDD", "g9": "NDD", "g10": "NAA"}
     assert labels_of(derived_set_rows(states)) == [2, 1, 1]
+
+
+# -- disagreement judged against the genomes of the narrowest set ------------
+
+
+def apart_of(rows):
+    from cansnpscorer.typing_report import SNP_COLUMNS
+
+    at = SNP_COLUMNS.index("set_apart")
+    return [int(row[at]) if row[at] else None for row in rows]
+
+
+def nested_states():
+    """20 genomes: two canSNPs derived in g1-g12, two in g1-g4 and two in
+    g5-g8, the last two sets of equal size on different genomes."""
+    states = {}
+    for number in range(1, 21):
+        wide = "DD" if number <= 12 else "AA"
+        first = "DD" if number <= 4 else "AA"
+        second = "DD" if 5 <= number <= 8 else "AA"
+        states[f"g{number}"] = wide + first + second
+    return states
+
+
+def test_set_apart_counts_genomes_against_the_narrowest_set():
+    rows = derived_set_rows(nested_states())
+    assert labels_of(rows) == [1, 1, 2, 2, 3, 3]
+    # Against the set of g5-g8: the wide canSNPs are derived in eight
+    # genomes outside it, those of g1-g4 derived in four outside it and
+    # ancestral in its four.
+    assert apart_of(rows) == [8, 8, 8, 8, 0, 0]
+
+
+def test_set_apart_lets_a_missing_base_be_either_state():
+    states = nested_states()
+    states["g1"] = "NN" + states["g1"][2:]
+    states["g5"] = states["g5"][:4] + "DN"
+    assert apart_of(derived_set_rows(states)) == [7, 7, 8, 8, 0, 0]
+
+
+def test_set_apart_is_empty_without_a_set_of_two():
+    # Three canSNPs, each derived in four genomes of its own.
+    states = {f"g{number}": "".join("D" if (number - 1) // 4 == index else "A"
+                                    for index in range(3)) for number in range(1, 15)}
+    rows = derived_set_rows(states)
+    assert labels_of(rows) == [1, 2, 3]
+    assert apart_of(rows) == [None, None, None]
+
+
+def test_set_apart_leaves_out_discordant_genomes():
+    states = nested_states()
+    states["bad"] = "AAAADD"
+    assert apart_of(derived_set_rows(states, discordant={"bad"})) == [8, 8, 8, 8, 0, 0]
+
+
+def test_evaluate_judges_by_set_apart_when_the_table_holds_it(tmp_path):
+    from cansnpscorer.typing_report import judge_by_narrowest_group
+
+    rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 3), (59, 0, 3)]
+    observed = read_observed(group_table(tmp_path, rows, apart=[90, 90, 120, 119, 0, 1]))
+    assert [row.set_apart for row in observed.values()] == [90, 90, 120, 119, 0, 1]
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == ["A"]
+    assert [judged[("A", 100 + index)].discordant for index in range(6)] == [
+        90, 90, 120, 119, 0, 1]
+
+
+def test_evaluate_judges_by_counts_when_a_set_apart_is_empty(tmp_path):
+    from cansnpscorer.typing_report import judge_by_narrowest_group
+
+    rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 3), (59, 0, 3)]
+    observed = read_observed(group_table(tmp_path, rows, apart=[90, 90, None, 119, 0, 1]))
+    judged, _nodes = judge_by_narrowest_group(observed)
+    assert [judged[("A", 100 + index)].discordant for index in range(6)] == [
+        91, 91, 1, 1, 1, 0]
+
+
+def write_rows(tmp_path, rows):
+    from cansnpscorer.typing_report import SNP_COLUMNS
+
+    path = tmp_path / "round_snps.tsv"
+    path.write_text("\n".join(["\t".join(SNP_COLUMNS), *("\t".join(row) for row in rows)])
+                    + "\n")
+    return str(path)
+
+
+def test_set_apart_round_trip_judges_against_the_narrowest_set(tmp_path):
+    from cansnpscorer.typing_report import judge_by_narrowest_group
+
+    observed = read_observed(write_rows(tmp_path, derived_set_rows(nested_states())))
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == ["A"]
+    # By counts the set of g1-g4 would agree with that of g5-g8.
+    assert [judged[("A", 10 + index)].discordant for index in range(6)] == [8, 8, 8, 8, 0, 0]
+
+
+def test_a_position_listed_twice_is_judged_by_counts(tmp_path):
+    from cansnpscorer.typing_report import SNP_COLUMNS, judge_by_narrowest_group
+
+    rows = derived_set_rows(nested_states())
+    at = SNP_COLUMNS.index("position")
+    rows[5][at] = rows[4][at]  # the set of g5-g8 is one position, listed twice
+    observed = read_observed(write_rows(tmp_path, rows))
+    assert observed[("A", 14)].set_apart is None
+    judged, nodes = judge_by_narrowest_group(observed)
+    # Read back, the narrowest set of two is that of g1-g4, derived in four.
+    assert nodes == ["A"]
+    assert [judged[("A", 10 + index)].discordant for index in range(5)] == [8, 8, 0, 0, 0]
