@@ -270,8 +270,13 @@ of the node can be derived in nested groups of different width. Where no such
 group holds more than half of the node's canSNPs, the majority follows none
 of them, and `evaluate` then ranks the canSNPs by their distance to the
 narrowest group that holds at least two: the genomes carrying every mutation
-of the branch. Groups are told apart by the number of genomes a canSNP is
-derived in, within one genome in a hundred. `evaluate` names these nodes in a
+of the branch. Groups are told apart by the genomes a canSNP is derived in,
+as the `derived_set` column of the table labels them: two canSNPs are of one
+group when no genome is derived in one and ancestral in the other, a genome
+without a base allowing for either state. Two groups of equal size on
+different genomes are thus two groups. A table written by 0.4.0, without the
+column, tells them apart by the number of genomes a canSNP is derived in,
+within one genome in a hundred, as before. `evaluate` names these nodes in a
 warning; representatives of the wider groups would divide their branches.
 
 The same test on four further species found one such node in two of them:
@@ -286,6 +291,11 @@ The same test on four further species found one such node in two of them:
 In *Listeria monocytogenes*, *Legionella pneumophila* and *Staphylococcus
 aureus* no node met the condition and the result was the same with and
 without it (449 of 460, 411 of 417 and 382 of 383).
+
+Telling the groups apart by the genomes they are derived in, and not by
+their number, gave the same 406 of 409 on *Vibrio cholerae*, where the rule
+then applied at one further node of four canSNPs. The other species were not
+re-run.
 
 `--top-n` passes the best N canSNPs of each node, chosen so that one event
 removes as few of them as possible. The first is the best ranked, which is the
@@ -495,9 +505,14 @@ tables are written:
   the node expected.
 - `PREFIX_snps.tsv`: for each canSNP, in how many genomes it has no base,
   disagrees with the other canSNPs of its node, is ancestral on the genome's
-  path or derived off it, with its contig and position there. Genomes that contradict the scheme at
-  `--genome-conflicts` nodes or more are left out of these counts. This is
-  the table `evaluate --observed` reads.
+  path or derived off it, with its contig and position there. A last column,
+  `derived_set`, labels the canSNPs of each node by the genomes they are
+  derived in: canSNPs of one label are derived in the same genomes, genomes
+  without a base allowing for either state, and label 1 is the set of most
+  genomes. It is empty for a canSNP derived in no genome, and for those
+  beyond the first 200 canSNPs of a node. Genomes that contradict the scheme at
+  `--genome-conflicts` nodes or more are left out of these counts and labels.
+  This is the table `evaluate --observed` reads.
 - `PREFIX_nodes.tsv`: for each node, the genomes passing through it, how many
   carry every canSNP of its set, the smallest margin between derived and
   ancestral canSNPs, and how many genomes the single rule lost there.

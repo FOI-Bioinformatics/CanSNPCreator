@@ -333,3 +333,127 @@ def test_typing_only_audit_reads_the_scheme_columns(written, dataset, tmp_path, 
     status, prefix = run_report(written, dataset, tmp_path)
     assert status in (0, 2)
     assert "scheme's columns" in caplog.text
+
+
+# -- groups of a node's canSNPs by the genomes they are derived in -----------
+
+
+def derived_set_rows(states_by_genome, discordant=()):
+    """The _snps.tsv rows of one node 'A' whose canSNPs have these states,
+    given per genome as one character per canSNP."""
+    from cansnpscorer.model import Reference
+    from cansnpscorer.scheme import SchemeSnp
+    from cansnpscorer.typing_report import GenomeTyping, _snp_rows
+
+    width = len(next(iter(states_by_genome.values())))
+    snps = [(SchemeSnp("A", "", "", "G", 10 + index, "T", "C", rank=index + 1), index)
+            for index in range(width)]
+    typed = [GenomeTyping(genome=name, states=states, discordant=name in discordant)
+             for name, states in states_by_genome.items()]
+    reference = Reference.from_records([("c1", "A" * 400)])
+    return _snp_rows({"A": snps}, {"A": 0}, typed, reference)
+
+
+def labels_of(rows):
+    from cansnpscorer.typing_report import SNP_COLUMNS
+
+    at = SNP_COLUMNS.index("derived_set")
+    return [int(row[at]) if row[at] else None for row in rows]
+
+
+def test_derived_set_is_the_last_column_of_the_snp_table():
+    from cansnpscorer.typing_report import SNP_COLUMNS
+
+    assert SNP_COLUMNS[-1] == "derived_set"
+    assert SNP_COLUMNS[:-1][-3:] == ("discordant_in_set", "ancestral_on_path",
+                                     "derived_off_path")
+
+
+def test_equal_counts_different_genomes_are_two_groups():
+    # Two canSNPs derived in g1-g3, two in g4-g6: the counts are equal.
+    rows = derived_set_rows({"g1": "DDAA", "g2": "DDAA", "g3": "DDAA",
+                             "g4": "AADD", "g5": "AADD", "g6": "AADD", "g7": "AAAA"})
+    assert labels_of(rows) == [1, 1, 2, 2]
+
+
+def test_missing_base_does_not_split_a_group():
+    # The first is derived in g1 and g2 and has no base in g3.
+    rows = derived_set_rows({"g1": "DDD", "g2": "DDD", "g3": "NDD", "g4": "AAA"})
+    assert labels_of(rows) == [1, 1, 1]
+
+
+def test_the_set_of_most_genomes_is_labelled_first_and_none_without_derived_genomes():
+    rows = derived_set_rows({"g1": "DDA", "g2": "ADA", "g3": "ADA", "g4": "AAA"})
+    assert labels_of(rows) == [2, 1, None]
+
+
+def test_a_discordant_genome_does_not_split_a_group():
+    rows = derived_set_rows({"g1": "DD", "g2": "DD", "bad": "DA", "g4": "AA"},
+                            discordant={"bad"})
+    assert labels_of(rows) == [1, 1]
+
+
+def test_a_node_of_too_many_cansnps_is_labelled_for_the_first_ones_only(caplog):
+    import logging
+
+    from cansnpscorer.typing_report import MAX_SET_LABELLED
+
+    width = MAX_SET_LABELLED + 3
+    with caplog.at_level(logging.INFO):
+        rows = derived_set_rows({"g1": "D" * width, "g2": "D" * width, "g3": "A" * width})
+    assert labels_of(rows) == [1] * MAX_SET_LABELLED + [None] * 3
+    assert "derived_set" in caplog.text and "A" in caplog.text
+
+
+def group_table(tmp_path, rows, with_sets=True):
+    """A _snps.tsv table of node 'A' from (derived, missing, derived_set) per canSNP,
+    of 300 genomes."""
+    from cansnpscorer.typing_report import SNP_COLUMNS
+
+    columns = tuple(column for column in SNP_COLUMNS if with_sets or column != "derived_set")
+    lines = ["\t".join(columns)]
+    for index, (derived, missing, label) in enumerate(rows):
+        fields = ["A", str(index + 1), "G", str(100 + index), "c1", str(100 + index), "T", "C",
+                  "300", str(300 - missing), str(missing), str(derived),
+                  str(300 - missing - derived), "0", "5", "0", "0"]
+        if with_sets:
+            fields.append(str(label) if label else "")
+        lines.append("\t".join(fields))
+    path = tmp_path / "group_snps.tsv"
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_derived_set_groups_canSNPs_of_equal_counts_apart(tmp_path):
+    from cansnpscorer.typing_report import judge_by_narrowest_group, width_groups
+
+    # Three sets of two canSNPs each, two of them of equal count: by counts
+    # four of six canSNPs are one group, by sets none holds a majority.
+    rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 3), (59, 0, 3)]
+    observed = read_observed(group_table(tmp_path, rows))
+    assert [row.derived_set for row in observed.values()] == [1, 1, 2, 2, 3, 3]
+    assert [len(group) for group in width_groups(list(observed.values()))] == [2, 2, 2]
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == ["A"]
+    # The narrowest group is the last set; its most common count is 59 (ties
+    # go to the smaller count).
+    assert [judged[("A", 100 + index)].discordant for index in range(6)] == [91, 91, 1, 1, 1, 0]
+
+
+def test_old_table_without_derived_set_reads_and_groups_by_count(tmp_path):
+    from cansnpscorer.typing_report import judge_by_narrowest_group, width_groups
+
+    rows = [(150, 0, 0), (150, 0, 0), (60, 0, 0), (60, 0, 0), (60, 0, 0), (59, 0, 0)]
+    observed = read_observed(group_table(tmp_path, rows, with_sets=False))
+    assert all(row.derived_set == 0 for row in observed.values())
+    assert [len(group) for group in width_groups(list(observed.values()))] == [2, 4]
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == [] and judged == observed
+
+
+def test_a_node_with_an_unlabelled_derived_cansnp_groups_by_count(tmp_path):
+    from cansnpscorer.typing_report import width_groups
+
+    rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 0), (59, 0, 3)]
+    observed = read_observed(group_table(tmp_path, rows))
+    assert [len(group) for group in width_groups(list(observed.values()))] == [2, 4]
