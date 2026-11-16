@@ -276,12 +276,17 @@ group when the genomes derived in one and ancestral in the other number no
 more than one in a hundred (at least two), a genome without a base allowing
 for either state. Two groups of equal size on different genomes are thus two
 groups. The disagreement of each canSNP is the number of genomes in which it
-has the other state than the narrowest group, taken per genome as the state
-most of the group's canSNPs have there, as the `set_apart` column of the
-table gives it. A table written by 0.4.0, without these columns, tells the
-groups apart by the number of genomes a canSNP is derived in, within one
-genome in a hundred, and measures disagreement as the difference in that
-number, as before; so does a node where a canSNP lacks a label. `evaluate` names these nodes in a
+has the other state than the narrowest group, as the `set_apart` column of
+the table gives it. The group's state in a genome is the one most of its
+canSNPs have there; a genome where they are split, or where either side has
+no base, counts for neither, so the two canSNPs of a group of two never
+disagree with each other. A table written by 0.4.0, without these columns,
+tells the groups apart by the number of genomes a canSNP is derived in,
+within one genome in a hundred, and measures disagreement as the difference
+in that number, as before. A node where a derived canSNP lacks a label is
+judged in the same way, and a node where a canSNP lacks `set_apart`, as a
+position listed twice does, keeps its groups but measures disagreement by
+that difference. `evaluate` names these nodes in a
 warning; representatives of the wider groups would divide their branches.
 
 The same test on four further species found one such node in two of them:

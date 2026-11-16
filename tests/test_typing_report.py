@@ -598,3 +598,36 @@ def test_evaluate_judges_by_counts_when_a_set_apart_is_empty(tmp_path):
     judged, _nodes = judge_by_narrowest_group(observed)
     assert [judged[("A", 100 + index)].discordant for index in range(6)] == [
         91, 91, 1, 1, 1, 0]
+
+
+def write_rows(tmp_path, rows):
+    from cansnpscorer.typing_report import SNP_COLUMNS
+
+    path = tmp_path / "round_snps.tsv"
+    path.write_text("\n".join(["\t".join(SNP_COLUMNS), *("\t".join(row) for row in rows)])
+                    + "\n")
+    return str(path)
+
+
+def test_set_apart_round_trip_judges_against_the_narrowest_set(tmp_path):
+    from cansnpscorer.typing_report import judge_by_narrowest_group
+
+    observed = read_observed(write_rows(tmp_path, derived_set_rows(nested_states())))
+    judged, nodes = judge_by_narrowest_group(observed)
+    assert nodes == ["A"]
+    # By counts the set of g1-g4 would agree with that of g5-g8.
+    assert [judged[("A", 10 + index)].discordant for index in range(6)] == [8, 8, 8, 8, 0, 0]
+
+
+def test_a_position_listed_twice_is_judged_by_counts(tmp_path):
+    from cansnpscorer.typing_report import SNP_COLUMNS, judge_by_narrowest_group
+
+    rows = derived_set_rows(nested_states())
+    at = SNP_COLUMNS.index("position")
+    rows[5][at] = rows[4][at]  # the set of g5-g8 is one position, listed twice
+    observed = read_observed(write_rows(tmp_path, rows))
+    assert observed[("A", 14)].set_apart is None
+    judged, nodes = judge_by_narrowest_group(observed)
+    # Read back, the narrowest set of two is that of g1-g4, derived in four.
+    assert nodes == ["A"]
+    assert [judged[("A", 10 + index)].discordant for index in range(5)] == [8, 8, 0, 0, 0]

@@ -898,8 +898,9 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
                                    min(row.derived_genomes, earlier.derived_genomes),
                                    row.derived_set if row.derived_set == earlier.derived_set
                                    else 0,
-                                   None if None in (row.set_apart, earlier.set_apart)
-                                   else max(row.set_apart, earlier.set_apart))
+                                   # set_apart counted both rows as members of
+                                   # their set; read as one, the sets may differ.
+                                   None)
                 observed[key] = row
             except (IndexError, ValueError):
                 raise ValueError(f"{path}: line {number} is not a row of the table") from None
@@ -982,12 +983,15 @@ def judge_by_narrowest_group(
     each canSNP then becomes the number of genomes in which it has the other
     state than that group, as the ``set_apart`` column gives it.
 
-    A table without these columns, or a node where a canSNP lacks a label or
-    a distance, falls back to counts: groups are told apart by their size
-    alone, which nested groups always differ in, and the disagreement of
-    each canSNP becomes the number of genomes by which its derived count
-    must differ from the group's most common count. In both cases a genome
-    without a base allows for either state.
+    A table without the ``derived_set`` column, or a node where a canSNP
+    derived in some genome lacks a label, tells the groups apart by their
+    size alone, which nested groups always differ in. Where the groups are
+    told apart by labels but a canSNP lacks a distance, as one listed twice
+    at a position does, the groups stand and only the distance falls back.
+    Measured by counts, the disagreement of each canSNP is the number of
+    genomes by which its derived count must differ from the group's most
+    common count. In both cases a genome without a base allows for either
+    state.
 
     Returns:
         The observations, changed for those nodes, and the nodes.
