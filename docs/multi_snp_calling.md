@@ -60,22 +60,26 @@ each node, counts a node as derived only when its rank 1 canSNP is derived, and
 takes the deepest node whose whole lineage is derived and which has at least
 `min_required_hits` nodes on its lineage (the root counts as one). A missing or
 ancestral rank 1 canSNP anywhere on the lineage ends the chain. Two deepest nodes
-at the same depth give no call.
+at the same depth give no call. `single_call` follows CanSNPer2 2.2.0, where a
+missing rank 1 SNP ends the chain; 2.2.1 differs (section 4), so the
+single-rule figures in section 6 reflect 2.2.0.
 
 ## 4. `--min_required_hits` and `--strictness` under the set rule
 
-CanSNPer2 2.2.x calls one SNP per node. `--min_required_hits` (default 3) is the
-number of SNPs on the path from the root that must be called before a final call
-is accepted. In CanSNPer2 `NewickTree._confirm_path`, every node on the chain must
-have a called, non-ancestral SNP, and the chain length is compared with
-`min_required_hits`.
+CanSNPer2 calls one SNP per node. The rule below is that of CanSNPer2 2.2.1
+(upstream master, commit 2e8391c, PR #55), `NewickTree._confirm_path`. Each SNP
+on the chain from the root to the node is one of:
 
-`--strictness` (default 0.7; "percent of snps in path required for calling SNP")
-is the option that PR #53 in FOI-Bioinformatics/CanSNPer2 uses to tolerate SNPs
-without alignment data on the path to the final SNP. In the checkout inspected
-here (upstream master, detached) the option is parsed and passed to `NewickTree`
-but `_confirm_path` does not use it, so this document does not rely on the exact
-semantics before that PR.
+- called: derived in the query, counted as a hit;
+- no data: no alignment covered the position, or the query has a gap or N there.
+  This is a gap in the path, not a break;
+- against: ancestral or a third base. The chain is broken and the node cannot be
+  called.
+
+A node is confirmed when the chain is not broken, at least `--min_required_hits`
+(default 3) SNPs are called, the called fraction of the SNPs on the chain is at
+least `--strictness` (default 0.7), and the SNP directly above the node is
+called.
 
 Under the set rule, the corresponding reading in CanSNPCreator is:
 
@@ -89,10 +93,13 @@ Under the set rule, the corresponding reading in CanSNPCreator is:
 - The set rule counts the missing nodes on the path (`missing_on_path`), so that
   a call resting on many unknown nodes can be recognised.
 
-A CanSNPer2 implementation could keep `--min_required_hits` as a minimum on the
-number of derived nodes on the path, and use `--strictness` as the fraction of
-nodes on the path that may be unknown. These are options for discussion, not
-what CanSNPCreator does.
+In 2.2.1, `--min_required_hits` is a minimum count of called SNPs and
+`--strictness` is the tolerated fraction of SNPs without data on the chain; this
+already covers a path with unknown nodes. What a set rule would add is the state
+of a node from several SNPs (section 2), so that one missing or discordant base
+no longer makes the node a gap or a break, and the per-node counts of section 5.
+CanSNPCreator's set rule has no counterpart of the count and fraction thresholds
+and does not require the node above the call to be derived.
 
 ## 5. Output per node that CanSNPer2 would add
 
@@ -118,8 +125,12 @@ can be read. CanSNPCreator reports the same counts per canSNP and node in
 Held-out genomes were projected onto each organism's alignment and typed by both
 rules with `--snps-per-node 5` (CanSNPCreator `audit`). The table gives the
 number of held-out genomes, the number typed (a call) by each rule where stated,
-and the share of typed genomes where the single call equals the set call. Figures
-are as recorded in the benchmark notes. "-" means not stated.
+and the share of typed genomes where the single call equals the set call. The table lists the
+organisms for which the benchmark notes give a single = set agreement figure
+together with at least some typed count (S. Typhi has none), with Brucella added
+for its typed counts. Figures are as recorded in the
+benchmark notes (for Brucella the set-rule count is as recorded and exceeds the
+held-out count). "-" means not stated.
 
 | Organism | Held out | Single rule typed | Set rule typed | Single = set |
 |---|---|---|---|---|
@@ -135,7 +146,7 @@ are as recorded in the benchmark notes. "-" means not stated.
 | Escherichia coli | 279 | 279 | - | 92.1% |
 | Shigella sonnei | 1,314 | 1,314 | - | 92.9% |
 | Salmonella Typhi | 1,033 | - | - | 84.8% |
-| Brucella melitensis | 1,230 | 1,224 | 1,230 | - |
+| Brucella melitensis | 1,229 | 1,224 | 1,230 | - |
 
 Where the two calls differ, the set call is usually deeper: for Brucella 39
 genomes were typed deeper by the set rule (21 where the rank 1 SNP was ancestral,
