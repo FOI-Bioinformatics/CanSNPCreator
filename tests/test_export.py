@@ -156,6 +156,30 @@ def test_pruning_leaves_those_nodes_out(dataset, scheme, tmp_path):
     assert "root\tA.1" in tree, "its children hang from the nearest node that has one"
 
 
+def test_prune_reports_genomes_moved(dataset, scheme, tmp_path, caplog):
+    scores, outdir = scheme
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
+                          keep=lambda fields: fields[:2] != ["c1", "201"])
+    genome_map = tmp_path / "pruned_map.tsv"
+    genome_map.write_text("ref\tA\ns1\tA\ns3\tB.1\n")
+
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, prune=True,
+                       genome_map=str(genome_map), alignment=dataset.alignment, **METADATA) == 0
+    assert "2 genomes of the genome map sat at these nodes and now sit at an ancestor" \
+        in caplog.text
+    assert "deepest pruned depth is 2" in caplog.text
+
+
+def test_prune_without_a_genome_map_keeps_its_warning(dataset, scheme, tmp_path, caplog):
+    scores, outdir = scheme
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
+                          keep=lambda fields: fields[:2] != ["c1", "201"])
+
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir,
+                       prune=True, **METADATA) == 0
+    assert "genome map sat" not in caplog.text
+
+
 def test_a_root_without_a_cansnp_cannot_be_pruned(dataset, scheme, tmp_path, caplog):
     scores, outdir = scheme
     trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
