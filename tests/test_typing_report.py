@@ -383,7 +383,8 @@ def test_missing_base_does_not_split_a_group():
 
 
 def test_the_set_of_most_genomes_is_labelled_first_and_none_without_derived_genomes():
-    rows = derived_set_rows({"g1": "DDA", "g2": "ADA", "g3": "ADA", "g4": "AAA"})
+    rows = derived_set_rows({"g1": "DAA", "g2": "ADA", "g3": "ADA", "g4": "ADA",
+                             "g5": "ADA", "g6": "AAA"})
     assert labels_of(rows) == [2, 1, None]
 
 
@@ -457,3 +458,23 @@ def test_a_node_with_an_unlabelled_derived_cansnp_groups_by_count(tmp_path):
     rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 0), (59, 0, 3)]
     observed = read_observed(group_table(tmp_path, rows))
     assert [len(group) for group in width_groups(list(observed.values()))] == [2, 4]
+
+
+def test_derived_set_allows_conflicts_up_to_the_width_tolerance():
+    # 100 genomes, tolerance 2. The second canSNP is ancestral in one genome
+    # the first is derived in; the third in three.
+    states = {f"g{number}": "DDD" if number < 40 else "AAA" for number in range(100)}
+    states["g0"] = "DAD"
+    for number in (1, 2):
+        states[f"g{number}"] = "DDA"
+    states["g40"] = "ADD"
+    assert labels_of(derived_set_rows(states))[:2] == [1, 1]
+    assert labels_of(derived_set_rows(states))[2] == 2
+
+
+def test_derived_set_a_cansnp_without_enough_bases_founds_no_label():
+    # 10 genomes, tolerance 2. The first canSNP is derived in g1-g6 and has
+    # no base in g7-g10; it would found label 1 and keep the other two apart.
+    states = {"g1": "DDD", "g2": "DDD", "g3": "DDD", "g4": "DAA", "g5": "DAA", "g6": "DAA",
+              "g7": "NDD", "g8": "NDD", "g9": "NDD", "g10": "NAA"}
+    assert labels_of(derived_set_rows(states)) == [2, 1, 1]

@@ -458,34 +458,56 @@ def _single_stop(result: GenomeTyping, first: Mapping[str, str],
 def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[int]:
     """Label the canSNPs of one node by the genomes they are derived in.
 
-    Two canSNPs share a label when no genome is derived in one and ancestral
-    in the other; a genome without a base may be in either state. Labels are
-    given greedily from the canSNP derived in the most genomes, each canSNP
-    taking the first label whose first canSNP it agrees with, so that label 1
-    is the set of most genomes. Genomes marked discordant are left out, as in
-    the disagreement counts. A canSNP derived in none of the remaining
-    genomes gets 0, as do the canSNPs beyond the first ``MAX_SET_LABELLED``
-    of a node; 0 is written as an empty field.
+    Two canSNPs share a label when the genomes derived in one and ancestral
+    in the other number no more than ``width_tolerance`` of the genomes, the
+    tolerance of the count rule; a genome without a base may be in either
+    state. Labels are given greedily from the canSNP derived in the most
+    genomes, each canSNP taking the first label whose first canSNP it agrees
+    with, so that label 1 is the set of most genomes. A canSNP without a base
+    in more genomes than the tolerance, which ``width_groups`` leaves out,
+    founds no label others may join: it takes the first label it agrees
+    with, or else a label of its own. Genomes marked discordant are left
+    out, as in the disagreement counts. A canSNP derived in none of the
+    remaining genomes gets 0, as do the canSNPs beyond the first
+    ``MAX_SET_LABELLED`` of a node; 0 is written as an empty field.
     """
     judged = [result.states for result in typed if not result.discordant]
+    tolerance = width_tolerance(len(judged))
     width = min(count, MAX_SET_LABELLED)
     sets = []
     for index in range(start, start + width):
         column = [states[index] for states in judged]
         sets.append((frozenset(g for g, state in enumerate(column) if state == DERIVED),
                      frozenset(g for g, state in enumerate(column) if state == ANCESTRAL)))
+    order = sorted((index for index in range(width) if sets[index][0]),
+                   key=lambda index: (-len(sets[index][0]), index))
+    covered, sparse = [], []
+    for index in order:
+        missing = len(judged) - len(sets[index][0]) - len(sets[index][1])
+        (covered if missing <= tolerance else sparse).append(index)
     labels = [0] * count
     first: list[tuple[frozenset[int], frozenset[int]]] = []
-    for index in sorted((index for index in range(width) if sets[index][0]),
-                        key=lambda index: (-len(sets[index][0]), index)):
+
+    def agreeing(index: int) -> int:
         derived, ancestral = sets[index]
         for label, (other_derived, other_ancestral) in enumerate(first, start=1):
-            if derived.isdisjoint(other_ancestral) and ancestral.isdisjoint(other_derived):
-                labels[index] = label
-                break
-        else:
-            first.append((derived, ancestral))
+            if (len(derived & other_ancestral) + len(ancestral & other_derived)
+                    <= tolerance):
+                return label
+        return 0
+
+    for index in covered:
+        labels[index] = agreeing(index)
+        if not labels[index]:
+            first.append(sets[index])
             labels[index] = len(first)
+    last = len(first)
+    for index in sparse:
+        label = agreeing(index)
+        if not label:
+            last += 1
+            label = last
+        labels[index] = label
     return labels
 
 

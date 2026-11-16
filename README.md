@@ -272,9 +272,12 @@ of them, and `evaluate` then ranks the canSNPs by their distance to the
 narrowest group that holds at least two: the genomes carrying every mutation
 of the branch. Groups are told apart by the genomes a canSNP is derived in,
 as the `derived_set` column of the table labels them: two canSNPs are of one
-group when no genome is derived in one and ancestral in the other, a genome
-without a base allowing for either state. Two groups of equal size on
-different genomes are thus two groups. A table written by 0.4.0, without the
+group when the genomes derived in one and ancestral in the other number no
+more than one in a hundred (at least two), a genome without a base allowing
+for either state. Two groups of equal size on different genomes are thus two
+groups. The disagreement of each canSNP is still measured by counts, however,
+so a canSNP of an equal-sized group on other genomes is judged to agree with
+the narrowest group. A table written by 0.4.0, without the
 column, tells them apart by the number of genomes a canSNP is derived in,
 within one genome in a hundred, as before. `evaluate` names these nodes in a
 warning; representatives of the wider groups would divide their branches.
@@ -507,11 +510,13 @@ tables are written:
   disagrees with the other canSNPs of its node, is ancestral on the genome's
   path or derived off it, with its contig and position there. A last column,
   `derived_set`, labels the canSNPs of each node by the genomes they are
-  derived in: canSNPs of one label are derived in the same genomes, genomes
-  without a base allowing for either state, and label 1 is the set of most
-  genomes. It is empty for a canSNP derived in no genome, and for those
-  beyond the first 200 canSNPs of a node. Genomes that contradict the scheme at
-  `--genome-conflicts` nodes or more are left out of these counts and labels.
+  derived in: canSNPs of one label are derived in the same genomes, but for
+  one in a hundred (at least two), genomes without a base allowing for either
+  state, and label 1 is the set of most genomes. It is empty for a canSNP
+  derived in no genome, and for those beyond the first 200 canSNPs of a node.
+  Genomes that contradict the scheme at `--genome-conflicts` nodes or more are
+  counted in `missing`, `derived` and `ancestral`, but are left out of the
+  disagreement counts and of the `derived_set` labels.
   This is the table `evaluate --observed` reads.
 - `PREFIX_nodes.tsv`: for each node, the genomes passing through it, how many
   carry every canSNP of its set, the smallest margin between derived and
