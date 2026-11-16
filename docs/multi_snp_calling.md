@@ -57,12 +57,13 @@ derived nodes first and depth second.
 
 For comparison, the single rule (`single_call`) reads only the rank 1 canSNP of
 each node, counts a node as derived only when its rank 1 canSNP is derived, and
-takes the deepest node whose whole lineage is derived and which has at least
-`min_required_hits` nodes on its lineage (the root counts as one). A missing or
-ancestral rank 1 canSNP anywhere on the lineage ends the chain. Two deepest nodes
-at the same depth give no call. `single_call` follows CanSNPer2 2.2.0, where a
-missing rank 1 SNP ends the chain; 2.2.1 differs (section 4), so the
-single-rule figures in section 6 reflect 2.2.0.
+follows CanSNPer2 2.2.1 (section 4, `confirm_chain`): an ancestral or third-base
+rank 1 canSNP on the lineage breaks the chain, a missing one is a gap, and the
+call is the deepest derived node with at least `min_required_hits` derived nodes
+on its lineage (the root counts as one), a derived fraction of at least
+`strictness`, and a derived parent. Two deepest confirmed nodes at the same depth
+give no call. The single-rule figures in section 6 were measured with the rule of
+CanSNPer2 2.2.0, where a missing rank 1 SNP ended the chain.
 
 ## 4. `--min_required_hits` and `--strictness` under the set rule
 
@@ -84,8 +85,9 @@ called.
 Under the set rule, the corresponding reading in CanSNPCreator is:
 
 - The unit of the minimum is a node, as before, but a node is derived from the
-  majority of its canSNPs. `min_required_hits` is applied by the single rule
-  (`single_call`, argument `min_required_hits`) and not by the set rule.
+  majority of its canSNPs. `min_required_hits` and `strictness` are applied by
+  the single rule (`single_call`, `audit --min-required-hits --strictness`) and
+  not by the set rule.
 - A node without a majority (missing state) is passed by the set rule. This is
   the same kind of tolerance as `--strictness` gives for nodes without alignment
   data, and a node whose canSNPs are all missing is treated alike. A node in the
@@ -123,7 +125,8 @@ can be read. CanSNPCreator reports the same counts per canSNP and node in
 ## 6. Benchmark evidence
 
 Held-out genomes were projected onto each organism's alignment and typed by both
-rules with `--snps-per-node 5` (CanSNPCreator `audit`). The table gives the
+rules with `--snps-per-node 5` (CanSNPCreator `audit`), the single rule being
+that of CanSNPer2 2.2.0 at the time. The table gives the
 number of held-out genomes, the number typed (a call) by each rule where stated,
 and the share of typed genomes where the single call equals the set call. The
 table lists the organisms with a single = set agreement figure in the benchmark

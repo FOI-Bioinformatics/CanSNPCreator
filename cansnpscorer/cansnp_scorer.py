@@ -22,6 +22,7 @@ from cansnpscorer.helpers.scoring_methods import (
     PROFILES,
     TERMS,
 )
+from cansnpscorer.typing_report import STRICTNESS
 
 
 def at_least(minimum: int):
@@ -362,6 +363,10 @@ def main():
     audit.add_argument("--min-required-hits", type=at_least(1), default=MINIMUM_SNPS_PER_NODE,
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
+    audit.add_argument("--strictness", type=fraction, default=STRICTNESS,
+                       help=f"The fraction of the SNPs on the path to a node that the single "
+                            f"rule of the typing report requires to be derived, as CanSNPer2's "
+                            f"--strictness. Default: {STRICTNESS:g}, as CanSNPer2 uses.")
     audit.add_argument("--proximity", type=at_least(0), default=50,
                        help="Report two canSNPs closer than this many bases. Default: 50.")
     audit.add_argument("--set-region", type=at_least(0), default=10000,
@@ -587,7 +592,7 @@ def run(args, parser, evaluate, place) -> int:
             genome_conflicts=args.genome_conflicts, typing_report=args.typing_report,
             report=args.report, region=args.set_region, rule=args.rule,
             outgroups=args.outgroup,
-            no_new_clades=args.no_new_clades)
+            no_new_clades=args.no_new_clades, strictness=args.strictness)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,

@@ -631,3 +631,68 @@ def test_a_position_listed_twice_is_judged_by_counts(tmp_path):
     # Read back, the narrowest set of two is that of g1-g4, derived in four.
     assert nodes == ["A"]
     assert [judged[("A", 10 + index)].discordant for index in range(5)] == [8, 8, 0, 0, 0]
+
+
+# -- the single rule of CanSNPer2 2.2.1 ---------------------------------------
+
+CHAIN = {f"c{depth}": [f"c{above}" for above in range(depth, -1, -1)] for depth in range(6)}
+
+
+def chain_states(**changed):
+    return {f"c{depth}": changed.get(f"c{depth}", DERIVED) for depth in range(6)}
+
+
+def test_a_missing_node_is_a_gap_in_the_chain_not_a_break():
+    assert single_call(chain_states(c2=MISSING), CHAIN, 3) == "c5"
+
+
+def test_the_derived_fraction_of_the_chain_must_reach_the_strictness():
+    from cansnpscorer.typing_report import confirm_chain
+
+    states = chain_states(c1=MISSING, c2=MISSING)
+    # c5: 4 of 6 derived, below 0.7; c4: 3 of 5; c3: its parent has no base.
+    assert single_call(states, CHAIN, 3) is None
+    assert confirm_chain("c5", states, CHAIN, 3) == ("", "strictness")
+    assert confirm_chain("c3", states, CHAIN, 3) == ("c2", "missing")
+    assert single_call(states, CHAIN, 3, strictness=0.6) == "c5"
+
+
+def test_the_node_directly_above_the_call_must_have_a_base():
+    assert single_call(chain_states(c4=MISSING), CHAIN, 3) == "c3"
+
+
+def test_a_third_base_breaks_the_chain_like_an_ancestral_one():
+    from cansnpscorer.typing_report import confirm_chain
+
+    states = chain_states(c2=OTHER)
+    assert confirm_chain("c5", states, CHAIN, 3) == ("c2", "other-base")
+    assert single_call(states, CHAIN, 3) is None
+    assert confirm_chain("c5", chain_states(c2=ANCESTRAL, c1=OTHER), CHAIN, 3) == (
+        "c1", "other-base")
+
+
+def test_the_genome_needs_min_required_hits_derived_nodes():
+    from cansnpscorer.typing_report import confirm_chain
+
+    states = {"c0": DERIVED, "c1": MISSING, "c2": MISSING, "c3": MISSING, "c4": DERIVED,
+              "c5": DERIVED}
+    assert confirm_chain("c5", states, CHAIN, 3) == ("", "strictness")
+    assert single_call(states, CHAIN, 3, strictness=0.0) == "c5"
+    assert single_call(states, CHAIN, 4, strictness=0.0) is None
+
+
+def test_the_stop_reason_follows_the_chain_check():
+    from cansnpscorer.typing_report import GenomeTyping, _single_stop
+
+    def stop(states, elsewhere=frozenset()):
+        result = GenomeTyping(genome="g", set_call="c5",
+                              single_call=single_call(states, CHAIN, 3))
+        return _single_stop(result, states, CHAIN, 3, elsewhere)
+
+    assert stop(chain_states(c1=MISSING, c2=MISSING)) == ("", "strictness")
+    # The single rule calls c3, above the set call, as c4 has no base.
+    assert stop(chain_states(c4=MISSING)) == ("c4", "missing")
+    states = chain_states()
+    del states["c4"]  # annotated on another reference genome
+    assert stop(states, elsewhere={"c4"}) == ("c4", "other-reference")
+    assert stop(chain_states(c0=MISSING, c4=OTHER)) == ("c4", "other-base")

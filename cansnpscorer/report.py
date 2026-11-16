@@ -92,8 +92,9 @@ def _typing_lines(typing: TypingReport) -> list[str]:
     lines = [
         "## Typing of the genomes", "",
         "Every genome of the alignment was typed with the scheme under two rules. The "
-        "`single` rule is that of CanSNPer2 2.2.0: one canSNP per node, and the deepest node "
-        "whose whole chain from the root is derived. The `set` rule takes the majority of "
+        "`single` rule is that of CanSNPer2 2.2.1: one canSNP per node, and the deepest "
+        "derived node whose chain from the root holds no ancestral node, enough derived "
+        "nodes, and a derived parent. The `set` rule takes the majority of "
         "each node's canSNPs and may pass a node without a decision. The reference genome "
         "and the outgroups are not counted. Percentages are of the genomes counted.", "",
         *table(SUMMARY_COLUMNS, typing.summary),
@@ -101,8 +102,9 @@ def _typing_lines(typing: TypingReport) -> list[str]:
 
     if typing.stops:
         lines += ["### Where the single rule stopped", "",
-                  "The node at which the chain of the single rule broke, for genomes the set "
-                  "rule placed deeper.", "",
+                  "The node at which the chain of the single rule broke, or whose missing "
+                  "base kept the node below it from being called, for genomes the set rule "
+                  "placed deeper.", "",
                   *table(("node", "reason", "genomes"), typing.stops[:WORST])]
         if len(typing.stops) > WORST:
             lines += [f"{len(typing.stops) - WORST} further rows are in the genome table.", ""]

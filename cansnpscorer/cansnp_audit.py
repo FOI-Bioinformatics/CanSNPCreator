@@ -61,6 +61,7 @@ from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 from cansnpscorer.tree_tools import place, read_genome_tree, read_members
 from cansnpscorer.typing_report import (
     NA,
+    STRICTNESS,
     TypingError,
     scheme_columns,
     type_alignment,
@@ -262,14 +263,19 @@ def check_against_reference(scheme: Scheme, reference: Reference,
     return findings
 
 
-def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_NODE
-                      ) -> list[Finding]:
+def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_NODE,
+                      strictness: float = STRICTNESS) -> list[Finding]:
     """Whether CanSNPer2 can reach each node with its required number of hits.
 
-    CanSNPer2 calls the deepest node whose path from the root carries at least
-    ``--min_required_hits`` SNPs, three by default. A branch that lies closer
-    to the root than that cannot be called however good its SNP is, which is
-    what we met when typing the ported Brucella and Coxiella schemes.
+    CanSNPer2 2.2.1 calls a node when its path from the root carries at
+    least ``--min_required_hits`` derived SNPs, three by default, those are
+    at least ``--strictness`` of the nodes on the path, and the node directly
+    above it is derived. A branch that lies closer to the root than that
+    cannot be called however good its SNP is, which is what we met when
+    typing the ported Brucella and Coxiella schemes. A node without a SNP is
+    a gap in every path through it: neither it nor a node directly below it
+    can be called, and the nodes further down only while the gaps leave
+    enough of their path derived.
     """
     findings: list[Finding] = []
     if scheme.hierarchy is None:
@@ -277,32 +283,41 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
 
     with_snp = set(scheme.snps_by_node)
     shallow: list[tuple[str, int]] = []
-    # CanSNPer2 2.2.0 confirms a node only when every node from the root down
-    # to it is called, and a node without a SNP is never called: nothing at or
-    # below one can be the result, however many SNPs lie on the path.
     cut_off: dict[str, list[str]] = {}
+    gapped: list[str] = []
+    callable_nodes = set()
 
     for node in scheme.hierarchy.nodes:
         path = scheme.hierarchy.path(node)
-        without = [name for name in path if name not in with_snp]
-        if without:
-            cut_off.setdefault(without[0], []).append(node)
+        if node not in with_snp:
+            cut_off.setdefault(node, []).append(node)
             continue
-        if len(path) < min_required_hits:
-            shallow.append((node, len(path)))
+        if len(path) > 1 and path[-2] not in with_snp:
+            cut_off.setdefault(path[-2], []).append(node)
+            continue
+        snps = sum(1 for name in path if name in with_snp)
+        if snps < min_required_hits:
+            shallow.append((node, snps))
+        elif snps < strictness * len(path):
+            gapped.append(node)
+        else:
+            callable_nodes.add(node)
 
-    callable_leaves = [
-        node for node in scheme.hierarchy.leaves
-        if len(scheme.hierarchy.path(node)) >= min_required_hits
-        and all(name in with_snp for name in scheme.hierarchy.path(node))]
-
-    for first, nodes in sorted(cut_off.items()):
+    for gap, nodes in sorted(cut_off.items()):
+        below = [node for node in nodes if node != gap]
         findings.append(problem(
-            EXTEND, "unreachable", first,
-            f"the node has no SNP, and CanSNPer2 calls a node only when every node from the "
-            f"root down to it is called, so neither it nor the {len(nodes) - 1} nodes below "
-            f"it can be the result of typing"
-            + (f": {', '.join(nodes[1:6])}" if len(nodes) > 1 else "")))
+            EXTEND, "unreachable", gap,
+            "the node has no SNP, and CanSNPer2 calls neither a node without a SNP nor one "
+            "directly below it"
+            + (f", so {len(below)} nodes below it cannot be the result of typing: "
+               f"{', '.join(below[:5])}" if below else "")))
+
+    if gapped:
+        findings.append(problem(
+            EXTEND, "unreachable", ", ".join(gapped[:5]),
+            f"{len(gapped)} nodes have SNPs on fewer than {strictness:g} of the nodes on their "
+            f"path from the root, so CanSNPer2 cannot call them with --strictness "
+            f"{strictness:g}"))
 
     if shallow:
         findings.append(recommendation(
@@ -313,7 +328,7 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
             f"above them, or type with a lower --min_required_hits and say so in the scheme's "
             f"documentation"))
 
-    if scheme.hierarchy.leaves and not callable_leaves:
+    if scheme.hierarchy.leaves and not callable_nodes & set(scheme.hierarchy.leaves):
         findings.append(problem(
             EXTEND, "min-required-hits", "",
             f"no leaf of the scheme has {min_required_hits} SNPs on its path from the root, so "
@@ -504,7 +519,8 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
                  min_clade_size: int = 2, min_clade_snps: int = 1,
                  masks: Mapping[str, Sequence[tuple[int, int]]] | None = None,
                  genome_conflicts: int = GENOME_CONFLICTS,
-                 region: int = 10000, new_clades: bool = True) -> list[Finding]:
+                 region: int = 10000, new_clades: bool = True,
+                 strictness: float = STRICTNESS) -> list[Finding]:
     """Every check, in one list of findings, problems first.
 
     The checks against the genomes run when an alignment and the clusters
@@ -516,7 +532,7 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
     findings += check_structure(scheme)
     findings += check_alleles(scheme)
     findings += check_references(scheme)
-    findings += check_callability(scheme, min_required_hits)
+    findings += check_callability(scheme, min_required_hits, strictness)
     findings += check_spacing(scheme, proximity)
     findings += check_set_region(scheme, region)
 
@@ -618,7 +634,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          min_clade_snps=1, tree=None, members=None, masks=None,
          masks_concatenated=False, contig_aliases=None,
          genome_conflicts=GENOME_CONFLICTS, typing_report=None, report=None,
-         region=10000, rule="jaccard", outgroups=(), no_new_clades=False) -> int:
+         region=10000, rule="jaccard", outgroups=(), no_new_clades=False,
+         strictness=STRICTNESS) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     With ``typing_report``, a prefix, every genome of the alignment is typed
@@ -765,7 +782,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     findings = audit_scheme(scheme, sequence, scored, genome, min_required_hits, proximity,
                             aligned, clusters, min_clade_size, min_clade_snps, masked,
-                            genome_conflicts, region, not no_new_clades)
+                            genome_conflicts, region, not no_new_clades,
+                            strictness=strictness)
     if placement_findings:
         order = {PROBLEM: 0, RECOMMENDATION: 1}
         findings = sorted(findings + placement_findings,
@@ -810,6 +828,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         ("scores", str(scores) if scores else NA),
         ("masks", str(masks) if masks else NA),
         ("min_required_hits", str(min_required_hits)),
+        ("strictness", f"{strictness:g}"),
         ("genome_conflicts", str(genome_conflicts)),
     ]
 
@@ -819,7 +838,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         try:
             typing = type_alignment(
                 scheme, aligned, sequence, genome, clusters, min_required_hits,
-                genome_conflicts,
+                genome_conflicts, strictness=strictness,
                 outgroups=[accession for accession, _node, role in scheme.genomes
                            if role == "outgroup"])
             if typing_report:

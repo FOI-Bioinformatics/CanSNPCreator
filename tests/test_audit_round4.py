@@ -133,14 +133,22 @@ def test_the_findings_are_written_when_the_genomes_cannot_be_typed(written, data
     assert "No typing report was written" in caplog.text
 
 
-def test_nodes_below_a_node_without_a_snp_are_not_callable():
+def test_a_node_without_a_snp_cuts_off_itself_and_the_nodes_directly_below():
+    # CanSNPer2 2.2.1 counts A as a gap: A.1 lies directly below it and
+    # cannot be called; A.1.1 has three SNPs on a path of four.
     scheme = scheme_of(
         [["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "A", "A.1", "A.1.1"]],
         [("root", "G", 2, "G", "A"), ("A.1", "G", 6, "G", "A"), ("A.1.1", "G", 8, "G", "A")])
     findings = check_callability(scheme, 3)
     unreachable = [finding for finding in findings if finding.category == "unreachable"]
     assert [finding.node for finding in unreachable] == ["A"]
-    assert "A.1, A.1.1" in unreachable[0].detail
+    assert "A.1" in unreachable[0].detail and "A.1.1" not in unreachable[0].detail
+    assert not any(finding.category == "min-required-hits" and finding.severity == "problem"
+                   for finding in findings), "A.1.1 is a callable leaf"
+    # With --strictness 0.8, three SNPs on four nodes are too few.
+    findings = check_callability(scheme, 3, strictness=0.8)
+    assert any(finding.category == "unreachable" and finding.node == "A.1.1"
+               for finding in findings)
     assert any(finding.category == "min-required-hits" and finding.severity == "problem"
                for finding in findings), "no leaf can be called"
 
