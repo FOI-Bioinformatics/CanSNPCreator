@@ -515,7 +515,11 @@ outweigh a well supported path. Two equally supported branches give no call.
 The single rule's column was compared with the calling code of CanSNPer2
 2.2.1 (`NewickTree.draw_tree`) on 40,000 random trees with random states,
 nodes without a SNP, `--min_required_hits` and `--strictness`, without a
-difference. The benchmark figures in this README were measured with the
+difference. On the 819 held-out *Vibrio cholerae* genomes the change from
+the rule of CanSNPer2 2.2.0, which ended the chain at a canSNP without a
+base, moved two single calls: one genome without a call was called, and one
+call moved one node deeper. Single and set call agreed for 811 genomes,
+against 809 before. The benchmark figures in this README were measured with the
 2.2.0 rule. The reference genome and the outgroups
 of the scheme's genomes file are typed and listed, with their role, but the
 summary does not count them. A field that does not apply holds `NA`. These

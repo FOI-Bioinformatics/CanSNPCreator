@@ -729,3 +729,4 @@ def test_an_ambiguity_code_is_another_base_for_the_single_rule():
     assert cansnper2_state("R", snp) == OTHER and snp_state("R", snp) == MISSING
     assert cansnper2_state("n", snp) == MISSING and cansnper2_state("-", snp) == MISSING
     assert cansnper2_state("t", snp) == DERIVED and cansnper2_state("G", snp) == OTHER
+

@@ -111,6 +111,23 @@ def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
     assert two["g"].single_call == "A.1"
 
 
+def test_the_summary_counts_the_stop_reasons_of_2_2_1():
+    # A third base at A breaks the chain of the single rule; the set rule
+    # passes A as of unknown state.
+    genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "AGACAGAA"})
+    assert genomes["g"].set_call == "A.1"
+    assert genomes["g"].single_stop == ("A", "other-base")
+    summary = {row[0]: row[1] for row in report.summary}
+    assert summary["single rule stopped at a canSNP of another base"] == "1"
+    # No base at the root: two derived nodes of three fall short of 0.9.
+    genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "ANAGAGAA"},
+                            min_required_hits=1, strictness=0.9)
+    assert genomes["g"].single_stop == ("", "strictness")
+    summary = {row[0]: row[1] for row in report.summary}
+    assert summary["single rule stopped for too few derived nodes of the chain "
+                   "(strictness)"] == "1"
+
+
 def test_the_mean_depth_is_over_the_calls_made():
     _genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "AGAGAGAA",
                                               "none": "AAAAAAAA"})
