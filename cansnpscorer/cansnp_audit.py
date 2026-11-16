@@ -48,17 +48,24 @@ from cansnpscorer.findings import (
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
     read_alignment,
+    read_alignment_columns,
     read_contig_aliases,
     read_genome_map,
     reference_parser,
 )
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import HierarchyError
-from cansnpscorer.model import Reference, ReferenceError
+from cansnpscorer.model import AlignmentMap, Reference, ReferenceError
 from cansnpscorer.report import write_markdown
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 from cansnpscorer.tree_tools import place, read_genome_tree, read_members
-from cansnpscorer.typing_report import NA, TypingError, type_alignment, write_report
+from cansnpscorer.typing_report import (
+    NA,
+    TypingError,
+    scheme_columns,
+    type_alignment,
+    write_report,
+)
 
 BASES = frozenset("ACGT")
 
@@ -497,7 +504,7 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
                  min_clade_size: int = 2, min_clade_snps: int = 1,
                  masks: Mapping[str, Sequence[tuple[int, int]]] | None = None,
                  genome_conflicts: int = GENOME_CONFLICTS,
-                 region: int = 10000) -> list[Finding]:
+                 region: int = 10000, new_clades: bool = True) -> list[Finding]:
     """Every check, in one list of findings, problems first.
 
     The checks against the genomes run when an alignment and the clusters
@@ -522,7 +529,7 @@ def audit_scheme(scheme: Scheme, reference: Reference | None = None,
         if alignment is not None and clusters is not None:
             findings += check_against_alignment(scheme, alignment, reference, clusters, genome,
                                                 min_clade_size, min_clade_snps,
-                                                genome_conflicts)
+                                                genome_conflicts, new_clades)
 
     order = {PROBLEM: 0, RECOMMENDATION: 1}
     return sorted(findings, key=lambda finding: (order[finding.severity], finding.category,
@@ -588,13 +595,30 @@ def write_findings(findings: Sequence[Finding], path: str) -> None:
     logging.info(f"Wrote {len(findings)} findings to {path}")
 
 
+def _scheme_columns(scheme: Scheme, reference_row: str, reference: Reference | None,
+                    genome: str | None) -> set[int]:
+    """The alignment columns of the scheme's canSNPs, from the alignment's first row.
+
+    None are given when the scheme or the row cannot be mapped; the checks
+    that follow report why.
+    """
+    if scheme.hierarchy is None or reference is None:
+        return set()
+    try:
+        mapping = AlignmentMap(reference_row, reference)
+    except ReferenceError:
+        return set()
+    return {column for snps in scheme_columns(scheme, mapping, genome).values()
+            for _snp, column in snps if column is not None}
+
+
 def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=None,
          min_required_hits=MINIMUM_SNPS_PER_NODE, proximity=50, output=None,
          strict=False, alignment=None, genome_map=None, min_clade_size=2,
          min_clade_snps=1, tree=None, members=None, masks=None,
          masks_concatenated=False, contig_aliases=None,
          genome_conflicts=GENOME_CONFLICTS, typing_report=None, report=None,
-         region=10000, rule="jaccard", outgroups=()) -> int:
+         region=10000, rule="jaccard", outgroups=(), no_new_clades=False) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     With ``typing_report``, a prefix, every genome of the alignment is typed
@@ -607,6 +631,12 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
     the scheme holds a problem, or, with ``strict``, a recommendation.
+
+    The checks for clades the scheme does not resolve read every column of
+    the alignment. With ``no_new_clades`` they are skipped, and only the
+    columns of the scheme's SNPs are read, which is what typing needs; that
+    is also done when nothing places the genomes, so that only the typing
+    runs. A tree placement reads every column, so it reads them all.
     """
     if scores and not reference:
         logging.error(
@@ -669,7 +699,14 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     placement_findings: list[Finding] = []
     if alignment:
         try:
-            aligned = read_alignment(alignment)
+            placed = bool(by_clade or genome_map or tree or scheme.genomes)
+            if (placed and not no_new_clades) or (tree and not by_clade):
+                logging.info("Reading every column of the alignment")
+                aligned = read_alignment(alignment)
+            else:
+                logging.info("Reading only the scheme's columns of the alignment")
+                aligned = read_alignment_columns(
+                    alignment, lambda row: _scheme_columns(scheme, row, sequence, genome))
             if by_clade:
                 from cansnpscorer.cansnp_tree import place_clade
 
@@ -723,7 +760,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     findings = audit_scheme(scheme, sequence, scored, genome, min_required_hits, proximity,
                             aligned, clusters, min_clade_size, min_clade_snps, masked,
-                            genome_conflicts, region)
+                            genome_conflicts, region, not no_new_clades)
     if placement_findings:
         order = {PROBLEM: 0, RECOMMENDATION: 1}
         findings = sorted(findings + placement_findings,

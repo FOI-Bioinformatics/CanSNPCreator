@@ -464,6 +464,11 @@ how many SNPs mark them), and sites that fit no grouping the scheme can hold
 counted as conflicting rather than offered. On a 2 Mbp genome, eight genomes
 take about five seconds; the time grows with the number of genomes.
 
+`--no-new-clades` skips the search for clades the scheme does not resolve, so
+that only the alignment columns of the scheme's SNPs are read and held, which
+lowers the memory needed for a large alignment. The typing report is the same
+either way; a tree placement still reads every column.
+
 `--typing-report PREFIX` evaluates the scheme on the genomes of `--alignment`
 without being told where they belong, so it can be run on genomes the scheme
 was not made from. Every genome is typed twice: by the rule of CanSNPer2

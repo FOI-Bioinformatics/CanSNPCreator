@@ -305,3 +305,31 @@ def test_what_was_observed_survives_the_scores_file(written, dataset, tmp_path):
             vcf.read_scores(scores, reference_parser(dataset.reference))}
     assert (read["A"].observed_genomes, read["A"].observed_missing) == (5, 1)
     assert (read["B"].observed_genomes, read["B"].observed_missing) == (6, 0)
+
+
+def test_audit_findings_and_typing_unchanged_when_only_scheme_columns_are_read(
+        written, dataset, tmp_path):
+    outdir, _scores = written
+    outputs = {}
+    for label, extra in (("full", []), ("columns", ["--no-new-clades"])):
+        prefix = str(tmp_path / label)
+        findings = str(tmp_path / f"{label}_findings.tsv")
+        status = cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+                         "--alignment", dataset.alignment, "--genome-map", dataset.genome_map,
+                         "--typing-report", prefix, "-o", findings, *extra)
+        outputs[label] = (status, open(findings).read(),
+                          open(prefix + "_genomes.tsv").read(),
+                          open(prefix + "_snps.tsv").read())
+    assert outputs["full"][0] == outputs["columns"][0]
+    # Without the search for new clades, the findings are the others of the full run.
+    assert set(outputs["columns"][1].splitlines()) <= set(outputs["full"][1].splitlines())
+    assert outputs["full"][2:] == outputs["columns"][2:]
+
+
+def test_typing_only_audit_reads_the_scheme_columns(written, dataset, tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    status, prefix = run_report(written, dataset, tmp_path)
+    assert status in (0, 2)
+    assert "scheme's columns" in caplog.text

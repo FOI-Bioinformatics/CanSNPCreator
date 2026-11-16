@@ -392,6 +392,11 @@ def main():
                             "scheme at this many nodes or more: derived off the path they type "
                             "it to, or ancestral on it. Default: "
                             f"{GENOME_CONFLICTS}.")
+    audit.add_argument("--no-new-clades", action="store_true",
+                       help="With --alignment, do not look for clades the scheme does not "
+                            "resolve, which reads every column of the alignment. Only the "
+                            "columns of the scheme's SNPs are read, which uses far less "
+                            "memory for a large alignment.")
     audit.add_argument("--typing-report", default=None, metavar="PREFIX",
                        help="With --alignment, type every genome with the scheme, by the "
                             "rule of CanSNPer2 (one canSNP per node) and by the majority of "
@@ -579,7 +584,8 @@ def run(args, parser, evaluate, place) -> int:
             masks_concatenated=args.masks_concatenated, contig_aliases=args.contig_aliases,
             genome_conflicts=args.genome_conflicts, typing_report=args.typing_report,
             report=args.report, region=args.set_region, rule=args.rule,
-            outgroups=args.outgroup)
+            outgroups=args.outgroup,
+            no_new_clades=args.no_new_clades)
     if args.command == "collapse":
         return cansnp_tree.collapse_main(
             tree_file=args.tree, nodes_file=args.nodes_file, members=args.members,
