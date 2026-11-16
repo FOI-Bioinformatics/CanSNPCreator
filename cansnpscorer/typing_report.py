@@ -56,7 +56,7 @@ genomes, which says more about those assemblies than about the SNPs.
 
 import logging
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field, replace
 
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
@@ -202,6 +202,18 @@ def _lineages(hierarchy) -> dict[str, list[str]]:
     return lineage
 
 
+def cansnper2_state(base: str, snp: SchemeSnp) -> str:
+    """The state CanSNPer2 2.2.1 gives a base: as ``snp_state``, but any
+    character other than a gap or N, such as an ambiguity code, is another
+    base, which breaks the single rule's chain. (CanSNPer2 does so on the
+    forward strand of an alignment block; on the reverse strand it reads
+    such a character as N.)"""
+    state = snp_state(base, snp)
+    if state == MISSING and base.upper() not in ("-", "N"):
+        return OTHER
+    return state
+
+
 def snp_state(base: str, snp: SchemeSnp) -> str:
     base = base.upper()
     if base == snp.derived.upper():
@@ -238,33 +250,39 @@ STRICTNESS = 0.7
 
 
 def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
-                  min_required_hits: int, strictness: float = STRICTNESS) -> tuple[str, str]:
+                  min_required_hits: int, strictness: float = STRICTNESS,
+                  labels: Set[str] = frozenset()) -> tuple[str, str]:
     """Whether CanSNPer2 2.2.1 confirms the chain from the root to a node.
 
-    Each node of the chain is derived, ancestral, of another base, or
-    without a base. An ancestral node or one of another base breaks the
-    chain; a node without a base is a gap in it. The chain is confirmed when
-    it is not broken, at least ``min_required_hits`` of its nodes are
-    derived, the derived fraction of its nodes is at least ``strictness``,
-    and the node directly above the last one has a base (``NewickTree.
-    _confirm_path`` of CanSNPer2 2.2.1).
+    A node of the tree without a SNP, in ``labels``, is no part of the chain:
+    CanSNPer2 names it ``-name-`` and passes it. Every other node of the
+    chain is derived, ancestral, of another base, or without a base. An
+    ancestral node or one of another base breaks the chain; a node without a
+    base is a gap in it. The chain is confirmed when it is not broken, the
+    node itself and the node directly above it on the chain are derived, at
+    least ``min_required_hits`` of its nodes are derived, and they are at
+    least ``strictness`` of the chain (``NewickTree._confirm_path`` of
+    CanSNPer2 2.2.1).
 
     Returns:
         ("", "") when confirmed; otherwise the reason and the node it
-        concerns: (node, "ancestral"), (node, "other-base") for the topmost
-        break, (parent, "missing") for a parent without a base, or ("",
-        "min-hits") and ("", "strictness") for too few derived nodes.
+        concerns: (node, "ancestral") or (node, "other-base") for the topmost
+        break, (node, "missing") for the node or the one above it without a
+        base, or ("", "min-hits") and ("", "strictness") for too few derived
+        nodes.
     """
-    chain = lineage[node]
+    chain = [above for above in lineage[node] if above not in labels]
     for above in reversed(chain):  # from the root down
         state = first.get(above, MISSING)
         if state == ANCESTRAL:
             return above, "ancestral"
         if state == OTHER:
             return above, "other-base"
-    derived = sum(1 for above in chain if first.get(above) == DERIVED)
+    if first.get(node) != DERIVED:
+        return node, "missing"
     if len(chain) > 1 and first.get(chain[1]) != DERIVED:
         return chain[1], "missing"
+    derived = sum(1 for above in chain if first.get(above) == DERIVED)
     if derived < min_required_hits:
         return "", "min-hits"
     if derived < strictness * len(chain):
@@ -273,16 +291,16 @@ def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Seq
 
 
 def single_call(first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
-                min_required_hits: int, strictness: float = STRICTNESS) -> str | None:
+                min_required_hits: int, strictness: float = STRICTNESS,
+                labels: Set[str] = frozenset()) -> str | None:
     """The call of CanSNPer2 2.2.1 from the state of each node's first canSNP:
-    the deepest derived node whose chain ``confirm_chain`` confirms, when the
-    genome has at least ``min_required_hits`` derived nodes. Two confirmed
-    nodes at the greatest depth give no call."""
-    derived = [node for node, state in first.items() if state == DERIVED]
-    if len(derived) < min_required_hits:
-        return None
-    confirmed = [node for node in derived
-                 if confirm_chain(node, first, lineage, min_required_hits, strictness) == ("", "")]
+    the deepest node whose chain ``confirm_chain`` confirms. Two confirmed
+    nodes at the greatest depth give no call. (CanSNPer2 also requires the
+    genome to have ``min_required_hits`` derived nodes in all, which a
+    confirmed chain already holds.)"""
+    confirmed = [node for node, state in first.items() if state == DERIVED
+                 and confirm_chain(node, first, lineage, min_required_hits, strictness,
+                                   labels) == ("", "")]
     return deepest(confirmed, lineage)
 
 
@@ -400,12 +418,19 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     by_node = scheme_columns(scheme, mapping, genome)
     if not by_node:
         raise TypingError("the scheme holds no canSNP at a node of its tree for this genome")
-    # The single rule reads the canSNP of rank 1 and no other.
+    # The single rule reads the canSNP of rank 1 and no other, and passes the
+    # nodes of the tree without one, as CanSNPer2 does.
     has_first = {node: snps[0][0].rank == 1 for node, snps in by_node.items()}
+    labels = frozenset(hierarchy.nodes) - {snp.node for snp in scheme.snps}
     # Nodes whose canSNPs are all annotated on another reference genome cannot
     # be read in this alignment. CanSNPer2 aligns to every reference, so the
     # single rule's column is not its call below such a node.
     elsewhere = {snp.node for snp in scheme.checked_snps} - set(by_node)
+    # A node whose rank 1 canSNP lies on another reference genome is read
+    # from its further ranks by the set rule, but has no base here for the
+    # single rule.
+    first_elsewhere = elsewhere | {node for node, present in has_first.items()
+                                   if not present}
     if elsewhere:
         logging.warning(
             f"{len(elsewhere)} nodes carry canSNPs on other reference genomes only, and count "
@@ -439,10 +464,12 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         nodes = {node: node_state(states) for node, states in per_node.items()}
         # CanSNPer2 2.2.1 tells a third base, which breaks a chain, from no
         # base, which is a gap in it.
-        first = {node: (states[0] if has_first[node] else MISSING)
-                 for node, states in per_node.items()}
+        first = {node: (MISSING if not has_first[node] or snps[0][1] is None
+                        else cansnper2_state(sequence[snps[0][1]], snps[0][0]))
+                 for node, snps in by_node.items()}
         result.set_call, result.path = set_path(nodes, lineage)
-        result.single_call = single_call(first, lineage, min_required_hits, strictness)
+        result.single_call = single_call(first, lineage, min_required_hits, strictness,
+                                         labels)
 
         path = result.path
         for node, state in nodes.items():
@@ -458,7 +485,7 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         result.missing_on_path += sum(1 for node in path if node not in nodes)
         result.discordant = result.conflicts >= genome_conflicts
         result.single_stop = _single_stop(result, first, lineage, min_required_hits,
-                                          elsewhere, strictness)
+                                          first_elsewhere, strictness, labels)
         typed.append(result)
 
     report = TypingReport(genomes=typed, snp_rows=[], node_rows=[], summary=[], depth=depth,
@@ -491,15 +518,15 @@ BROKEN = ("missing", "ancestral", "other-base", "other-reference")
 def _single_stop(result: GenomeTyping, first: Mapping[str, str],
                  lineage: Mapping[str, Sequence[str]], min_required_hits: int,
                  elsewhere: frozenset[str] | set[str] = frozenset(),
-                 strictness: float = STRICTNESS) -> tuple[str, str]:
+                 strictness: float = STRICTNESS,
+                 labels: Set[str] = frozenset()) -> tuple[str, str]:
     """Why the single rule did not give the set call, as (node, reason).
 
     The reason is why ``confirm_chain`` does not confirm the chain to the
-    set call; a parent without a base because its canSNP is annotated on
-    another reference genome is "other-reference". When the chain is
-    confirmed the reason is "min-hits" if the genome has fewer derived nodes
-    than required, and otherwise "ambiguous": another confirmed node lies as
-    deep or deeper.
+    set call; a node without a base because its canSNP of rank 1 is
+    annotated on another reference genome is "other-reference". When the
+    chain is confirmed the reason is "ambiguous": another confirmed node lies
+    as deep.
     """
     if result.set_call is None or result.single_call == result.set_call:
         return "", ""
@@ -508,13 +535,11 @@ def _single_stop(result: GenomeTyping, first: Mapping[str, str],
     if result.single_call and result.single_call not in lineage[result.set_call]:
         return result.single_call, "other-branch"
     node, reason = confirm_chain(result.set_call, first, lineage, min_required_hits,
-                                 strictness)
+                                 strictness, labels)
     if reason == "missing" and node in elsewhere:
         return node, "other-reference"
     if reason:
         return node, reason
-    if sum(1 for state in first.values() if state == DERIVED) < min_required_hits:
-        return "", "min-hits"
     return "", "ambiguous"
 
 

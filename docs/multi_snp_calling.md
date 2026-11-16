@@ -58,7 +58,8 @@ derived nodes first and depth second.
 For comparison, the single rule (`single_call`) reads only the rank 1 canSNP of
 each node, counts a node as derived only when its rank 1 canSNP is derived, and
 follows CanSNPer2 2.2.1 (section 4, `confirm_chain`): an ancestral or third-base
-rank 1 canSNP on the lineage breaks the chain, a missing one is a gap, and the
+rank 1 canSNP on the lineage breaks the chain, a missing one is a gap, a node
+without a SNP is passed and not counted, and the
 call is the deepest derived node with at least `min_required_hits` derived nodes
 on its lineage (the root counts as one), a derived fraction of at least
 `strictness`, and a derived parent. Two deepest confirmed nodes at the same depth

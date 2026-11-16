@@ -696,3 +696,36 @@ def test_the_stop_reason_follows_the_chain_check():
     del states["c4"]  # annotated on another reference genome
     assert stop(states, elsewhere={"c4"}) == ("c4", "other-reference")
     assert stop(chain_states(c0=MISSING, c4=OTHER)) == ("c4", "other-base")
+
+
+def test_a_node_without_a_snp_is_passed_and_not_counted():
+    from cansnpscorer.typing_report import confirm_chain
+
+    states = chain_states()
+    del states["c2"]
+    # Without c2 the chain of c3 is c0, c1, c3: c1 is the node above c3.
+    assert confirm_chain("c3", states, CHAIN, 3, labels={"c2"}) == ("", "")
+    assert confirm_chain("c3", states, CHAIN, 3) == ("c2", "missing")
+    states = {**states, "c1": MISSING, "c3": MISSING}
+    # c5: c0, c4 and c5 derived of five nodes with a SNP, 0.6.
+    assert confirm_chain("c5", states, CHAIN, 3, labels={"c2"}) == ("", "strictness")
+    assert single_call(states, CHAIN, 3, strictness=0.6, labels={"c2"}) == "c5"
+
+
+def test_the_stop_names_the_set_call_without_a_base():
+    from cansnpscorer.typing_report import GenomeTyping, _single_stop
+
+    states = chain_states(c5=MISSING)
+    result = GenomeTyping(genome="g", set_call="c5", single_call=single_call(states, CHAIN, 3))
+    assert result.single_call == "c4"
+    assert _single_stop(result, states, CHAIN, 3) == ("c5", "missing")
+
+
+def test_an_ambiguity_code_is_another_base_for_the_single_rule():
+    from cansnpscorer.scheme import SchemeSnp
+    from cansnpscorer.typing_report import cansnper2_state, snp_state
+
+    snp = SchemeSnp("A", "", "", "G", 10, "T", "C", rank=1)
+    assert cansnper2_state("R", snp) == OTHER and snp_state("R", snp) == MISSING
+    assert cansnper2_state("n", snp) == MISSING and cansnper2_state("-", snp) == MISSING
+    assert cansnper2_state("t", snp) == DERIVED and cansnper2_state("G", snp) == OTHER

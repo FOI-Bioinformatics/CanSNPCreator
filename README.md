@@ -436,7 +436,7 @@ modified.
 | tree | | a node under two parents, a node with no SNP or two, a SNP naming a node the tree does not hold |
 | alleles | | a base outside A, C, G and T, which can never be called derived; equal derived and ancestral bases; two nodes at one position |
 | references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
-| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes without a SNP, directly below one, or with SNPs on less than `--strictness` of their path (`unreachable`), none of which CanSNPer2 2.2.1 can call |
+| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes without a SNP (`unreachable`), which CanSNPer2 2.2.1 passes but cannot call |
 | spacing | | two SNPs of the SNP file closer than `--proximity` bases, which a deletion or a poorly aligned stretch removes together |
 | clustered set | | a node more than half of whose ranked canSNPs, and at least three, lie within `--set-region` bases (default 10000; 0 turns it off), so that one deletion removes most of the node's set from a genome |
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
@@ -503,17 +503,19 @@ was not made from. Every genome is typed twice: by the rule of CanSNPer2
 derived node whose chain from the root holds no ancestral canSNP or third
 base, holds at least `--min-required-hits` derived nodes that make up at
 least `--strictness` (default 0.7) of the chain, and whose parent is
-derived, a node without a base being a gap; and by the majority of each
+derived. A canSNP without a base is a gap in the chain, a base other than
+the two, an ambiguity code included, breaks it, and a node of the tree
+without a canSNP in the SNP file is passed and not counted; and by the
+majority of each
 node's canSNPs. Under the second rule a node without a decision may lie on
 the way to a derived node below it, and of the nodes a genome could be called
 at, the one with the most derived nodes on its path from the root is taken,
 so that one homoplastic canSNP below a run of undecided nodes does not
 outweigh a well supported path. Two equally supported branches give no call.
 The single rule's column was compared with the calling code of CanSNPer2
-2.2.1 (`NewickTree.draw_tree`) on 20,000 random trees with random states,
-`--min_required_hits` and `--strictness`, without a difference; the rule of
-CanSNPer2 2.2.0, which ended the chain at a node without a base, differed on
-1,233 of them. The benchmark figures in this README were measured with the
+2.2.1 (`NewickTree.draw_tree`) on 40,000 random trees with random states,
+nodes without a SNP, `--min_required_hits` and `--strictness`, without a
+difference. The benchmark figures in this README were measured with the
 2.2.0 rule. The reference genome and the outgroups
 of the scheme's genomes file are typed and listed, with their role, but the
 summary does not count them. A field that does not apply holds `NA`. These
@@ -522,8 +524,9 @@ tables are written:
 - `PREFIX_genomes.tsv`: the call under each rule, and in `single_stop_node`
   and `single_stop_reason` why the single rule did not give the set call: the
   node where its chain broke (`ancestral`, or `other-base` for a third
-  base), the parent of the set call when it has no base (`missing`, or
-  `other-reference` for a node annotated on another reference genome),
+  base), the set call or the node above it when it has no base (`missing`, or
+  `other-reference` for a canSNP of rank 1 annotated on another reference
+  genome),
   `min-hits` or `strictness` for too few derived nodes, `ambiguous` for two
   confirmed chains of equal depth, or `other-branch` with the node it called
   instead. Also the nodes that support

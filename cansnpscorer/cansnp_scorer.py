@@ -364,9 +364,10 @@ def main():
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
     audit.add_argument("--strictness", type=fraction, default=STRICTNESS,
-                       help=f"The fraction of the SNPs on the path to a node that the single "
-                            f"rule of the typing report requires to be derived, as CanSNPer2's "
-                            f"--strictness. Default: {STRICTNESS:g}, as CanSNPer2 uses.")
+                       help=f"The fraction of the nodes with a SNP on the path to a node that "
+                            f"must be derived for the single rule of the typing report to call "
+                            f"it, as CanSNPer2's --strictness. Default: {STRICTNESS:g}, as "
+                            f"CanSNPer2 uses.")
     audit.add_argument("--proximity", type=at_least(0), default=50,
                        help="Report two canSNPs closer than this many bases. Default: 50.")
     audit.add_argument("--set-region", type=at_least(0), default=10000,

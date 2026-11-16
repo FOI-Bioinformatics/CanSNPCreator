@@ -104,7 +104,11 @@ def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
     genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
     assert genomes["g"].single_call is None, "CanSNPer2 has no SNP at A"
     assert genomes["g"].set_call == "A.1"
-    assert genomes["g"].single_stop == ("A", "missing")
+    # CanSNPer2 2.2.1 passes A, a node without a SNP, and counts two SNPs
+    # on the path to A.1.
+    assert genomes["g"].single_stop == ("", "min-hits")
+    two, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"}, min_required_hits=2)
+    assert two["g"].single_call == "A.1"
 
 
 def test_the_mean_depth_is_over_the_calls_made():
@@ -133,24 +137,18 @@ def test_the_findings_are_written_when_the_genomes_cannot_be_typed(written, data
     assert "No typing report was written" in caplog.text
 
 
-def test_a_node_without_a_snp_cuts_off_itself_and_the_nodes_directly_below():
-    # CanSNPer2 2.2.1 counts A as a gap: A.1 lies directly below it and
-    # cannot be called; A.1.1 has three SNPs on a path of four.
+def test_a_node_without_a_snp_is_passed_but_not_counted():
+    # CanSNPer2 2.2.1 names A "-A-" and passes it: A.1 has two SNPs on its
+    # path and A.1.1 three.
     scheme = scheme_of(
         [["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "A", "A.1", "A.1.1"]],
         [("root", "G", 2, "G", "A"), ("A.1", "G", 6, "G", "A"), ("A.1.1", "G", 8, "G", "A")])
     findings = check_callability(scheme, 3)
     unreachable = [finding for finding in findings if finding.category == "unreachable"]
     assert [finding.node for finding in unreachable] == ["A"]
-    assert "A.1" in unreachable[0].detail and "A.1.1" not in unreachable[0].detail
-    assert not any(finding.category == "min-required-hits" and finding.severity == "problem"
-                   for finding in findings), "A.1.1 is a callable leaf"
-    # With --strictness 0.8, three SNPs on four nodes are too few.
-    findings = check_callability(scheme, 3, strictness=0.8)
-    assert any(finding.category == "unreachable" and finding.node == "A.1.1"
-               for finding in findings)
-    assert any(finding.category == "min-required-hits" and finding.severity == "problem"
-               for finding in findings), "no leaf can be called"
+    shallow = [finding for finding in findings if finding.category == "min-required-hits"]
+    assert [finding.node for finding in shallow] == ["root, A.1"]
+    assert all(finding.severity != "problem" for finding in shallow), "A.1.1 is callable"
 
 
 # -- evaluate ----------------------------------------------------------------
