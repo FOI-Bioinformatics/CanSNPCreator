@@ -594,14 +594,16 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
          min_clade_snps=1, tree=None, members=None, masks=None,
          masks_concatenated=False, contig_aliases=None,
          genome_conflicts=GENOME_CONFLICTS, typing_report=None, report=None,
-         region=10000) -> int:
+         region=10000, rule="jaccard", outgroups=()) -> int:
     """Audit an existing scheme. Returns an exit status.
 
     With ``typing_report``, a prefix, every genome of the alignment is typed
     with the scheme and the tables of :mod:`cansnpscorer.typing_report` are
     written; that needs the alignment but no placement of its genomes. With
     ``report``, a path, the findings and the typing are also written as one
-    Markdown file.
+    Markdown file. With ``tree`` and ``rule`` 'clade', the genomes are
+    placed by the clades of the scheme's genomes, which ``genome_map`` gives,
+    in the tree rooted on ``outgroups``, as ``place --rule clade`` does.
 
     0 when nothing asks for a change, 1 when a file cannot be read, and 2 when
     the scheme holds a problem, or, with ``strict``, a recommendation.
@@ -617,7 +619,18 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     if alignment and not reference:
         logging.error("--alignment needs --reference, the genome the alignment is against")
         return 1
-    if ((genome_map or tree) and not alignment) or (genome_map and tree):
+    by_clade = rule == "clade"
+    if by_clade and not (tree and genome_map and outgroups):
+        logging.error("--rule clade needs --tree, --genome-map with the scheme's genomes, and "
+                      "--outgroup")
+        return 1
+    if outgroups and not by_clade:
+        logging.error("--outgroup applies to --rule clade")
+        return 1
+    if by_clade and members:
+        logging.error("--members applies to --rule jaccard")
+        return 1
+    if ((genome_map or tree) and not alignment) or (genome_map and tree and not by_clade):
         logging.error(
             "checking the scheme against the genomes needs --alignment, and either "
             "--genome-map or --tree to say where the genomes sit in the scheme, or the "
@@ -657,7 +670,11 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     if alignment:
         try:
             aligned = read_alignment(alignment)
-            if genome_map:
+            if by_clade:
+                from cansnpscorer.cansnp_tree import place_clade
+
+                clusters = place_clade(scheme, tree, genome_map, outgroups, list(aligned)).clusters
+            elif genome_map:
                 clusters = read_genome_map(genome_map)
             elif not tree:
                 # The scheme lists the genomes it was made from; an outgroup
@@ -700,7 +717,7 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
                                   members=folded)
                 clusters = placement.clusters
                 placement_findings = placement.findings
-        except (OSError, ValueError, HierarchyError, ReferenceError) as error:
+        except (OSError, ValueError, HierarchyError, ReferenceError, SchemeError) as error:
             logging.error(error)
             return 1
 
@@ -731,7 +748,9 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
 
     # The findings are written first: a scheme that cannot be typed with, as
     # one with two roots, is exactly what they report.
-    if genome_map:
+    if by_clade:
+        placed_by = f"tree {tree}, by the clades of the genomes of {genome_map}"
+    elif genome_map:
         placed_by = f"genome map {genome_map}"
     elif tree:
         placed_by = f"tree {tree}"

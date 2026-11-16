@@ -553,6 +553,43 @@ two genomes is matched less reliably than one with many: in a clade of two in
 which one genome lacks the derived base, the other alone matches as well as the
 clade.
 
+#### By the clades of the scheme's genomes
+
+The Jaccard rule still rests on one canSNP per node. Where the genomes the
+scheme was made from are known, `--rule clade` places other genomes without
+any canSNP: each node is the clade, in the tree rooted on `--outgroup`, of the
+most recent common ancestor of the scheme's genomes at or below the node, and a
+genome sits at the deepest node whose clade holds it. This gives an expected
+node for genomes held out of the scheme, against which a typing can be judged.
+
+The tree must hold both sets of genomes. When they were aligned separately
+against the same reference, the `sites` subcommand samples SNP positions,
+maps them to a column of each alignment by that alignment's own reference row,
+and writes one matrix for a tree builder:
+
+```sh
+CanSNPCreator sites --snps snps.vcf --reference reference.fasta \
+    --alignment full_alignment.fasta --alignment heldout_alignment.fasta \
+    --sites 50000 --seed 0 -o sites.fasta
+FastTreeMP -nt -gtr -fastest sites.fasta > sites.nwk
+CanSNPCreator place --rule clade \
+    --scheme-dir scheme --tree sites.nwk \
+    --genome-map scheme_genomes.tsv --outgroup GCF_000759775.1 \
+    --alignment sites.fasta -o expected.tsv --report expected_report.tsv
+```
+
+The sample is that of Python's `random.Random(seed).sample` over the SNP
+positions in VCF order, so the same file, `--sites` and `--seed` give the same
+columns; a record in two alignments is taken from the first. The genome map
+written holds the scheme's genomes in the tree at their own nodes and the other
+genomes at the nodes the tree gives them, so `audit --genome-map` reads it, and
+`audit --tree --rule clade` does the same in one step. With `--alignment`, any
+record the tree lacks is reported as placed nowhere, as is a genome outside the
+clade of the scheme's root; the report lists every genome with its node and how
+it was found. The clade of a node with a single genome in the tree is that
+genome's leaf alone, so a genome beside it is placed at the node above, the
+deepest that holds it with certainty.
+
 ## Exit status
 
 | Status | Meaning |

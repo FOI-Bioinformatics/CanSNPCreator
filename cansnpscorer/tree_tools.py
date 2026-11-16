@@ -791,6 +791,102 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     return Placement(clusters, list(matches.values()), findings)
 
 
+def place_by_clade(tree: Hierarchy, scheme_genomes: Mapping[str, str],
+                   parents: Mapping[str, str | None],
+                   outgroups: Sequence[str]) -> tuple[dict[str, str], list[str]]:
+    """Place the leaves of a tree at the deepest scheme node whose clade holds them.
+
+    Where ``place`` reads a node's clade from where its canSNP's derived base
+    lies, this reads it from the genomes the scheme was made from: the clade
+    of a scheme node is that of the most recent common ancestor, in the tree
+    rooted on the outgroups, of the scheme's genomes at or below the node. A
+    genome added to the tree, such as one held out when the scheme was made,
+    is then placed at the deepest scheme node whose clade holds it, without
+    reference to any canSNP. The clade of a node with a single genome in the
+    tree is that genome's leaf alone, so no other genome is placed there.
+
+    Args:
+        tree: A genome tree holding the scheme's genomes, the genomes to place
+            and the outgroups.
+        scheme_genomes: The node of each of the scheme's genomes, named by
+            leaf or as ``resolve_names`` matches a leaf, such as by accession.
+        parents: The parent of each node of the scheme, None for its root.
+        outgroups: The leaves to root the tree on, as ``reroot`` takes them.
+
+    Returns:
+        The node of every leaf that is neither a scheme genome nor an
+        outgroup and lies in a clade; and, sorted, those that lie in none.
+        Among scheme nodes of the same depth whose clades both hold a leaf,
+        which happens only where the tree does not keep a node's genomes
+        together, the one with the smaller clade is taken.
+
+    Raises:
+        HierarchyError: If an outgroup is not a leaf, or the outgroups do not
+            form a clade of the tree.
+        ValueError: If a scheme genome sits at a node the scheme lacks.
+    """
+    unknown = sorted({node for node in scheme_genomes.values() if node not in parents})
+    if unknown:
+        raise ValueError(
+            f"{len(unknown)} nodes of the scheme genomes are not nodes of the scheme: "
+            f"{', '.join(unknown[:5])}. A scheme exported with --prune lacks the nodes it left "
+            f"out; its genomes file places the genomes at the nodes it kept")
+    outgroup = set(outgroup_leaves(tree, outgroups))
+    tree = reroot(tree, sorted(outgroup))
+    matched, unmatched, ambiguous = resolve_names(list(scheme_genomes), tree.leaves)
+    if unmatched:
+        logging.info(f"{len(unmatched)} scheme genomes are not in the tree: "
+                     f"{', '.join(sorted(unmatched)[:5])}")
+    if ambiguous:
+        logging.warning(f"{len(ambiguous)} scheme genomes match more than one leaf of the tree "
+                        f"and were left out: {', '.join(sorted(ambiguous)[:5])}")
+    leaf_node = {leaf: scheme_genomes[genome] for genome, leaf in matched.items()
+                 if leaf not in outgroup}
+
+    # The scheme's genomes in the tree at or below each scheme node.
+    below: dict[str, set[str]] = {}
+    for leaf, node in leaf_node.items():
+        walk: str | None = node
+        while walk is not None:
+            below.setdefault(walk, set()).add(leaf)
+            walk = parents.get(walk)
+    depth: dict[str, int] = {}
+    for node in below:
+        walk, steps = node, 0
+        while walk is not None:
+            steps += 1
+            walk = parents.get(walk)
+        depth[node] = steps
+
+    # The most recent common ancestor of a set of leaves is the deepest node
+    # of the tree that holds them all; nodes come parents first, so the last
+    # such node in that order is the deepest.
+    nodes = tree.nodes
+    clade_of: dict[str, frozenset[str]] = {}
+    for scheme_node, leaves in below.items():
+        count: dict[str, int] = {}
+        for node in reversed(nodes):
+            count[node] = (node in leaves) + sum(count[child] for child in tree.children[node])
+        mrca = next(node for node in reversed(nodes) if count[node] == len(leaves))
+        clade_of[scheme_node] = frozenset(tree.leaves_below(mrca))
+
+    order = sorted(clade_of, key=lambda node: (-depth[node], len(clade_of[node]), node))
+    placed: dict[str, str] = {}
+    unplaced: list[str] = []
+    for leaf in tree.leaves:
+        if leaf in leaf_node or leaf in outgroup:
+            continue
+        node = next((node for node in order if leaf in clade_of[node]), None)
+        if node is None:
+            unplaced.append(leaf)
+        else:
+            placed[leaf] = node
+    logging.info(
+        f"Found the clades of {len(clade_of)} scheme nodes from {len(leaf_node)} scheme genomes "
+        f"in the tree, and placed {len(placed)} of {len(placed) + len(unplaced)} other genomes")
+    return placed, sorted(unplaced)
+
+
 def write_placement(placement: Placement, genome_map: str, report: str | None = None) -> None:
     """Write the genome map, and a report of how each node was matched."""
     with open(genome_map, "w", newline="\n") as handle:

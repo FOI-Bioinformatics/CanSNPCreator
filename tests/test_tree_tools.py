@@ -22,6 +22,7 @@ from cansnpscorer.scheme import Scheme, SchemeSnp, hierarchy_from_paths, read_sc
 from cansnpscorer.tree_tools import (
     collapse,
     place,
+    place_by_clade,
     read_genome_tree,
     read_members,
     rename,
@@ -328,3 +329,157 @@ def test_a_members_file_from_another_tree_is_reported(tmp_path, caplog):
     tree = Hierarchy.from_newick("((a,b),c);")
     assert read_members(str(genome_map), tree) == {"a": ["a2"]}
     assert "1 leaves the tree does not have" in caplog.text and "tree2tax" in caplog.text
+
+
+# -- placing genomes by the clades of the scheme's own genomes ---------------
+
+
+def read_genome_tree_text(text: str) -> Hierarchy:
+    """A genome tree from Newick text, as read_genome_tree reads a file."""
+    return Hierarchy.from_newick(text, support_labels=True)
+
+
+CLADE_PARENTS = {"A": None, "A.1": "A", "A.1.1": "A.1", "A.2": "A"}
+
+
+#: Two scheme genomes at each of A.1.1 and A.2, so that both have a clade
+#: wider than one leaf.
+CLADE_GENOMES = {"r1": "A.1.1", "r1b": "A.1.1", "r2": "A.1", "r3": "A.2", "r3b": "A.2"}
+
+
+def test_place_by_clade_deepest_node():
+    tree = read_genome_tree_text("(((((r1,h1),r1b),r2),((r3,h2),r3b)),out);")
+    placed, unplaced = place_by_clade(tree, CLADE_GENOMES, CLADE_PARENTS, ["out"])
+    assert placed == {"h1": "A.1.1", "h2": "A.2"} and unplaced == []
+
+
+def test_place_by_clade_a_node_with_one_genome_is_its_leaf_alone():
+    # The clade of one genome is its leaf, as the most recent common ancestor
+    # of one leaf is, and as dendropy's mrca gives it in alltree.py: h1, the
+    # sister of A.1.1's only genome, may lie inside A.1.1 or beside it, and is
+    # placed at A.1, the deepest node that certainly holds it.
+    tree = read_genome_tree_text("((((r1,h1),r2),(r3,h2)),out);")
+    placed, unplaced = place_by_clade(tree, {"r1": "A.1.1", "r2": "A.1", "r3": "A.2"},
+                                      CLADE_PARENTS, ["out"])
+    assert placed == {"h1": "A.1", "h2": "A"} and unplaced == []
+
+
+def test_place_by_clade_roots_the_tree_on_the_outgroup():
+    # Written rooted inside the ingroup; rooted on out, A.1.1 is ((r1, h1), r1b).
+    tree = read_genome_tree_text("(((r1,h1),r1b),(r2,(((r3,h2),r3b),out)));")
+    placed, unplaced = place_by_clade(tree, CLADE_GENOMES, CLADE_PARENTS, ["out"])
+    assert placed == {"h1": "A.1.1", "h2": "A.2"} and unplaced == []
+
+
+def test_place_by_clade_node_without_genomes_in_tree():
+    # A.1.1's only genome r1 is missing from the tree: h1 goes to A.1
+    tree = read_genome_tree_text("((((h1,r2),r2b),((r3,h2),r3b)),out);")
+    placed, unplaced = place_by_clade(
+        tree, {"r1": "A.1.1", "r2": "A.1", "r2b": "A.1", "r3": "A.2", "r3b": "A.2"},
+        CLADE_PARENTS, ["out"])
+    assert placed["h1"] == "A.1"
+    assert placed["h2"] == "A.2" and unplaced == []
+
+
+def test_place_by_clade_leaf_outside_every_clade():
+    # h3 sits beside the outgroup
+    tree = read_genome_tree_text("((((((r1,h1),r1b),r2),((r3,h2),r3b)),h3),out);")
+    placed, unplaced = place_by_clade(tree, CLADE_GENOMES, CLADE_PARENTS, ["out"])
+    assert "h3" in unplaced and "h3" not in placed
+    assert placed == {"h1": "A.1.1", "h2": "A.2"}
+
+
+def test_place_by_clade_matches_scheme_genomes_by_accession():
+    tree = read_genome_tree_text(
+        "((((Ec_GCF_000000001.1,h1),Ec_GCF_000000002.1),(Ec_GCF_000000003.1,"
+        "Ec_GCF_000000004.1)),out);")
+    placed, _unplaced = place_by_clade(
+        tree, {"GCF_000000001.1": "A.1", "GCF_000000002.1": "A.1", "GCF_000000003.1": "A.2",
+               "GCF_000000004.1": "A.2"}, CLADE_PARENTS, ["out"])
+    assert placed == {"h1": "A.1"}
+
+
+def test_place_by_clade_refuses_a_node_the_scheme_lacks():
+    tree = read_genome_tree_text("((r1,h1),out);")
+    with pytest.raises(ValueError, match=r"A\.9"):
+        place_by_clade(tree, {"r1": "A.9"}, CLADE_PARENTS, ["out"])
+
+
+def clade_scheme(tmp_path):
+    """A scheme directory whose tree file is A, A.1, A.1.1 and A.2."""
+    scheme_dir = tmp_path / "clade_scheme"
+    scheme_dir.mkdir()
+    (scheme_dir / "t_tree.txt").write_text("A\nA\tA.1\nA\tA.1\tA.1.1\nA\tA.2\n")
+    (scheme_dir / "t_snp.txt").write_text(
+        "snp_id\tstrain\treference\tgenome\tposition\tderived_base\tancestral_base\n"
+        "A.1\tt\tt\tREF\t2\tT\tC\n")
+    (scheme_dir / "t_references.txt").write_text(
+        "genome\tstrain\tgenbank_id\trefseq_id\tassembly_name\nREF\tt\tGCA_1\tGCF_1\tASM1\n")
+    return str(scheme_dir)
+
+
+def test_place_by_clade_from_the_command_line(tmp_path):
+    tree_file = tmp_path / "tree.nwk"
+    tree_file.write_text("((((((r1,h1),r1b),r2),((r3,h2),r3b)),h3),out);")
+    scheme_map = tmp_path / "scheme_genomes.tsv"
+    scheme_map.write_text("".join(f"{genome}\t{node}\n" for genome, node in CLADE_GENOMES.items()))
+    # h4 is a genome of the alignment that the tree does not hold.
+    alignment = tmp_path / "sites.fasta"
+    alignment.write_text("".join(f">{name}\nA\n" for name in
+                                 (*CLADE_GENOMES, "h1", "h2", "h3", "h4", "out")))
+    output = tmp_path / "placed.tsv"
+    report = tmp_path / "report.tsv"
+    assert cli_run("place", "--rule", "clade", "--scheme-dir", clade_scheme(tmp_path),
+                   "--tree", str(tree_file), "--genome-map", str(scheme_map),
+                   "--outgroup", "out", "--alignment", str(alignment),
+                   "-o", str(output), "--report", str(report)) == 0
+    placed = read_genome_map(str(output))
+    assert {node: sorted(genomes) for node, genomes in placed.items()} == {
+        "A.1.1": ["h1", "r1", "r1b"], "A.1": ["r2"], "A.2": ["h2", "r3", "r3b"]}
+    rows = [line.split("\t") for line in report.read_text().splitlines()]
+    assert rows[0] == ["genome", "node", "note"]
+    notes = {row[0]: (row[1], row[2]) for row in rows[1:]}
+    assert notes["h1"] == ("A.1.1", "placed by the tree")
+    assert notes["r1"] == ("A.1.1", "scheme genome")
+    assert notes["h3"][0] == "" and "no clade" in notes["h3"][1]
+    assert notes["h4"][0] == "" and "not a leaf" in notes["h4"][1]
+    assert "out" not in notes
+
+
+def test_place_by_clade_needs_a_genome_map_and_an_outgroup(tmp_path):
+    tree_file = tmp_path / "tree.nwk"
+    tree_file.write_text("((r1,h1),out);")
+    scheme_dir = clade_scheme(tmp_path)
+    with pytest.raises(SystemExit):
+        cli_run("place", "--rule", "clade", "--scheme-dir", scheme_dir, "--tree", str(tree_file),
+                "--outgroup", "out", "-o", str(tmp_path / "out.tsv"))
+    with pytest.raises(SystemExit):
+        cli_run("place", "--rule", "clade", "--scheme-dir", scheme_dir, "--tree", str(tree_file),
+                "--genome-map", str(tree_file), "-o", str(tmp_path / "out.tsv"))
+    with pytest.raises(SystemExit):
+        cli_run("place", "--scheme-dir", scheme_dir, "--tree", str(tree_file),
+                "-o", str(tmp_path / "out.tsv"))
+
+
+def test_audit_by_clade_from_the_command_line(written, dataset, tmp_path):
+    outdir, _scores = written
+    tree_file = tmp_path / "tree.nwk"
+    tree_file.write_text(PLANTED_TREE)
+    scheme_map = tmp_path / "scheme_genomes.tsv"
+    scheme_map.write_text("s1\tA.1\ns1b\tA.1\ns2\tA.2\ns3\tB.1\ns4\tB.2\n")
+    clade = ["--tree", str(tree_file), "--rule", "clade", "--outgroup", "ref"]
+    common = ["audit", "--scheme-dir", outdir, "--reference", dataset.reference,
+              "--alignment", dataset.alignment]
+    assert cli_run(*common, *clade, "--genome-map", str(scheme_map)) == 0
+
+    # Without s1b among the scheme's genomes, A.1's clade is s1's leaf alone,
+    # and the tree places s1b at A, where the audit finds A.1's derived base.
+    scheme_map.write_text("s1\tA.1\ns2\tA.2\ns3\tB.1\ns4\tB.2\n")
+    findings = tmp_path / "findings.tsv"
+    assert cli_run(*common, *clade, "--genome-map", str(scheme_map), "-o", str(findings)) == 2
+    assert "s1b; they are placed at A " in findings.read_text()
+
+    assert cli_run(*common, "--genome-map", str(scheme_map), "--rule", "clade",
+                   "--outgroup", "ref") == 1, "clade needs --tree"
+    assert cli_run(*common, "--tree", str(tree_file), "--outgroup", "ref") == 1, \
+        "--outgroup applies to clade"

@@ -2,6 +2,7 @@
 import gzip
 import logging
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from operator import itemgetter
 from urllib.parse import unquote
@@ -115,6 +116,56 @@ def read_hierarchy(path: str) -> Hierarchy:
 SEQUENCE_CHARACTERS = frozenset("ACGTURYSWKMBDHVN-.~*?")
 
 
+def iter_fasta(fasta_file: str) -> Iterator[tuple[str, str]]:
+    """
+    Read a FASTA file one record at a time, as (name, sequence) pairs.
+
+    The records are named, checked and upper cased as ``read_fasta`` does, but
+    only one is held at a time, so that an alignment of many genomes can be
+    read without holding it whole. Empty and repeated records are not checked
+    here; ``read_fasta`` checks them over the whole file.
+
+    Raises:
+        ValueError: If the file has sequence before its first header, a header
+            without an ID, or characters that are not bases or gaps.
+    """
+    name: str | None = None
+    chunks: list[str] = []
+    masked = 0
+
+    with open_text(fasta_file) as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line or line.startswith(";"):
+                continue  # ';' opens a comment line in the original FASTA format
+            if line.startswith(">"):
+                if name is not None:
+                    yield name, "".join(chunks)
+                words = line[1:].split()
+                if not words or line[1:2].isspace():
+                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
+                                     f"directly after '>'")
+                name = words[0]
+                chunks = []
+            else:
+                if name is None:
+                    raise ValueError(
+                        f"{fasta_file}: sequence before the first header, at line {line_number}")
+                line = "".join(line.split())
+                invalid = set(line.upper()) - SEQUENCE_CHARACTERS
+                if invalid:
+                    raise ValueError(
+                        f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
+                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
+                masked += sum(1 for base in line if base.islower())
+                chunks.append(line.upper())
+
+    if name is not None:
+        yield name, "".join(chunks)
+    if masked:
+        logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
+
+
 def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
     """
     Read a FASTA file into (name, sequence) pairs, in file order.
@@ -136,40 +187,7 @@ def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
     """
     logging.info(f"Reading FASTA records from {fasta_file}")
 
-    records: list[tuple[str, str]] = []
-    name: str | None = None
-    chunks: list[str] = []
-    masked = 0
-
-    with open_text(fasta_file) as handle:
-        for line_number, line in enumerate(handle, 1):
-            line = line.strip()
-            if not line or line.startswith(";"):
-                continue  # ';' opens a comment line in the original FASTA format
-            if line.startswith(">"):
-                if name is not None:
-                    records.append((name, "".join(chunks)))
-                words = line[1:].split()
-                if not words or line[1:2].isspace():
-                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
-                                     f"directly after '>'")
-                name = words[0]
-                chunks = []
-            else:
-                if name is None:
-                    raise ValueError(
-                        f"{fasta_file}: sequence before the first header, at line {line_number}")
-                line = "".join(line.split())
-                invalid = set(line.upper()) - SEQUENCE_CHARACTERS
-                if invalid:
-                    raise ValueError(
-                        f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
-                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
-                masked += sum(1 for base in line if base.islower())
-                chunks.append(line.upper())
-
-    if name is not None:
-        records.append((name, "".join(chunks)))
+    records = list(iter_fasta(fasta_file))
 
     if not records:
         raise ValueError(f"{fasta_file}: holds no FASTA records")
@@ -184,8 +202,6 @@ def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
             f"{fasta_file}: names {', '.join(repeated)} more than once; sequence IDs, the first "
             "word of each header, must be unique")
 
-    if masked:
-        logging.info(f"Upper cased {masked} soft masked bases from {fasta_file}")
     logging.info(f"Read {len(records)} records from {fasta_file}")
     return records
 
