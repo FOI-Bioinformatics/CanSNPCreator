@@ -52,7 +52,15 @@ rm -f $C/$NAME.db
 
 step "CanSNPer2 on $(wc -l < $H/heldout_expected.tsv | tr -d ' ') genomes, $JOBS jobs"
 rm -rf $C/calls_*(N) $C/tmp_*(N)
-cut -f1 $H/heldout_expected.tsv | sed "s|^|$WD/genomes/|;s|\$|.fasta|" > $C/queries.txt
+# link each genome as NAME.fasta, so that CanSNPer2 names the sample as the
+# typing report does (some genome folders prefix the accession with the taxon)
+rm -rf $C/genomes; mkdir -p $C/genomes
+for g in $(cut -f1 $H/heldout_expected.tsv); do
+  f=$WD/genomes/$g.fasta; [[ -e $f ]] || f=$(ls $WD/genomes/*_$g.fasta 2>/dev/null | head -1)
+  [[ -n $f && -e $f ]] || { echo "no genome file for $g"; exit 1; }
+  ln -s $f $C/genomes/$g.fasta
+done
+ls $C/genomes/*.fasta > $C/queries.txt
 split -n r/$JOBS $C/queries.txt $C/queries_ 2>/dev/null || {
   # BSD split has no -n: deal the queries round robin
   awk -v n=$JOBS -v p=$C/queries_ '{print > (p sprintf("%02d", (NR-1)%n))}' $C/queries.txt

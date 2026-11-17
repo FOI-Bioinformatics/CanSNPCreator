@@ -21,7 +21,19 @@ def read(path):
 
 
 cansnper2 = {row["genome"]: row["call"] or "NA" for row in read(calls_path)}
-typing = {row["genome"]: row for row in read(genomes_path) if row["role"] == "isolate"}
+
+
+def short_name(name):
+    """The CanSNPer2 sample name of an alignment row. Some alignments prefix
+    the accession with the taxon (Family_Genus_species_ACCESSION), while
+    cansnper2_master.sh names each query by the accession alone."""
+    if name in cansnper2:
+        return name
+    matches = [short for short in cansnper2 if name.endswith("_" + short)]
+    return matches[0] if len(matches) == 1 else name
+
+
+typing = {short_name(row["genome"]): row for row in read(genomes_path) if row["role"] == "isolate"}
 genomes = sorted(set(cansnper2) & set(typing))
 
 
