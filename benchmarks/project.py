@@ -1,8 +1,11 @@
 """Project genomes onto a reference with minimap2, as one alignment in
 reference coordinates: the reference first, then one record per genome, each
-as long as the reference. A base is the genome's where exactly one primary
-alignment of mapping quality 20 or more covers the position, '-' where none
-does or the genome has a deletion, and 'N' where more than one does.
+as long as the reference. A base is the genome's where a primary alignment of
+mapping quality 20 or more covers the position, '-' where none does or the
+genome has a deletion. Where more than one such alignment covers it, the
+base is kept when they agree and is 'N' when they differ, as CanSNPer2 2.2.2
+reads minimap2 alignments (AlignmentReader.observe), with its minimap2
+settings (MINIMAP2_OPTIONS).
 
 usage: project.py minimap2 reference.fasta genomes_dir skip_list out.fasta [threads]
 """
@@ -14,6 +17,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 minimap2, reference_path, genomes_dir, skip_path, out_path = sys.argv[1:6]
 threads = int(sys.argv[6]) if len(sys.argv) > 6 else 8
+# The minimap2 settings of CanSNPer2 2.2.2 (Aligners.Minimap2.options).
+MINIMAP2_OPTIONS = ["-r", "1k,10k", "-N", "50", "-p", "0.1"]
 CS = re.compile(r":(\d+)|\*([a-z])([a-z])|\+([a-z]+)|-([a-z]+)")
 
 
@@ -40,10 +45,26 @@ reference = "".join(sequence for _name, sequence in contigs)
 
 
 def project(path):
-    paf = subprocess.run([minimap2, "-cx", "asm20", "--cs", "-t", "1", reference_path, path],
+    paf = subprocess.run([minimap2, "-cx", "asm20", *MINIMAP2_OPTIONS, "--cs", "-t", "1", reference_path, path],
                          capture_output=True, text=True, check=True).stdout
     out = bytearray(b"-" * total)
-    depth = bytearray(total)
+    covered = bytearray(total)
+
+    def put(at, bases):
+        """Write the bases at at..; a position covered before keeps its base
+        when the new one agrees and becomes N when it does not."""
+        end = at + len(bases)
+        if covered.find(1, at, end) == -1:
+            out[at:end] = bases
+            covered[at:end] = b"\x01" * len(bases)
+            return
+        for i, base in enumerate(bases, start=at):
+            if covered[i] and out[i] != base:
+                out[i] = 78  # N
+            elif not covered[i]:
+                out[i] = base
+                covered[i] = 1
+
     for line in paf.splitlines():
         fields = line.split("\t")
         if int(fields[11]) < 20 or "tp:A:P" not in fields[12:]:
@@ -53,21 +74,14 @@ def project(path):
         for match, _ref, query, _insertion, deletion in CS.findall(cs):
             if match:
                 n = int(match)
-                out[at:at + n] = reference[at:at + n].encode()
-                for i in range(at, at + n):
-                    depth[i] += depth[i] < 2
+                put(at, reference[at:at + n].encode())
                 at += n
             elif query:
-                out[at] = ord(query.upper())
-                depth[at] += depth[at] < 2
+                put(at, query.upper().encode())
                 at += 1
             elif deletion:
-                for i in range(at, at + len(deletion)):
-                    depth[i] += depth[i] < 2
+                put(at, b"-" * len(deletion))
                 at += len(deletion)
-    for i in range(total):
-        if depth[i] > 1:
-            out[i] = 78  # N
     return os.path.basename(path).removesuffix(".fasta"), out.decode()
 
 
