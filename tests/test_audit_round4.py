@@ -104,7 +104,28 @@ def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
     genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
     assert genomes["g"].single_call is None, "CanSNPer2 has no SNP at A"
     assert genomes["g"].set_call == "A.1"
-    assert genomes["g"].single_stop == ("A", "missing")
+    # CanSNPer2 2.2.1 passes A, a node without a SNP, and counts two SNPs
+    # on the path to A.1.
+    assert genomes["g"].single_stop == ("", "min-hits")
+    two, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"}, min_required_hits=2)
+    assert two["g"].single_call == "A.1"
+
+
+def test_the_summary_counts_the_stop_reasons_of_2_2_1():
+    # A third base at A breaks the chain of the single rule; the set rule
+    # passes A as of unknown state.
+    genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "AGACAGAA"})
+    assert genomes["g"].set_call == "A.1"
+    assert genomes["g"].single_stop == ("A", "other-base")
+    summary = {row[0]: row[1] for row in report.summary}
+    assert summary["single rule stopped at a canSNP of another base"] == "1"
+    # No base at the root: two derived nodes of three fall short of 0.9.
+    genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "ANAGAGAA"},
+                            min_required_hits=1, strictness=0.9)
+    assert genomes["g"].single_stop == ("", "strictness")
+    summary = {row[0]: row[1] for row in report.summary}
+    assert summary["single rule stopped for too few derived nodes of the chain "
+                   "(strictness)"] == "1"
 
 
 def test_the_mean_depth_is_over_the_calls_made():
@@ -133,16 +154,18 @@ def test_the_findings_are_written_when_the_genomes_cannot_be_typed(written, data
     assert "No typing report was written" in caplog.text
 
 
-def test_nodes_below_a_node_without_a_snp_are_not_callable():
+def test_a_node_without_a_snp_is_passed_but_not_counted():
+    # CanSNPer2 2.2.1 names A "-A-" and passes it: A.1 has two SNPs on its
+    # path and A.1.1 three.
     scheme = scheme_of(
         [["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "A", "A.1", "A.1.1"]],
         [("root", "G", 2, "G", "A"), ("A.1", "G", 6, "G", "A"), ("A.1.1", "G", 8, "G", "A")])
     findings = check_callability(scheme, 3)
     unreachable = [finding for finding in findings if finding.category == "unreachable"]
     assert [finding.node for finding in unreachable] == ["A"]
-    assert "A.1, A.1.1" in unreachable[0].detail
-    assert any(finding.category == "min-required-hits" and finding.severity == "problem"
-               for finding in findings), "no leaf can be called"
+    shallow = [finding for finding in findings if finding.category == "min-required-hits"]
+    assert [finding.node for finding in shallow] == ["root, A.1"]
+    assert all(finding.severity != "problem" for finding in shallow), "A.1.1 is callable"
 
 
 # -- evaluate ----------------------------------------------------------------

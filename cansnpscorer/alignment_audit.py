@@ -299,9 +299,9 @@ def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: Al
     root, as the typing report's set rule takes it; two such nodes on
     different branches leave the path at the nodes they share. A node of
     unknown state may lie on the path, as when its canSNPs have no base in
-    the genome; CanSNPer2 2.2.0 stops at such a node, so the path is where
-    the genome's canSNPs place it, which can lie below where CanSNPer2 would
-    type it.
+    the genome; CanSNPer2 2.2.1 and 2.2.2 pass such a node but calls neither it nor
+    the node directly below it, so the path is where the genome's canSNPs
+    place it, which can lie below where CanSNPer2 would type it.
 
     Two things are reported, as they explain failures check_scheme_snps
     attributes to SNPs:
