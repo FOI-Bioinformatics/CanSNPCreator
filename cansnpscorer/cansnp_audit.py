@@ -267,7 +267,7 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
                       ) -> list[Finding]:
     """Whether CanSNPer2 can reach each node with its required number of hits.
 
-    CanSNPer2 2.2.1 calls a node only when its path from the root carries at
+    CanSNPer2 2.2.1 and 2.2.2 call a node only when its path from the root carries at
     least ``--min_required_hits`` derived SNPs, three by default. A branch
     that lies closer to the root than that cannot be called however good its
     SNP is, which is what we met when typing the ported Brucella and Coxiella

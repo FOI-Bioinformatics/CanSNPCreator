@@ -436,7 +436,7 @@ modified.
 | tree | | a node under two parents, a node with no SNP or two, a SNP naming a node the tree does not hold |
 | alleles | | a base outside A, C, G and T, which can never be called derived; equal derived and ancestral bases; two nodes at one position |
 | references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
-| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes without a SNP (`unreachable`), which CanSNPer2 2.2.1 passes but cannot call |
+| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes without a SNP (`unreachable`), which CanSNPer2 2.2.1 and 2.2.2 pass but cannot call |
 | spacing | | two SNPs of the SNP file closer than `--proximity` bases, which a deletion or a poorly aligned stretch removes together |
 | clustered set | | a node more than half of whose ranked canSNPs, and at least three, lie within `--set-region` bases (default 10000; 0 turns it off), so that one deletion removes most of the node's set from a genome |
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
@@ -499,7 +499,7 @@ scheme's columns.
 `--typing-report PREFIX` evaluates the scheme on the genomes of `--alignment`
 without being told where they belong, so it can be run on genomes the scheme
 was not made from. Every genome is typed twice: by the rule of CanSNPer2
-2.2.1, which reads the first canSNP of each node and calls the deepest
+2.2.1 and 2.2.2, which reads the first canSNP of each node and calls the deepest
 derived node whose chain from the root holds no ancestral canSNP or third
 base, holds at least `--min-required-hits` derived nodes that make up at
 least `--strictness` (default 0.7) of the chain, and whose parent is
@@ -513,9 +513,14 @@ at, the one with the most derived nodes on its path from the root is taken,
 so that one homoplastic canSNP below a run of undecided nodes does not
 outweigh a well supported path. Two equally supported branches give no call.
 The single rule's column was compared with the calling code of CanSNPer2
-2.2.1 (`NewickTree.draw_tree`) on 40,000 random trees with random states,
-nodes without a SNP, `--min_required_hits` and `--strictness`, without a
-difference. On the 819 held-out *Vibrio cholerae* genomes the change from
+2.2.1 and of 2.2.2 (`NewickTree.draw_tree`, unchanged between the two) on
+40,000 random trees with random states, nodes without a SNP,
+`--min_required_hits` and `--strictness`, without a difference. An
+ambiguity code is read as a third base as CanSNPer2 reads it with
+progressiveMauve, its default aligner, on the forward strand of an
+alignment block. On the reverse strand, and with `--aligner minimap2`
+(2.2.2) on either strand, CanSNPer2 reads it as N, a gap, so a call can
+then be deeper than the single rule's column shows. On the 819 held-out *Vibrio cholerae* genomes the change from
 the rule of CanSNPer2 2.2.0, which ended the chain at a canSNP without a
 base, moved two single calls: one genome without a call was called, and one
 call moved one node deeper. Single and set call agreed for 811 genomes,

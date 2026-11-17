@@ -10,7 +10,7 @@ made from.
 Each genome is typed under two rules:
 
 ``single``
-    The rule of CanSNPer2 2.2.1, which reads one canSNP per node, the one of
+    The rule of CanSNPer2 2.2.1 and 2.2.2, which reads one canSNP per node, the one of
     rank 1. The call is the deepest derived node whose chain of nodes from
     the root holds no ancestral node and no node of another base, holds at
     least ``min_required_hits`` derived nodes that are at least
@@ -203,11 +203,12 @@ def _lineages(hierarchy) -> dict[str, list[str]]:
 
 
 def cansnper2_state(base: str, snp: SchemeSnp) -> str:
-    """The state CanSNPer2 2.2.1 gives a base: as ``snp_state``, but any
-    character other than a gap or N, such as an ambiguity code, is another
-    base, which breaks the single rule's chain. (CanSNPer2 does so on the
-    forward strand of an alignment block; on the reverse strand it reads
-    such a character as N.)"""
+    """The state CanSNPer2 2.2.1 and 2.2.2 give a base: as ``snp_state``, but
+    any character other than a gap or N, such as an ambiguity code, is
+    another base, which breaks the single rule's chain. CanSNPer2 does so
+    with progressiveMauve, its default aligner, on the forward strand of an
+    alignment block. On the reverse strand, and with ``--aligner minimap2``
+    on either strand, such a character reads as N, a gap in the chain."""
     state = snp_state(base, snp)
     if state == MISSING and base.upper() not in ("-", "N"):
         return OTHER
@@ -252,7 +253,7 @@ STRICTNESS = 0.7
 def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
                   min_required_hits: int, strictness: float = STRICTNESS,
                   labels: Set[str] = frozenset()) -> tuple[str, str]:
-    """Whether CanSNPer2 2.2.1 confirms the chain from the root to a node.
+    """Whether CanSNPer2 2.2.1 and 2.2.2 confirm the chain from the root to a node.
 
     A node of the tree without a SNP, in ``labels``, is no part of the chain:
     CanSNPer2 names it ``-name-`` and passes it. Every other node of the
@@ -293,7 +294,7 @@ def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Seq
 def single_call(first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
                 min_required_hits: int, strictness: float = STRICTNESS,
                 labels: Set[str] = frozenset()) -> str | None:
-    """The call of CanSNPer2 2.2.1 from the state of each node's first canSNP:
+    """The call of CanSNPer2 2.2.1 and 2.2.2 from the state of each node's first canSNP:
     the deepest node whose chain ``confirm_chain`` confirms. Two confirmed
     nodes at the greatest depth give no call. (CanSNPer2 also requires the
     genome to have ``min_required_hits`` derived nodes in all, which a

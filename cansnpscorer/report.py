@@ -92,7 +92,7 @@ def _typing_lines(typing: TypingReport) -> list[str]:
     lines = [
         "## Typing of the genomes", "",
         "Every genome of the alignment was typed with the scheme under two rules. The "
-        "`single` rule is that of CanSNPer2 2.2.1: one canSNP per node, and the deepest "
+        "`single` rule is that of CanSNPer2 2.2.1 and 2.2.2: one canSNP per node, and the deepest "
         "derived node whose chain from the root holds no ancestral node or third base, "
         "enough derived nodes, and a derived parent. The `set` rule takes the majority of "
         "each node's canSNPs and may pass a node without a decision. The reference genome "
