@@ -26,6 +26,8 @@ environment). The scripts are written for zsh.
 - `compare_published.py`: compare calls with those of a published scheme.
 - `mtb_lineage.py`: compare calls with the M. tuberculosis complex lineage SNP barcode.
 - `tree_derep.py`: choose representatives from a tree over all genomes instead of by ANI.
+- `cansnper2_master.sh`: after `bench.sh`, type the held-out genomes with CanSNPer2 itself (`--aligner minimap2`, from a source tree given by `CANSNPER2_SRC`) and with the typing report of this checkout, then compare the calls.
+- `compare_cansnper2.py`: compare CanSNPer2 calls with the single-rule, set-rule and expected calls of the typing report.
 
 ## External tools
 
