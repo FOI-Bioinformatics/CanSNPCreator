@@ -14,13 +14,28 @@ from cansnpscorer.scheme import read_scheme
 from cansnpscorer.typing_report import type_alignment, write_report
 
 D, REFNAME, ORG, LABEL, GCA, GCF, ASM = sys.argv[1:8]
-S = f"{D}/split"
+# SPLIT_DIR sets the output folder, so that a rerun can keep earlier results.
+S = os.environ.get("SPLIT_DIR", f"{D}/split")
 os.makedirs(S, exist_ok=True)
 REF = f"{D}/{REFNAME}.fasta"
 PY = sys.executable
-# The fallback file names are the Legionella defaults of the first benchmark.
-HIER = f"{D}/scheme_hierarchy.tsv" if os.path.exists(f"{D}/scheme_hierarchy.tsv") else f"{D}/lp_hierarchy.tsv"
-GFF = f"{D}/reference.gff3" if os.path.exists(f"{D}/reference.gff3") else f"{D}/GCF_000092545.1.gff3"
+
+
+def first_file(*names, suffix):
+    """The first of NAMES in D, else the only file in D ending in SUFFIX."""
+    for name in names:
+        if os.path.exists(f"{D}/{name}"):
+            return f"{D}/{name}"
+    found = [f for f in os.listdir(D) if f.endswith(suffix) and not f.startswith("._")]
+    if len(found) != 1:
+        raise SystemExit(f"cannot choose a {suffix} file in {D}: {found}")
+    return f"{D}/{found[0]}"
+
+
+# lp_hierarchy.tsv and GCF_000092545.1.gff3 are the Legionella names of the
+# first benchmark.
+HIER = first_file("scheme_hierarchy.tsv", "lp_hierarchy.tsv", suffix="_hierarchy.tsv")
+GFF = first_file("reference.gff3", "GCF_000092545.1.gff3", suffix=".gff3")
 META = ["--hierarchy", HIER, "--reference", REF, "--organism", ORG, "--genome", LABEL,
         "--strain", LABEL, "--citation", "NA", "--genbank-id", GCA, "--refseq-id", GCF,
         "--assembly-name", ASM]

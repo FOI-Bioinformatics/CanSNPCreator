@@ -6,9 +6,8 @@
 #
 # Needs a finished bench.sh run (WORK/NAME and WORK/NAME_heldout). Writes
 # WORK/NAME_heldout/cansnper2_master/:
-#   NAME.db, refs/        CanSNPer2 database built from the exported scheme
-#   calls_N/              CanSNPer2 output, one folder per parallel job
-#   cansnper2_calls.tsv   genome and CanSNPer2 call (NA without one)
+#   cansnper2_calls.tsv   genome and CanSNPer2 call (NA without one), from
+#                         cansnper2_type.sh, with its database and output
 #   typing_*              the typing report of this checkout (audit, genome map)
 #   comparison.tsv/.txt   compare_cansnper2.py
 # The held-out alignment is projected again when it is missing.
@@ -22,15 +21,12 @@ NAME=$1; JOBS=${2:-6}
 B=${0:A:h}; source $B/config.sh
 W=$CANSNP_WORK; WD=$W/$NAME; H=$W/${NAME}_heldout; C=$H/cansnper2_master
 E=$CANSNP_ENVS; REPO=$CANSNP_REPO
-SRC=${CANSNPER2_SRC:-$W/cansnp_benchmark/cansnper2_master}
 PY=${CANSNPER2_PY:-$E/cansnper2/bin/python}
 MM=${CANSNP_MINIMAP2:-$E/repgenr_dev/bin/minimap2}
 step() { echo "== $NAME: $1 $(date '+%F %T')" }
 
 REFFASTA=$(ls $H/*.fasta | grep -v heldout_alignment | head -1)
-SCHEME=$(ls $H/scheme/*_tree.txt); P=${SCHEME%_tree.txt}
-REFGENOME=$(awk -F'\t' 'NR==2{print $1}' ${P}_references.txt)
-mkdir -p $C/refs $C/logs
+mkdir -p $C
 
 if [[ ! -s $H/heldout_alignment.fasta ]]; then
   step "project"
@@ -44,36 +40,9 @@ step "audit (CanSNPCreator $(cd $REPO && git describe --tags --always))"
 # audit exits non-zero when it reports findings; the typing report must exist
 [[ -s $C/typing_genomes.tsv ]] || { echo "audit failed, see $C/audit.log"; exit 1; }
 
-step "database"
-ln -sf $REFFASTA $C/refs/$REFGENOME.fna
-rm -f $C/$NAME.db
-(cd $C && PYTHONPATH=$SRC $PY -m CanSNPer2.SNPDatabase -db $C/$NAME.db --tree ${P}_tree.txt \
-   --annotation ${P}_snp.txt --references ${P}_references.txt --create) > $C/database.log 2>&1
-
 step "CanSNPer2 on $(wc -l < $H/heldout_expected.tsv | tr -d ' ') genomes, $JOBS jobs"
-rm -rf $C/calls_*(N) $C/tmp_*(N)
-# link each genome as NAME.fasta, so that CanSNPer2 names the sample as the
-# typing report does (some genome folders prefix the accession with the taxon)
-rm -rf $C/genomes; mkdir -p $C/genomes
-for g in $(cut -f1 $H/heldout_expected.tsv); do
-  f=$WD/genomes/$g.fasta; [[ -e $f ]] || f=$(ls $WD/genomes/*_$g.fasta 2>/dev/null | head -1)
-  [[ -n $f && -e $f ]] || { echo "no genome file for $g"; exit 1; }
-  ln -s $f $C/genomes/$g.fasta
-done
-ls $C/genomes/*.fasta > $C/queries.txt
-split -n r/$JOBS $C/queries.txt $C/queries_ 2>/dev/null || {
-  # BSD split has no -n: deal the queries round robin
-  awk -v n=$JOBS -v p=$C/queries_ '{print > (p sprintf("%02d", (NR-1)%n))}' $C/queries.txt
-}
-for part in $C/queries_*; do
-  k=${part:t}
-  (PYTHONPATH=$SRC $PY -m CanSNPer2.CanSNPerTree -db $C/$NAME.db --refdir $C/refs \
-     --aligner minimap2 --aligner_path $MM -o $C/calls_$k --tmpdir $C/tmp_$k --logdir $C/logs \
-     --summary --keep_going $(cat $part) > $C/logs/$k.log 2>&1; rm -rf $C/tmp_$k) &
-done
-wait
-rm -f $C/queries_*(N)
-cat $C/calls_*/snps_summary.txt | awk -F'\t' 'BEGIN{OFS="\t"; print "genome","call"} {print $1, ($2==""?"NA":$2)}' > $C/cansnper2_calls.tsv
+cut -f1 $H/heldout_expected.tsv > $C/names.txt
+$B/cansnper2_type.sh $H/scheme $REFFASTA $C/names.txt $WD/genomes $C $JOBS
 
 step "compare"
 $PY $B/compare_cansnper2.py $C/cansnper2_calls.tsv $C/typing_genomes.tsv $C/comparison.tsv | tee $C/comparison.txt
