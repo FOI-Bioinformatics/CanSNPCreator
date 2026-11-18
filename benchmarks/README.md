@@ -28,6 +28,8 @@ environment). The scripts are written for zsh.
 - `tree_derep.py`: choose representatives from a tree over all genomes instead of by ANI.
 - `cansnper2_master.sh`: after `bench.sh`, type the held-out genomes with CanSNPer2 itself (`--aligner minimap2`, from a source tree given by `CANSNPER2_SRC`) and with the typing report of this checkout, then compare the calls.
 - `compare_cansnper2.py`: compare CanSNPer2 calls with the single-rule, set-rule and expected calls of the typing report.
+- `cansnper2_type.sh`: type genomes with CanSNPer2 from an exported scheme; used by `cansnper2_master.sh` and `split_cansnper2.sh`.
+- `split_cansnper2.sh`: rerun `split.py` into `split_cansnper2/` and type half B with CanSNPer2 under the plain and the observed scheme.
 
 ## External tools
 

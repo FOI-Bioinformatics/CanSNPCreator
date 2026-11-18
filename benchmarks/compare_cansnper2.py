@@ -1,18 +1,21 @@
 """Compare the calls of CanSNPer2 with the typing report of CanSNPCreator.
 
-usage: compare_cansnper2.py CANSNPER2_CALLS TYPING_GENOMES OUT.tsv
+usage: compare_cansnper2.py CANSNPER2_CALLS TYPING_GENOMES OUT.tsv [EXPECTED]
 
 CANSNPER2_CALLS has the columns genome and call (NA without a call), as
 cansnper2_master.sh writes it. TYPING_GENOMES is the `_genomes.tsv` of
 `audit --typing-report`. Only isolates (role `isolate`) in both tables are
 compared; the reference and the outgroups are left out, as in the summary.
-OUT.tsv lists every genome; the counts are printed.
+OUT.tsv lists every genome; the counts are printed. EXPECTED (genome and
+expected node, without a header, as heldout_expected.tsv) gives the expected
+node of genomes for which the typing report has none.
 """
 import csv
 import sys
 from collections import Counter
 
 calls_path, genomes_path, out_path = sys.argv[1:4]
+expected_path = sys.argv[4] if len(sys.argv) > 4 else None
 
 
 def read(path):
@@ -34,6 +37,13 @@ def short_name(name):
 
 
 typing = {short_name(row["genome"]): row for row in read(genomes_path) if row["role"] == "isolate"}
+expected_nodes = {}
+if expected_path:
+    with open(expected_path) as handle:
+        for line in handle:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) >= 2 and fields[1]:
+                expected_nodes[short_name(fields[0])] = fields[1]
 genomes = sorted(set(cansnper2) & set(typing))
 
 
@@ -61,7 +71,9 @@ with open(out_path, "w", newline="") as handle:
     for genome in genomes:
         row = typing[genome]
         call = cansnper2[genome]
-        expected = row.get("expected", "NA") or "NA"
+        expected = row.get("expected", "NA")
+        if expected in ("", "NA"):
+            expected = expected_nodes.get(genome, "NA")
         vs = {"single": relation(call, row["single_call"]),
               "set": relation(call, row["set_call"]),
               "expected": relation(call, expected) if expected != "NA" else "NA"}
