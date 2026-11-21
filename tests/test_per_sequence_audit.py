@@ -121,3 +121,30 @@ def test_an_alignment_column_is_found_by_sequence_and_position():
     assert mapping.column_at("c2", 1) == 6
     assert mapping.column_at("c2", 6) is None
     assert mapping.column_at("c3", 1) is None
+
+
+def test_a_scheme_sequence_is_resolved_through_an_alias_group():
+    from cansnpscorer.cansnp_audit import resolve_sequences
+    from cansnpscorer.helpers.file_utils import AliasGroup
+
+    scheme = scheme_with(snp("A", "CP000001.1", 1, "A", "G"),
+                         snp_set=[snp("A", "CP000002.1", 2, "C", "G", rank=2)])
+    aliases = [AliasGroup({"CP000001.1", "c1"}),
+               AliasGroup({"CP000002.1", "c2"}, differs={"c2"})]
+    resolved = resolve_sequences(scheme, REFERENCE, aliases)
+    assert [snp.sequence for snp in resolved.snps] == ["c1"]
+    # NCBI gives that pair as not identical (<>), so it is not used.
+    assert [snp.sequence for snp in resolved.snp_set] == ["CP000002.1"]
+    assert resolve_sequences(scheme, REFERENCE, None) is scheme
+
+
+def test_the_sequence_finding_counts_one_snp_and_the_nodes_left_out():
+    one = check_against_reference(scheme_with(snp("A", "X", 1)), REFERENCE)
+    (found,) = [finding for finding in one if finding.category == "sequence"]
+    assert "1 SNP is annotated" in found.detail and "it was not checked" in found.detail
+    assert "--contig-aliases" in found.detail
+    many = check_against_reference(
+        scheme_with(*(snp(f"N{index}", "X", index + 1) for index in range(7))), REFERENCE)
+    (found,) = [finding for finding in many if finding.category == "sequence"]
+    assert found.node == "N0, N1, N2, N3, N4 and 2 more"
+    assert "7 SNPs are annotated" in found.detail

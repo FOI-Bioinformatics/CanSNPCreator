@@ -394,6 +394,53 @@ def test_refseq_contigs_with_no_genbank_alias_are_refused(dataset, refseq, tmp_p
     assert not any("give it with --contig-aliases" in message for message in refusals)
 
 
+def test_a_scheme_with_genbank_names_is_audited_against_its_refseq_reference(
+        dataset, scheme, refseq, tmp_path):
+    # The scheme names its sequences by GenBank accession; the reference, the
+    # scores and the alignment it was made from name them by RefSeq
+    # accession. With the alias table the audit finds what it finds for the
+    # same scheme under the reference's own names.
+    from cansnpscorer.cansnp_audit import main as audit_main
+
+    plain_scores, _outdir = scheme
+    plain_outdir = str(tmp_path / "plain")
+    scores, fasta, report, outdir = refseq
+    metadata = {**METADATA}
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=report,
+                       **metadata) == 0
+    assert set(GENBANK_NAMES.values()) == {sequence for sequence, _ in
+                                          sequences_of(outdir).values()}
+    assert export_main(plain_scores, dataset.hierarchy, dataset.reference, plain_outdir,
+                       **metadata) == 0
+
+    def audited(directory, reference, scored, name, *aliases):
+        findings = tmp_path / f"{name}_findings.tsv"
+        prefix = str(tmp_path / name)
+        status = audit_main(directory, reference=reference, scores=scored,
+                            alignment=dataset.alignment, genome_map=dataset.genome_map,
+                            output=str(findings), typing_report=prefix,
+                            contig_aliases=aliases[0] if aliases else None)
+        rows = [line.split("\t") for line in findings.read_text().splitlines()[1:]]
+        with open(prefix + "_snps.tsv") as handle:
+            header, *lines = handle.read().splitlines()
+        at = header.split("\t").index("missing")
+        missing = sorted(line.split("\t")[0] + ":" + line.split("\t")[at] for line in lines)
+        return status, sorted((row[0], row[2], row[3]) for row in rows), missing
+
+    status, found, missing = audited(outdir, fasta, scores, "genbank", report)
+    plain_status, expected, plain_missing = audited(plain_outdir, dataset.reference,
+                                                    plain_scores, "plain")
+    assert not [row for row in found if row[1] == "sequence"]
+    assert (status, found, missing) == (plain_status, expected, plain_missing)
+    assert any(row[1] == "single-site" for row in found), "the genome checks ran"
+
+    # Without the alias table each sequence is one problem, which names the option.
+    unresolved = tmp_path / "unresolved.tsv"
+    assert audit_main(outdir, reference=fasta, output=str(unresolved)) == 2
+    text = unresolved.read_text()
+    assert text.count("\tsequence\t") == 2 and "--contig-aliases" in text
+
+
 def test_a_refseq_sequence_not_identical_to_its_genbank_one_is_refused(dataset, refseq,
                                                                        caplog):
     # NCBI gives the Relationship <> when the RefSeq sequence is not identical

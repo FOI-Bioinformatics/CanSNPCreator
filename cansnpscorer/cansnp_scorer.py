@@ -366,7 +366,9 @@ def main():
                        help="Which of the scheme's reference genomes --reference holds, when "
                             "the scheme names more than one.")
     add_masks(audit, "SNPs of the scheme in them are reported. Needs --reference.")
-    add_contig_aliases(audit)
+    add_contig_aliases(audit, purpose="so that the scheme's sequences, as a GenBank name of "
+                       "a sequence the reference names by its RefSeq accession, and the "
+                       "sequences of --masks are found in the reference")
     audit.add_argument("--min-required-hits", type=at_least(1), default=MINIMUM_SNPS_PER_NODE,
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")

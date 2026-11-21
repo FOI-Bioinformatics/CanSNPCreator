@@ -30,6 +30,7 @@ its default of three required hits.
 import itertools
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from cansnpscorer import __version__, vcf
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS, check_against_alignment
@@ -195,6 +196,39 @@ def check_references(scheme: Scheme) -> list[Finding]:
     return findings
 
 
+def resolve_sequences(scheme: Scheme, reference: Reference,
+                      aliases: Sequence[set[str]] | None) -> Scheme:
+    """The scheme with each sequence named as the reference names it.
+
+    A scheme exported from a reference with RefSeq names gives its sequences
+    by their GenBank accessions, while the reference, the scores and the
+    alignment made against it use the RefSeq names. A scheme sequence the
+    reference does not hold is renamed to the one reference sequence its
+    alias group, from --contig-aliases, holds. A group NCBI gives as not
+    identical (Relationship <>) is not used, since a position on one
+    sequence need not hold on the other. A name that cannot be resolved is
+    kept, and the reference check reports it.
+    """
+    held = set(reference.names)
+    renamed: dict[str, str] = {}
+    for name in sorted({snp.sequence for snp in scheme.snps + scheme.snp_set} - held):
+        found = {other for group in aliases or ()
+                 if name in group and not getattr(group, "differs", ())
+                 for other in group & held}
+        if len(found) == 1:
+            renamed[name] = found.pop()
+    if not renamed:
+        return scheme
+    logging.info("Read the scheme's sequences under the names of the reference: "
+                 + ", ".join(f"{name} as {contig}" for name, contig in renamed.items()))
+
+    def named(snps):
+        return [replace(snp, sequence=renamed[snp.sequence]) if snp.sequence in renamed
+                else snp for snp in snps]
+
+    return replace(scheme, snps=named(scheme.snps), snp_set=named(scheme.snp_set))
+
+
 def check_against_reference(scheme: Scheme, reference: Reference,
                             genome: str | None = None) -> list[Finding]:
     """Whether the reference genome carries one of the two alleles at each position.
@@ -247,12 +281,17 @@ def check_against_reference(scheme: Scheme, reference: Reference,
                 f"base")))
 
     for sequence, nodes in sorted(unknown.items()):
+        distinct = sorted(set(nodes))
+        more = len(distinct) - 5
+        held = len(reference) - 5
         findings.append(problem(
-            CHECK, "sequence", ", ".join(sorted(set(nodes))[:5]),
-            f"{len(nodes)} SNPs are annotated on the sequence '{sequence}', which the reference "
-            f"does not hold (it holds {', '.join(reference.names[:5])}"
-            f"{' and others' if len(reference) > 5 else ''}), so they were not checked. The "
-            f"reference must name its sequences as the scheme does, as the GenBank assembly "
+            CHECK, "sequence", ", ".join(distinct[:5]) + (f" and {more} more" if more > 0 else ""),
+            f"{len(nodes)} SNP{'s are' if len(nodes) != 1 else ' is'} annotated on the "
+            f"sequence '{sequence}', which the reference does not hold (it holds "
+            f"{', '.join(reference.names[:5])}{f' and {held} more' if held > 0 else ''}), so "
+            f"{'they were' if len(nodes) != 1 else 'it was'} not checked. Give the other names "
+            f"of the reference's sequences with --contig-aliases <assembly_report.txt>, or use "
+            f"a reference that names its sequences as the scheme does, as the GenBank assembly "
             f"of the scheme's references file does"))
 
     if checked and len(mismatched) > checked / 2:
@@ -704,6 +743,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         scored = vcf.read_scores(scores, sequence) if scores else None
         aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
         masked = read_masks(masks, sequence, masks_concatenated, aliases) if masks else None
+        if sequence is not None:
+            scheme = resolve_sequences(scheme, sequence, aliases)
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1
