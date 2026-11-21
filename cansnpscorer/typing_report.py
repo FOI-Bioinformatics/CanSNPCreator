@@ -264,7 +264,7 @@ def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Seq
     node itself and the node directly above it on the chain are derived, at
     least ``min_required_hits`` of its nodes are derived, and they are at
     least ``strictness`` of the chain (``NewickTree._confirm_path`` of
-    CanSNPer2 2.2.1).
+    CanSNPer2 2.2.1 to 2.3.0).
 
     Returns:
         ("", "") when confirmed; otherwise the reason and the node it

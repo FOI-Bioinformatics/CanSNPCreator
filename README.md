@@ -13,6 +13,17 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
+## Upgrading to 0.6.0
+
+Version 0.6.0 writes and reads only the CanSNPer2 2.3.0 scheme format, in
+which each canSNP is a sequence (a GenBank accession) and a position on it.
+A scheme made for an earlier version is converted with
+`CanSNPer2-database --convert` (CanSNPer2 2.3.0) before `audit` or `place` reads
+it. A `_snps.tsv` table written by `audit --typing-report` before 0.6.0 has no
+`sequence` column and is refused by `evaluate --observed`; write it again. The
+`_snps.tsv` of the typing report now has the columns `sequence` and `position`
+in place of `contig` and `contig_position`.
+
 ## Installation
 
 Python 3.13 or later; the package has no dependencies.
@@ -343,7 +354,9 @@ scheme a larger `--min-spacing` is worth trying.
 `export` takes the highest scoring passing canSNP of each node and writes
 `<organism>_tree.txt`, `<organism>_snp.txt` and `<organism>_references.txt` as
 CanSNPer2-data expects them in the format of CanSNPer2 2.3.0: each canSNP names
-its reference sequence and gives a 1-based position on that sequence,
+its reference sequence (`sequence`) and gives a 1-based position on that
+sequence (`sequence_position`), not a position along the sequences joined in
+file order as earlier versions wrote it. The SNP file has the columns
 
 ```
 snp_id	strain	reference	genome	sequence	sequence_position	derived_base	ancestral_base
@@ -364,8 +377,7 @@ will not find a genome by it. Schemes written before
 2.3.0, with one position along the joined reference sequences, are converted
 with `CanSNPer2-database --convert`; `audit` and `place` refuse them with that
 hint. That repository's rules are checked first, so the result passes its
-`validate.py` unchanged. A node with no
-canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
+`validate.py` unchanged. A node with no canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
 children to the nearest node that has one. With `--genome-map` (which needs
 `--alignment`) the warning also gives the number of genomes moved to an ancestor
 and the deepest pruned depth.
@@ -456,6 +468,14 @@ CanSNPCreator audit \
 CanSNPer2-data's `validate.py` answers whether a scheme is well formed; the
 audit answers whether it can be typed with, and how it would be extended or
 modified.
+
+A scheme in the CanSNPer2 2.3.0 format names each canSNP's sequence by its
+GenBank accession. When `--reference` holds the same assembly under RefSeq
+names, pass `--contig-aliases <assembly_report.txt>`: the scheme's sequence
+names are resolved to the reference's contigs through it. A sequence that
+neither the reference nor the aliases hold is reported as a `sequence` problem,
+with the names the reference does hold. A scheme in the earlier format is
+refused, with the hint to convert it with `CanSNPer2-database --convert`.
 
 | Check | Needs | What it reports |
 | ----- | ----- | --------------- |
