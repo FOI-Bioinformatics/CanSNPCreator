@@ -155,7 +155,7 @@ def test_a_reference_row_that_breaks_the_rules_is_reported(written, dataset, rep
 
 def test_a_snp_on_an_unknown_genome_is_reported(written, dataset):
     outdir, _scores = written
-    edit(outdir, SNPS, "\tTEST1\t201\t", "\tTEST2\t201\t")
+    edit(outdir, SNPS, "\tTEST1\tc1\t201\t", "\tTEST2\tc1\t201\t")
     findings = findings_of(outdir, dataset)
     assert "unknown-genome" in categories(findings, PROBLEM)
 
@@ -185,8 +185,8 @@ def test_coordinates_taken_against_another_assembly_are_reported(written, datase
     changed = []
     for row in rows:
         fields = row.split("\t")
-        base = reference.base(int(fields[4]) - 1).upper()
-        fields[5], fields[6] = sorted(set("ACGT") - {base})[:2]
+        base = reference.contig(fields[4]).base(int(fields[5]) - 1).upper()
+        fields[6], fields[7] = sorted(set("ACGT") - {base})[:2]
         changed.append("\t".join(fields))
     with open(os.path.join(outdir, SNPS), "w") as handle:
         handle.write("\n".join([header, *changed]) + "\n")
@@ -266,32 +266,48 @@ def test_a_broken_scheme_exits_two_from_the_command_line(written, dataset):
 # -- against a published scheme ----------------------------------------------
 
 
-PUBLISHED = os.path.join(
+DATA = os.environ.get("CANSNPER2_DATA") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-data", "source")
+    "CanSNPer2-data")
+PUBLISHED = os.path.join(DATA, "schemes")
 
 
-@pytest.mark.skipif(not os.path.isdir(PUBLISHED),
-                    reason="CanSNPer2-data is not checked out beside this repository")
-def test_the_published_yersinia_scheme_reports_its_known_alleles():
-    # Three canSNPs of that scheme are published with a slash where the derived
-    # base belongs, and are listed under known_issues in its schemes.toml. They
-    # are what the allele check exists for, so the audit must find them without
-    # being told.
-    findings = audit_scheme(read_scheme(PUBLISHED, "yersinia_pestis"))
-    alleles = [finding for finding in findings
+def published(organism):
+    """The folder of a published scheme, or a skip when the checkout does not
+    hold it in the CanSNPer2 2.3.0 format."""
+    folder = os.path.join(PUBLISHED, organism)
+    snps = os.path.join(folder, f"{organism}_snp.txt")
+    if not os.path.isfile(snps):
+        pytest.skip(f"{folder} does not exist; set CANSNPER2_DATA to a CanSNPer2-data checkout")
+    with open(snps) as handle:
+        if "sequence_position" not in handle.readline().split("\t"):
+            pytest.skip(f"{snps} is in the format of CanSNPer2 before 2.3.0; set "
+                        f"CANSNPER2_DATA to a checkout with the 2.3.0 format")
+    return folder
+
+
+def test_the_published_yersinia_scheme_has_no_allele_problem():
+    # Three canSNPs of that scheme were published with a slash where the
+    # derived base belongs, which the allele check found. They were removed
+    # from the scheme on 2026-11-20, so the audit must find no such base and
+    # the scheme must not hold them.
+    scheme = read_scheme(published("yersinia_pestis"), "yersinia_pestis")
+    alleles = [finding for finding in audit_scheme(scheme)
                if finding.category == "allele" and finding.severity == PROBLEM]
-    assert {finding.node for finding in alleles} == {"1.ANT2.b", "1.ORI2.c", "1.ORI3.b"}
+    assert alleles == []
+    assert not {"1.ANT2.b", "1.ORI2.c", "1.ORI3.b"} & set(scheme.snps_by_node)
+    assert all("/" not in snp.derived + snp.ancestral for snp in scheme.snps)
 
 
-@pytest.mark.skipif(not os.path.isdir(PUBLISHED),
-                    reason="CanSNPer2-data is not checked out beside this repository")
-@pytest.mark.parametrize("organism", ["francisella_tularensis", "bacillus_anthracis"])
+@pytest.mark.parametrize("organism", ["bacillus_anthracis", "brucella_classical",
+                                      "coxiella_burnetii", "francisella_tularensis",
+                                      "yersinia_pestis"])
 def test_a_published_scheme_reads_without_a_problem(organism):
-    scheme = read_scheme(PUBLISHED, organism)
+    scheme = read_scheme(published(organism), organism)
     assert scheme.problems == []
     assert scheme.hierarchy is not None
     assert len(scheme.snps) == len(scheme.nodes)
+    assert all(snp.sequence for snp in scheme.snps)
     structural = [finding for finding in audit_scheme(scheme) if finding.severity == PROBLEM]
     assert structural == []
 

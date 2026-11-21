@@ -3,7 +3,9 @@ findings that were corrected in the fourth audit round, and the Markdown
 report."""
 
 import os
+from dataclasses import replace
 
+import pytest
 from conftest import PLANTED, cli_run
 from test_audit_round4 import chain_scheme, typed
 from test_review_fixes import scheme_of
@@ -52,8 +54,8 @@ def test_the_reference_and_the_outgroups_are_typed_but_not_counted():
 def test_the_summary_tallies_why_the_single_rule_stopped_and_names_the_nodes():
     # N at the canSNP of A in two genomes, ancestral there in a third whose
     # set of three still calls A derived.
-    extra = [SchemeSnp("A", "", "", "G", 7, "G", "A", rank=2),
-             SchemeSnp("A", "", "", "G", 8, "G", "A", rank=3)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 7, "G", "A", rank=2),
+             SchemeSnp("A", "", "", "G", "c1", 8, "G", "A", rank=3)]
     alignment = {"ref": "AAAAAAAA", "m1": "AGANAGGG", "m2": "AGANAGGG", "a1": "AGAAAGGG"}
     scheme = chain_scheme(extra)
     scheme.snps = [row for row in scheme.snps if row.node != "B"]
@@ -85,7 +87,7 @@ def test_nodes_no_genome_passes_through_are_listed():
 
 
 def test_the_ranks_table_sums_the_cansnps_of_each_rank():
-    extra = [SchemeSnp("A", "", "", "G", 7, "G", "A", rank=2)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 7, "G", "A", rank=2)]
     alignment = {"ref": "AAAAAAAA", "g": "AGAGAGNA", "h": "AGAGAGGA"}
     _genomes, report = typed(chain_scheme(extra), alignment)
     ranks = {row[0]: dict(zip(RANK_COLUMNS, row, strict=True)) for row in report.rank_rows}
@@ -95,9 +97,12 @@ def test_the_ranks_table_sums_the_cansnps_of_each_rank():
     assert ranks["1"]["missing"] == "0"
 
 
-def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
+def test_the_snp_table_gives_the_sequence_and_no_field_is_left_empty(tmp_path):
     alignment = {"ref": "AAAAAAAA", "g": "AGAGAGAA", "none": "AAAAAAAA"}
     scheme = chain_scheme()
+    # A.1 and B lie on the second sequence, at its first and third base.
+    scheme.snps = [replace(snp, sequence="c2", position=snp.position - 5)
+                   if snp.node in ("A.1", "B") else snp for snp in scheme.snps]
     reference = Reference.from_records([("c1", "AAAAA"), ("c2", "AAA")])
     from cansnpscorer.typing_report import type_alignment
 
@@ -109,8 +114,9 @@ def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
         "t_run.tsv"]
     snps = {row["node"]: row for row in table(prefix + "_snps.tsv")}
     assert list(snps["A"]) == list(SNP_COLUMNS)
-    assert (snps["A"]["contig"], snps["A"]["contig_position"]) == ("c1", "4")
-    assert (snps["A.1"]["contig"], snps["A.1"]["contig_position"]) == ("c2", "1")
+    assert (snps["A"]["sequence"], snps["A"]["position"]) == ("c1", "4")
+    assert (snps["A.1"]["sequence"], snps["A.1"]["position"]) == ("c2", "1")
+    assert snps["A.1"]["derived"] == "1" and snps["B"]["ancestral"] == "3"
     for suffix, columns in (("_genomes.tsv", GENOME_COLUMNS), ("_nodes.tsv", NODE_COLUMNS),
                             ("_snps.tsv", SNP_COLUMNS)):
         for row in table(prefix + suffix):
@@ -126,15 +132,36 @@ def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
 
 
 def test_a_table_written_before_the_columns_were_renamed_is_still_read(tmp_path):
-    old = ("node", "rank", "genome", "position", "derived_base", "ancestral_base", "genomes",
-           "called", "missing", "derived", "ancestral", "other", "discordant_in_set",
-           "ancestral_on_path", "derived_off_path")
+    old = ("node", "rank", "genome", "sequence", "position", "derived_base", "ancestral_base",
+           "genomes", "called", "missing", "derived", "ancestral", "other",
+           "discordant_in_set", "ancestral_on_path", "derived_off_path")
     path = tmp_path / "old_snps.tsv"
     path.write_text("\t".join(old) + "\n"
-                    + "\t".join(["A", "1", "G", "4", "G", "A", "9", "8", "1", "5", "3", "0",
-                                 "1", "0", "2"]) + "\n")
-    found = read_observed(str(path))[("A", 4)]
+                    + "\t".join(["A", "1", "G", "c1", "4", "G", "A", "9", "8", "1", "5", "3",
+                                 "0", "1", "0", "2"]) + "\n")
+    found = read_observed(str(path))[("A", "c1", 4)]
     assert (found.genomes, found.missing, found.discordant) == (8, 1, 2)
+
+
+@pytest.mark.parametrize("columns", [
+    ("node", "rank", "genome", "position"),
+    ("node", "rank", "reference_genome", "position", "contig", "contig_position")])
+def test_a_table_with_positions_along_the_joined_sequences_is_refused(tmp_path, columns):
+    # Before CanSNPer2 2.3.0 a typing report gave each position along the
+    # joined reference sequences, which a position on one sequence is not.
+    rest = ("derived_base", "ancestral_base", "genomes", "called", "missing", "derived",
+            "ancestral", "other", "discordant_in_set", "ancestral_on_path", "derived_off_path")
+    path = tmp_path / "old_snps.tsv"
+    values = {"node": "A", "rank": "1", "genome": "G", "reference_genome": "G",
+              "position": "704", "contig": "c2", "contig_position": "4"}
+    path.write_text("\t".join((*columns, *rest)) + "\n"
+                    + "\t".join([values[column] for column in columns]
+                                + ["G", "A", "9", "8", "1", "5", "3", "0", "1", "0", "2"])
+                    + "\n")
+    with pytest.raises(ValueError, match="has no sequence column") as raised:
+        read_observed(str(path))
+    assert "audit --typing-report" in str(raised.value)
+    assert "CanSNPer2 2.3.0" in str(raised.value)
 
 
 def test_many_genomes_and_cansnps_are_held_as_one_string_each():
@@ -156,10 +183,10 @@ def test_the_run_is_written_beside_the_tables(written, dataset, tmp_path):
 def test_spacing_compares_the_snps_cansnper2_calls_and_no_further_rank():
     scheme = scheme_of([["R"], ["R", "A"], ["R", "B"]],
                        [("A", "G", 100, "T", "G"), ("B", "G", 5000, "T", "G")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", 100, "T", "G", rank=1),
-                      SchemeSnp("B", "", "", "G", 110, "T", "G", rank=2)]
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", 100, "T", "G", rank=1),
+                      SchemeSnp("B", "", "", "G", "c1", 110, "T", "G", rank=2)]
     assert check_spacing(scheme, 50) == []
-    scheme.snps.append(SchemeSnp("C", "s", "r", "G", 5010, "T", "G"))
+    scheme.snps.append(SchemeSnp("C", "s", "r", "G", "c1", 5010, "T", "G"))
     (found,) = check_spacing(scheme, 50)
     assert found.node == "B, C" and "assay of the other" in found.detail
     assert "primer" not in found.detail
@@ -168,8 +195,8 @@ def test_spacing_compares_the_snps_cansnper2_calls_and_no_further_rank():
 def test_the_summary_counts_ranked_cansnps_and_names_each_node_once():
     scheme = scheme_of([["R"], ["R", "A"], ["R", "B"]],
                        [("A", "G", 100, "T", "G"), ("B", "G", 110, "T", "G")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", 100, "T", "G", rank=1),
-                      SchemeSnp("A", "", "", "G", 900, "T", "G", rank=2)]
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", 100, "T", "G", rank=1),
+                      SchemeSnp("A", "", "", "G", "c1", 900, "T", "G", rank=2)]
     findings = [recommendation(MODIFY, "spacing", "A, B", "close"),
                 problem(MODIFY, "homoplasy", "A", "x"),
                 problem(MODIFY, "homoplasy", "B", "y")]
@@ -224,8 +251,8 @@ def test_single_site_says_whether_the_site_is_the_schemes_and_counts_its_set():
 
     # A second canSNP of B that lacks a base in one genome is no clean site,
     # but it is part of the set, and the finding says so.
-    scheme.snp_set = [SchemeSnp("B", "", "", "G", 4, "G", "A", rank=1),
-                      SchemeSnp("B", "", "", "G", 8, "G", "A", rank=2)]
+    scheme.snp_set = [SchemeSnp("B", "", "", "G", "c1", 4, "G", "A", rank=1),
+                      SchemeSnp("B", "", "", "G", "c1", 8, "G", "A", rank=2)]
     for name in clusters["B"]:
         alignment[name] = "AAAGAAAG"
     alignment[clusters["B"][0]] = "AAAGAAAN"
@@ -237,8 +264,8 @@ def test_single_site_says_whether_the_site_is_the_schemes_and_counts_its_set():
 
 def test_reference_derived_names_each_node_once():
     scheme = scheme_of([["R"], ["R", "A"]], [("A", "G", 2, "G", "A")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", 2, "G", "A", rank=1),
-                      SchemeSnp("A", "", "", "G", 4, "G", "A", rank=2)]
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", 2, "G", "A", rank=1),
+                      SchemeSnp("A", "", "", "G", "c1", 4, "G", "A", rank=2)]
     reference = Reference.from_records([("c1", "AGAGAA")])
     (found,) = [f for f in check_against_reference(scheme, reference)
                 if f.category == "reference-derived"]
@@ -249,7 +276,7 @@ def test_reference_derived_names_each_node_once():
 
 
 def test_the_markdown_report_holds_the_run_the_findings_and_the_typing():
-    extra = [SchemeSnp("A", "", "", "G", 7, "G", "A", rank=2)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 7, "G", "A", rank=2)]
     alignment = {"ref": "AAAAAAAA", "g": "AGANAGGA", "h": "AGAGAGAA"}
     scheme = chain_scheme(extra)
     _genomes, report = typed(scheme, alignment)
@@ -305,7 +332,7 @@ def test_the_report_is_written_without_an_alignment_too(written, dataset, tmp_pa
 def set_scheme(positions):
     """A node A whose ranked canSNPs lie at the given positions of genome G."""
     scheme = scheme_of([["R"], ["R", "A"]], [("A", "G", positions[0], "T", "G")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", position, "T", "G", rank=rank)
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", position, "T", "G", rank=rank)
                       for rank, position in enumerate(positions, start=1)]
     return scheme
 

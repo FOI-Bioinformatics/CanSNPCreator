@@ -30,6 +30,7 @@ its default of three required hits.
 import itertools
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from cansnpscorer import __version__, vcf
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS, check_against_alignment
@@ -119,7 +120,7 @@ def check_structure(scheme: Scheme) -> list[Finding]:
 def check_alleles(scheme: Scheme) -> list[Finding]:
     """Whether each SNP can be called at all, and whether any two collide."""
     findings: list[Finding] = []
-    positions: dict[tuple[str, int], list[str]] = {}
+    positions: dict[tuple[str, str, int], list[str]] = {}
 
     for snp in scheme.checked_snps:
         alleles = {"derived": snp.derived, "ancestral": snp.ancestral}
@@ -140,14 +141,14 @@ def check_alleles(scheme: Scheme) -> list[Finding]:
                 MODIFY, "position", snp.node, snp.tag(
                 f"the position is {snp.position}; positions are 1-based and positive")))
 
-        positions.setdefault((snp.genome, snp.position), []).append(snp.node)
+        positions.setdefault((snp.genome, snp.sequence, snp.position), []).append(snp.node)
 
-    for (genome, position), nodes in sorted(positions.items()):
+    for (genome, sequence, position), nodes in sorted(positions.items()):
         if len(nodes) > 1:
             findings.append(problem(
                 MODIFY, "shared-position", ", ".join(sorted(nodes)),
-                f"{len(nodes)} nodes are annotated at {genome}:{position}. One position cannot "
-                f"mark two branches, so at most one of them is right"))
+                f"{len(nodes)} nodes are annotated at {genome} {sequence}:{position}. One "
+                f"position cannot mark two branches, so at most one of them is right"))
 
     return findings
 
@@ -195,6 +196,39 @@ def check_references(scheme: Scheme) -> list[Finding]:
     return findings
 
 
+def resolve_sequences(scheme: Scheme, reference: Reference,
+                      aliases: Sequence[set[str]] | None) -> Scheme:
+    """The scheme with each sequence named as the reference names it.
+
+    A scheme exported from a reference with RefSeq names gives its sequences
+    by their GenBank accessions, while the reference, the scores and the
+    alignment made against it use the RefSeq names. A scheme sequence the
+    reference does not hold is renamed to the one reference sequence its
+    alias group, from --contig-aliases, holds. A group NCBI gives as not
+    identical (Relationship <>) is not used, since a position on one
+    sequence need not hold on the other. A name that cannot be resolved is
+    kept, and the reference check reports it.
+    """
+    held = set(reference.names)
+    renamed: dict[str, str] = {}
+    for name in sorted({snp.sequence for snp in scheme.snps + scheme.snp_set} - held):
+        found = {other for group in aliases or ()
+                 if name in group and not getattr(group, "differs", ())
+                 for other in group & held}
+        if len(found) == 1:
+            renamed[name] = found.pop()
+    if not renamed:
+        return scheme
+    logging.info("Read the scheme's sequences under the names of the reference: "
+                 + ", ".join(f"{name} as {contig}" for name, contig in renamed.items()))
+
+    def named(snps):
+        return [replace(snp, sequence=renamed[snp.sequence]) if snp.sequence in renamed
+                else snp for snp in snps]
+
+    return replace(scheme, snps=named(scheme.snps), snp_set=named(scheme.snp_set))
+
+
 def check_against_reference(scheme: Scheme, reference: Reference,
                             genome: str | None = None) -> list[Finding]:
     """Whether the reference genome carries one of the two alleles at each position.
@@ -219,18 +253,22 @@ def check_against_reference(scheme: Scheme, reference: Reference,
     checked = 0
     mismatched: list[str] = []
     derived_in_reference: list[str] = []
+    unknown: dict[str, list[str]] = {}
 
     for snp in scheme.checked_snps:
         if snp.genome != genome or snp.position < 1:
             continue
-        if snp.position > reference.length:
+        if snp.sequence not in reference.names:
+            unknown.setdefault(snp.sequence, []).append(snp.node)
+            continue
+        contig = reference.contig(snp.sequence)
+        if snp.position > contig.length:
             findings.append(problem(
                 MODIFY, "position", snp.node, snp.tag(
-                f"the position {snp.position} is past the end of the reference genome, which "
-                f"holds {reference.length} bases")))
+                f"the position {snp.position} is past the end of the reference sequence "
+                f"{contig.name}, which holds {contig.length} bases")))
             continue
-        contig, local = reference.locate(snp.position - 1)
-        base = contig.base(local).upper()
+        base = contig.base(snp.position - 1).upper()
         checked += 1
         if base == snp.derived.upper():
             derived_in_reference.append(snp.node)
@@ -238,9 +276,23 @@ def check_against_reference(scheme: Scheme, reference: Reference,
             mismatched.append(snp.node)
             findings.append(problem(
                 CHECK, "reference-base", snp.node, snp.tag(
-                f"the reference carries '{base}' at {contig.name}:{local + 1} (position "
-                f"{snp.position} of the concatenated genome), which is neither the derived "
-                f"'{snp.derived}' nor the ancestral '{snp.ancestral}' base")))
+                f"the reference carries '{base}' at {contig.name}:{snp.position}, which is "
+                f"neither the derived '{snp.derived}' nor the ancestral '{snp.ancestral}' "
+                f"base")))
+
+    for sequence, nodes in sorted(unknown.items()):
+        distinct = sorted(set(nodes))
+        more = len(distinct) - 5
+        held = len(reference) - 5
+        findings.append(problem(
+            CHECK, "sequence", ", ".join(distinct[:5]) + (f" and {more} more" if more > 0 else ""),
+            f"{len(nodes)} SNP{'s are' if len(nodes) != 1 else ' is'} annotated on the "
+            f"sequence '{sequence}', which the reference does not hold (it holds "
+            f"{', '.join(reference.names[:5])}{f' and {held} more' if held > 0 else ''}), so "
+            f"{'they were' if len(nodes) != 1 else 'it was'} not checked. Give the other names "
+            f"of the reference's sequences with --contig-aliases <assembly_report.txt>, or use "
+            f"a reference that names its sequences as the scheme does, as the GenBank assembly "
+            f"of the scheme's references file does"))
 
     if checked and len(mismatched) > checked / 2:
         findings.append(problem(
@@ -267,7 +319,7 @@ def check_callability(scheme: Scheme, min_required_hits: int = MINIMUM_SNPS_PER_
                       ) -> list[Finding]:
     """Whether CanSNPer2 can reach each node with its required number of hits.
 
-    CanSNPer2 2.2.1 and 2.2.2 call a node only when its path from the root carries at
+    CanSNPer2 2.3.0 calls a node only when its path from the root carries at
     least ``--min_required_hits`` derived SNPs, three by default. A branch
     that lies closer to the root than that cannot be called however good its
     SNP is, which is what we met when typing the ported Brucella and Coxiella
@@ -323,18 +375,19 @@ def check_spacing(scheme: Scheme, proximity: int = 50) -> list[Finding]:
     """
     findings: list[Finding] = []
 
-    by_genome: dict[str, list[tuple[int, str]]] = {}
+    by_sequence: dict[tuple[str, str], list[tuple[int, str]]] = {}
     for snp in scheme.snps:
-        by_genome.setdefault(snp.genome, []).append((snp.position, snp.node))
+        by_sequence.setdefault((snp.genome, snp.sequence), []).append((snp.position, snp.node))
 
-    for genome, entries in sorted(by_genome.items()):
+    for (genome, sequence), entries in sorted(by_sequence.items()):
         entries.sort()
         for (first, left), (second, right) in itertools.pairwise(entries):
             gap = second - first
             if 0 < gap <= proximity:
                 findings.append(recommendation(
                     MODIFY, "spacing", f"{left}, {right}",
-                    f"the two SNPs are {gap} bases apart on {genome} ({first} and {second}). "
+                    f"the two SNPs are {gap} bases apart on {genome} {sequence} ({first} and "
+                    f"{second}). "
                     f"A deletion or a poorly aligned stretch there removes both from a genome "
                     f"at once, and each lies in the flank a PCR assay of the other would use"))
 
@@ -349,19 +402,19 @@ def check_set_region(scheme: Scheme, region: int = 10000) -> list[Finding]:
     unassembled stretch or a poorly aligned region removes all of them from
     a genome at once, and the set then decides on the few left. A node is
     reported when more than half of its canSNPs, and at least three, lie
-    within ``region`` bases of each other on one genome.
+    within ``region`` bases of each other on one sequence.
     """
     findings: list[Finding] = []
     if region <= 0:
         return findings
-    by_node: dict[tuple[str, str], list[int]] = {}
+    by_node: dict[tuple[str, str, str], list[int]] = {}
     for snp in scheme.checked_snps:
-        by_node.setdefault((snp.node, snp.genome), []).append(snp.position)
+        by_node.setdefault((snp.node, snp.genome, snp.sequence), []).append(snp.position)
     counted: dict[str, int] = {}
-    for (node, _genome), positions in by_node.items():
+    for (node, _genome, _sequence), positions in by_node.items():
         counted[node] = counted.get(node, 0) + len(positions)
 
-    for (node, genome), positions in sorted(by_node.items()):
+    for (node, genome, sequence), positions in sorted(by_node.items()):
         total = counted[node]
         if total < 3:
             continue
@@ -377,7 +430,7 @@ def check_set_region(scheme: Scheme, region: int = 10000) -> list[Finding]:
             findings.append(recommendation(
                 MODIFY, "clustered-set", node,
                 f"{best} of the node's {total} canSNPs lie within {span[1] - span[0]} bases on "
-                f"{genome} ({span[0]}-{span[1]}). A deletion or a stretch without bases there "
+                f"{genome} {sequence} ({span[0]}-{span[1]}). A deletion or a stretch without bases there "
                 f"removes them from a genome together, and the node is then decided by the "
                 f"rest; export with a larger --min-spacing spreads them further apart"))
     return findings
@@ -387,10 +440,10 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
                          reference: Reference, genome: str | None = None) -> list[Finding]:
     """Compare the scheme against scored candidates for the same nodes.
 
-    The scores give positions by contig; the scheme counts them over the
-    concatenated genome, so the candidates are converted before they are
-    matched. A candidate is offered only if it passed evaluate's filters, but
-    the scheme's own SNP is looked up among all of them, by position and node.
+    Both the scores and the scheme give a position on one reference
+    sequence, so they are matched by sequence, position and node. A
+    candidate is offered only if it passed evaluate's filters, but the
+    scheme's own SNP is looked up among all of them.
     The scores are against one reference genome, so only the scheme's SNPs on
     that genome are compared.
     """
@@ -406,11 +459,10 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
         genome = annotated[0] if annotated else None
 
     best: dict[str, ScoredSnp] = {}
-    scored_at: dict[tuple[int, str], ScoredSnp] = {}
+    scored_at: dict[tuple[str, int, str], ScoredSnp] = {}
     for score in scores:
         if score.contig in reference.names:
-            position = reference.contig(score.contig).start + score.position
-            scored_at[(position, score.node)] = score
+            scored_at[(score.contig, score.position, score.node)] = score
     for score in scores:
         if not score.passed:
             continue
@@ -423,7 +475,7 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
         if snp.genome != genome:
             continue
         candidate = best.get(snp.node)
-        current = scored_at.get((snp.position, snp.node))
+        current = scored_at.get((snp.sequence, snp.position, snp.node))
 
         if candidate is None:
             findings.append(recommendation(
@@ -434,14 +486,16 @@ def check_against_scores(scheme: Scheme, scores: Sequence[ScoredSnp],
         if current is None:
             findings.append(recommendation(
                 CHECK, "not-scored", snp.node,
-                f"the scheme's position {snp.position} is not among the scored candidates, so "
+                f"the scheme's position {snp.sequence}:{snp.position} is not among the scored "
+                f"candidates, so "
                 f"its quality is unknown; the best candidate for this node scores "
                 f"{candidate.total}"))
             continue
         if candidate.total > current.total:
             findings.append(recommendation(
                 MODIFY, "better-available", snp.node,
-                f"the scheme's SNP at {snp.position} scores {current.total}, while a candidate "
+                f"the scheme's SNP at {snp.sequence}:{snp.position} scores {current.total}, "
+                f"while a candidate "
                 f"at {candidate.contig}:{candidate.position} scores {candidate.total}"))
 
     scored_nodes = {score.node for score in scores if score.node and score.node != "None"}
@@ -465,21 +519,24 @@ def check_masks(scheme: Scheme, reference: Reference,
 
     A canSNP in a recombinant region may have been brought in by
     recombination rather than inherited down the branch, so it is the first
-    to replace. Positions in the scheme count over the concatenated genome,
-    so they are placed on their contig first.
+    to replace. The masks are given by reference sequence, as the scheme's
+    positions are.
     """
     findings: list[Finding] = []
     for snp in scheme.checked_snps:
         if genome is not None and snp.genome != genome:
             continue
-        if not 1 <= snp.position <= reference.length:
+        if snp.sequence not in reference.names:
+            continue  # reported by the reference check
+        contig = reference.contig(snp.sequence)
+        if not 1 <= snp.position <= contig.length:
             continue
-        contig, local = reference.locate(snp.position - 1)
+        local = snp.position - 1
         for start, end in masks.get(contig.name, []):
             if start <= local <= end:
                 findings.append(recommendation(
                     MODIFY, "masked", snp.node, snp.tag(
-                    f"the SNP at {contig.name}:{local + 1} lies in a masked region "
+                    f"the SNP at {contig.name}:{snp.position} lies in a masked region "
                     f"({contig.name}:{start + 1}-{end + 1}), such as one recombination brought "
                     f"in; a SNP outside it would mark the branch more reliably")))
                 break
@@ -633,11 +690,10 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
     """
     if scores and not reference:
         logging.error(
-            "--scores needs --reference, because the scores give positions by contig and the "
-            "scheme counts them over the concatenated genome")
+            "--scores needs --reference, the genome the scores were made against")
         return 1
     if masks and not reference:
-        logging.error("--masks needs --reference, to place the scheme's positions on contigs")
+        logging.error("--masks needs --reference, which names the sequences the masks lie on")
         return 1
     if alignment and not reference:
         logging.error("--alignment needs --reference, the genome the alignment is against")
@@ -687,6 +743,8 @@ def main(scheme_dir=None, organism=None, reference=None, scores=None, genome=Non
         scored = vcf.read_scores(scores, sequence) if scores else None
         aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
         masked = read_masks(masks, sequence, masks_concatenated, aliases) if masks else None
+        if sequence is not None:
+            scheme = resolve_sequences(scheme, sequence, aliases)
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1

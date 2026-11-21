@@ -570,7 +570,21 @@ def read_gff3(gff_file: str) -> GeneModel:
                      sequences={key: "".join(value) for key, value in sequences.items()})
 
 
-def read_contig_aliases(path: str) -> list[set[str]]:
+class AliasGroup(set):
+    """The names of one sequence, as a set.
+
+    ``differs`` holds the names whose sequence the alias table gives as not
+    identical to that of the GenBank accession: the RefSeq accession, where
+    NCBI's assembly report gives the Relationship ``<>``. A position on such
+    a sequence need not be the same position on the other.
+    """
+
+    def __init__(self, names=(), differs=()) -> None:
+        super().__init__(names)
+        self.differs: frozenset[str] = frozenset(differs)
+
+
+def read_contig_aliases(path: str) -> list[AliasGroup]:
     """
     Read which names denote the same sequence.
 
@@ -578,8 +592,11 @@ def read_contig_aliases(path: str) -> list[set[str]]:
     beside every assembly NCBI distributes, gives each molecule's sequence
     name, GenBank accession, RefSeq accession and UCSC name; a RefSeq GFF3
     names the chromosome of Coxiella burnetii RSA 493 NC_002971.4 where the
-    GenBank FASTA names it AE016828.3. A UCSC chromAlias table gives every
-    name of one sequence on one tab separated line.
+    GenBank FASTA names it AE016828.3. Its Relationship column says whether
+    the RefSeq sequence is identical to the GenBank one (``=``) or not
+    (``<>``); the RefSeq accession of a ``<>`` row is kept in the group's
+    ``differs``. A UCSC chromAlias table gives every name of one sequence on
+    one tab separated line.
 
     Returns:
         One set of names per sequence.
@@ -587,7 +604,7 @@ def read_contig_aliases(path: str) -> list[set[str]]:
     Raises:
         ValueError: If the file holds no names.
     """
-    groups: list[set[str]] = []
+    groups: list[AliasGroup] = []
     with open_text(path, newline="") as handle:
         lines = [line.rstrip("\r\n") for line in handle]
     ncbi = any(line.startswith("# Sequence-Name") for line in lines)
@@ -595,15 +612,18 @@ def read_contig_aliases(path: str) -> list[set[str]]:
         if not line.strip() or line.startswith("#"):
             continue
         fields = line.split("\t")
+        differs: set[str] = set()
         if ncbi:
             if len(fields) < 7:
                 continue
             names = [fields[index] for index in (0, 4, 6, 9) if index < len(fields)]
+            if fields[5].strip() == "<>" and fields[6].strip() not in ("", "na"):
+                differs.add(fields[6].strip())
         else:
             names = fields
         group = {name.strip() for name in names if name.strip() and name.strip() != "na"}
         if len(group) > 1:
-            groups.append(group)
+            groups.append(AliasGroup(group, differs))
     if not groups:
         raise ValueError(f"{path}: names no sequence by more than one name")
     logging.info(f"Read {len(groups)} sequences with more than one name from {path}")

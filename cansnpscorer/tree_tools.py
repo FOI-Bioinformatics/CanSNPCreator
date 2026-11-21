@@ -637,9 +637,11 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         snps.setdefault(snp.node, []).append(snp)
 
     def match_snp(node: str, snp) -> Match:
-        if not 1 <= snp.position <= reference.length:
-            return Match(node, reason="the position is outside the reference")
-        column = mapping.to_column(snp.position - 1)
+        if snp.sequence not in reference.names:
+            return Match(node, reason=f"the reference holds no sequence '{snp.sequence}'")
+        if not 1 <= snp.position <= reference.contig(snp.sequence).length:
+            return Match(node, reason="the position is outside its reference sequence")
+        column = mapping.column_at(snp.sequence, snp.position)
         if column is None:
             return Match(node, reason="the position is not aligned")
 

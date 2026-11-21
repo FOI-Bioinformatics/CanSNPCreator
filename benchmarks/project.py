@@ -3,7 +3,7 @@ reference coordinates: the reference first, then one record per genome, each
 as long as the reference. A base is the genome's where a primary alignment of
 mapping quality 20 or more covers the position, '-' where none does or the
 genome has a deletion. Where more than one such alignment covers it, the
-base is kept when they agree and is 'N' when they differ, as CanSNPer2 2.2.2
+base is kept when they agree and is 'N' when they differ, as CanSNPer2 2.2.2 to 2.3.0
 reads minimap2 alignments (AlignmentReader.observe), with its minimap2
 settings (MINIMAP2_OPTIONS).
 
@@ -17,7 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 minimap2, reference_path, genomes_dir, skip_path, out_path = sys.argv[1:6]
 threads = int(sys.argv[6]) if len(sys.argv) > 6 else 8
-# The minimap2 settings of CanSNPer2 2.2.2 (Aligners.Minimap2.options).
+# The minimap2 settings of CanSNPer2 2.2.2 to 2.3.0 (Aligners.Minimap2.options).
 MINIMAP2_OPTIONS = ["-r", "1k,10k", "-N", "50", "-p", "0.1"]
 CS = re.compile(r":(\d+)|\*([a-z])([a-z])|\+([a-z]+)|-([a-z]+)")
 

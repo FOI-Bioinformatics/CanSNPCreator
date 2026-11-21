@@ -244,7 +244,7 @@ def five_and_two():
     paths = [["root"], ["root", "X"], ["root", "Y"]]
     hierarchy, _conflicts, _problems = hierarchy_from_paths(paths)
     scheme = Scheme(organism="t", paths=paths, hierarchy=hierarchy, snps=[
-        SchemeSnp(node="X", strain="t", reference="t", genome="REF", position=2,
+        SchemeSnp(node="X", strain="t", reference="t", genome="REF", sequence="c1", position=2,
                   derived="T", ancestral="C"),
     ])
     reference = Reference.from_records([("c1", "ACGTA")])
@@ -411,8 +411,9 @@ def clade_scheme(tmp_path):
     scheme_dir.mkdir()
     (scheme_dir / "t_tree.txt").write_text("A\nA\tA.1\nA\tA.1\tA.1.1\nA\tA.2\n")
     (scheme_dir / "t_snp.txt").write_text(
-        "snp_id\tstrain\treference\tgenome\tposition\tderived_base\tancestral_base\n"
-        "A.1\tt\tt\tREF\t2\tT\tC\n")
+        "snp_id\tstrain\treference\tgenome\tsequence\tsequence_position\tderived_base\t"
+        "ancestral_base\n"
+        "A.1\tt\tt\tREF\tc1\t2\tT\tC\n")
     (scheme_dir / "t_references.txt").write_text(
         "genome\tstrain\tgenbank_id\trefseq_id\tassembly_name\nREF\tt\tGCA_1\tGCF_1\tASM1\n")
     return str(scheme_dir)

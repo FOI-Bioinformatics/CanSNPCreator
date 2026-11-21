@@ -80,10 +80,10 @@ def chain_scheme(extra=()):
 def test_a_single_call_on_another_branch_is_labelled_as_such():
     # First canSNPs: derived down root, A, A.1. B's set of three is derived by
     # majority and A's set is ancestral by majority, so the set rule calls B.
-    extra = [SchemeSnp("A", "", "", "G", 10, "G", "A", rank=2),
-             SchemeSnp("A", "", "", "G", 11, "G", "A", rank=3),
-             SchemeSnp("B", "", "", "G", 12, "G", "A", rank=2),
-             SchemeSnp("B", "", "", "G", 13, "G", "A", rank=3)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 10, "G", "A", rank=2),
+             SchemeSnp("A", "", "", "G", "c1", 11, "G", "A", rank=3),
+             SchemeSnp("B", "", "", "G", "c1", 12, "G", "A", rank=2),
+             SchemeSnp("B", "", "", "G", "c1", 13, "G", "A", rank=3)]
     alignment = {"ref": "AAAAAAAAAAAAAA",
                  #        .G.G.G.A.AAGG
                  "g": "AGAGAGAAAAAGGA"}
@@ -99,7 +99,7 @@ def test_a_single_call_on_another_branch_is_labelled_as_such():
 
 
 def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
-    scheme = chain_scheme([SchemeSnp("A", "", "", "G", 4, "G", "A", rank=2)])
+    scheme = chain_scheme([SchemeSnp("A", "", "", "G", "c1", 4, "G", "A", rank=2)])
     scheme.snps = [row for row in scheme.snps if row.node != "A"]
     genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
     assert genomes["g"].single_call is None, "CanSNPer2 has no SNP at A"
@@ -172,9 +172,12 @@ def test_a_node_without_a_snp_is_passed_but_not_counted():
 
 
 def observed_table(tmp_path, rows):
-    header = ("node\trank\tgenome\tposition\tderived_base\tancestral_base\tgenomes\tcalled\t"
-              "missing\tderived\tancestral\tother\tdiscordant_in_set\tancestral_on_path\t"
-              "derived_off_path")
+    """A typing report's canSNP table. A row of 15 fields gives no sequence,
+    and its canSNP is taken to lie on sequence c1."""
+    header = ("node\trank\tgenome\tsequence\tposition\tderived_base\tancestral_base\t"
+              "genomes\tcalled\tmissing\tderived\tancestral\tother\tdiscordant_in_set\t"
+              "ancestral_on_path\tderived_off_path")
+    rows = [[*row[:3], "c1", *row[3:]] if len(row) == 15 else row for row in rows]
     path = tmp_path / "observed_snps.tsv"
     path.write_text(header + "\n" + "".join("\t".join(map(str, row)) + "\n" for row in rows))
     return str(path)
@@ -182,7 +185,7 @@ def observed_table(tmp_path, rows):
 
 def test_a_snp_called_in_no_genome_was_not_observed(tmp_path):
     path = observed_table(tmp_path, [("A", 1, "T", 461, "C", "G", 6, 0, 6, 0, 0, 0, 0, 0, 0)])
-    seen = read_observed(path)[("A", 461)]
+    seen = read_observed(path)[("A", "c1", 461)]
     assert seen.genomes == 0 and seen.missing == 6
     never_called = snp(461, total=180, observed_genomes=seen.genomes,
                        observed_missing=seen.missing)
@@ -194,7 +197,35 @@ def test_two_rows_for_one_snp_keep_the_worse(tmp_path):
     path = observed_table(tmp_path, [
         ("A", 1, "T", 461, "C", "G", 6, 6, 0, 3, 3, 0, 5, 0, 0),
         ("A", 2, "T", 461, "C", "G", 6, 6, 0, 3, 3, 0, 0, 0, 0)])
-    assert read_observed(path)[("A", 461)].discordant == 5
+    assert read_observed(path)[("A", "c1", 461)].discordant == 5
+
+
+def test_a_report_naming_genbank_sequences_is_matched_through_the_aliases(
+        written, dataset, tmp_path):
+    # An exported scheme names a sequence by its GenBank accession, and so
+    # does the typing report of it; the candidates name it as the reference
+    # does. The alias table relates the two names.
+    _status, prefix = run_report(written, dataset, tmp_path)
+    rows = table(prefix + "_snps.tsv")
+    genbank = {"c1": "CP000001.1", "c2": "CP000002.1"}
+    renamed = observed_table(tmp_path, [
+        [row["node"], row["rank"], row["reference_genome"], genbank[row["sequence"]],
+         row["position"], row["derived_base"], row["ancestral_base"], 6, 6, 0, 3, 3, 0, 4, 0,
+         0] for row in rows])
+    aliases = tmp_path / "aliases.txt"
+    aliases.write_text("".join(f"{name}\t{accession}\n" for name, accession in genbank.items()))
+    typed_at = {(row["node"], row["sequence"], int(row["position"])) for row in rows}
+
+    def observed(*extra):
+        scores = str(tmp_path / "renamed.vcf")
+        assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
+                       dataset.reference, "--genes", dataset.gff, "--repeats",
+                       dataset.repeats, "-o", scores, "--observed", renamed, *extra) == 0
+        return {(record.node, record.chrom, record.pos) for record in vcf_records(scores)
+                if record.info.get("OBS_DISCORDANT") == "4"}
+
+    assert observed() == set()
+    assert observed("--contig-aliases", str(aliases)) == typed_at
 
 
 def test_a_row_with_other_alleles_is_not_taken_for_the_snp(written, dataset, tmp_path,
@@ -202,8 +233,8 @@ def test_a_row_with_other_alleles_is_not_taken_for_the_snp(written, dataset, tmp
     _status, prefix = run_report(written, dataset, tmp_path)
     rows = table(prefix + "_snps.tsv")
     swapped = observed_table(tmp_path, [
-        [row["node"], row["rank"], "OTHER", row["position"], "N", "N", 6, 6, 0, 3, 3, 0, 4, 0,
-         0] for row in rows])
+        [row["node"], row["rank"], "OTHER", row["sequence"], row["position"], "N", "N", 6, 6,
+         0, 3, 3, 0, 4, 0, 0] for row in rows])
     scores = str(tmp_path / "observed.vcf")
     with caplog.at_level(logging.WARNING):
         assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
@@ -278,7 +309,7 @@ def test_one_outgroup_of_an_unrooted_tree_stays_outside_the_root():
 
 def test_a_node_is_placed_by_its_best_cansnp_not_only_its_first():
     scheme = scheme_of([["root"], ["root", "X"]], [("X", "G", 3, "T", "G")])
-    scheme.snp_set = [SchemeSnp("X", "", "", "G", 6, "A", "C", rank=2)]
+    scheme.snp_set = [SchemeSnp("X", "", "", "G", "c1", 6, "A", "C", rank=2)]
     reference = Reference.from_records([("c1", "ACGTACGT")])
     # Rank 1 is derived in x1 and in y2; rank 2 in exactly x1, x2 and x3.
     alignment = {"r": "ACGTACGT", "x1": "ACTTAAGT", "x2": "ACGTAAGT", "x3": "ACGTAAGT",
@@ -305,7 +336,7 @@ def test_a_node_without_a_majority_group_is_judged_by_its_narrowest_group(tmp_pa
     observed = widths(tmp_path, [125] * 5 + [96] * 2 + [68, 68, 67, 68])
     judged, nodes = judge_by_narrowest_group(observed)
     assert nodes == ["A"]
-    apart = [judged[("A", 100 + index)].discordant for index in range(11)]
+    apart = [judged[("A", "c1", 100 + index)].discordant for index in range(11)]
     assert apart == [57] * 5 + [28] * 2 + [0, 0, 1, 0]
 
 
@@ -324,7 +355,7 @@ def test_counts_within_the_tolerance_are_one_group(tmp_path):
 def test_one_stray_canSNP_is_not_the_narrowest_group(tmp_path):
     observed = widths(tmp_path, [200] * 3 + [150] * 3 + [20])
     judged, _nodes = judge_by_narrowest_group(observed)
-    apart = [judged[("A", 100 + index)].discordant for index in range(7)]
+    apart = [judged[("A", "c1", 100 + index)].discordant for index in range(7)]
     assert apart == [50] * 3 + [0] * 3 + [130]
 
 
@@ -332,8 +363,8 @@ def test_genomes_without_a_base_may_make_up_the_width(tmp_path):
     # Derived in 60 and without a base in 10: it may be derived in 68.
     observed = widths(tmp_path, [125] * 3 + [68] * 3 + [(60, 10), (40, 10)])
     judged, _nodes = judge_by_narrowest_group(observed)
-    assert judged[("A", 106)].discordant == 0
-    assert judged[("A", 107)].discordant == 18
+    assert judged[("A", "c1", 106)].discordant == 0
+    assert judged[("A", "c1", 107)].discordant == 18
 
 
 def test_evaluate_names_the_nodes_it_judged_by_a_group(written, dataset, tmp_path, caplog):
@@ -342,7 +373,7 @@ def test_evaluate_names_the_nodes_it_judged_by_a_group(written, dataset, tmp_pat
     # The canSNP of the scheme and one more are derived in 150 genomes, two
     # further candidates of the node in 50.
     nested = observed_table(tmp_path, [
-        ["A", rank, real["reference_genome"], position, real["derived_base"],
+        ["A", rank, real["reference_genome"], real["sequence"], position, real["derived_base"],
          real["ancestral_base"], 300, 300, 0, derived, 300 - derived, 0, 0, 0, 0]
         for rank, (position, derived) in enumerate(
             [(real["position"], 150), (9001, 150), (9002, 50), (9003, 50)], start=1)])

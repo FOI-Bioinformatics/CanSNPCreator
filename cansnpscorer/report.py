@@ -92,7 +92,7 @@ def _typing_lines(typing: TypingReport) -> list[str]:
     lines = [
         "## Typing of the genomes", "",
         "Every genome of the alignment was typed with the scheme under two rules. The "
-        "`single` rule is that of CanSNPer2 2.2.1 and 2.2.2: one canSNP per node, and the deepest "
+        "`single` rule is that of CanSNPer2 2.3.0: one canSNP per node, and the deepest "
         "derived node whose chain from the root holds no ancestral node or third base, "
         "enough derived nodes, and a derived parent. The `set` rule takes the majority of "
         "each node's canSNPs and may pass a node without a decision. The reference genome "
@@ -122,7 +122,7 @@ def _typing_lines(typing: TypingReport) -> list[str]:
         return max(int(row[at["discordant_in_set"]]),
                    int(row[at["ancestral_on_path"]]) + int(row[at["derived_off_path"]]))
 
-    shown = ("node", "rank", "contig", "contig_position", "genomes", "missing",
+    shown = ("node", "rank", "sequence", "position", "genomes", "missing",
              "discordant_in_set", "ancestral_on_path", "derived_off_path")
     disagreeing = sorted((row for row in typing.snp_rows if disagreement(row)),
                          key=lambda row: (-disagreement(row), row[at["node"]],

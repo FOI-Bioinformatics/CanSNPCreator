@@ -10,7 +10,7 @@ made from.
 Each genome is typed under two rules:
 
 ``single``
-    The rule of CanSNPer2 2.2.1 and 2.2.2, which reads one canSNP per node, the one of
+    The rule of CanSNPer2 2.3.0, which reads one canSNP per node, the one of
     rank 1. The call is the deepest derived node whose chain of nodes from
     the root holds no ancestral node and no node of another base, holds at
     least ``min_required_hits`` derived nodes that are at least
@@ -73,14 +73,15 @@ GENOME_COLUMNS = ("genome", "role", "single_call", "single_depth", "single_stop_
                   "set_depth", "derived_on_path", "missing_on_path", "ancestral_on_path",
                   "derived_off_path", "discordant", "expected", "single_outcome",
                   "set_outcome")
-SNP_COLUMNS = ("node", "rank", "reference_genome", "position", "contig", "contig_position",
+SNP_COLUMNS = ("node", "rank", "reference_genome", "sequence", "position",
                "derived_base", "ancestral_base",
                "genomes", "called", "missing", "derived", "ancestral", "other",
                "discordant_in_set", "ancestral_on_path", "derived_off_path", "derived_set",
                "set_apart")
-#: The columns evaluate --observed needs. Tables written before 0.4 name the
-#: reference genome ``genome`` and hold no contig; they are still read.
-OBSERVED_COLUMNS = ("node", "position", "derived_base", "ancestral_base", "missing", "derived",
+#: The columns evaluate --observed needs. The position is on the reference
+#: sequence of the ``sequence`` column; tables without that column give it
+#: along the joined reference sequences and are refused.
+OBSERVED_COLUMNS = ("node", "sequence", "position", "derived_base", "ancestral_base", "missing", "derived",
                     "ancestral", "other", "discordant_in_set", "ancestral_on_path",
                     "derived_off_path")
 RANK_COLUMNS = ("rank", "snps", "genomes", "called", "missing", "missing_pct",
@@ -203,7 +204,7 @@ def _lineages(hierarchy) -> dict[str, list[str]]:
 
 
 def cansnper2_state(base: str, snp: SchemeSnp) -> str:
-    """The state CanSNPer2 2.2.1 and 2.2.2 give a base: as ``snp_state``, but
+    """The state CanSNPer2 2.3.0 gives a base: as ``snp_state``, but
     any character other than a gap or N, such as an ambiguity code, is
     another base, which breaks the single rule's chain. CanSNPer2 does so
     with progressiveMauve, its default aligner, on the forward strand of an
@@ -253,7 +254,7 @@ STRICTNESS = 0.7
 def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
                   min_required_hits: int, strictness: float = STRICTNESS,
                   labels: Set[str] = frozenset()) -> tuple[str, str]:
-    """Whether CanSNPer2 2.2.1 and 2.2.2 confirm the chain from the root to a node.
+    """Whether CanSNPer2 2.3.0 confirms the chain from the root to a node.
 
     A node of the tree without a SNP, in ``labels``, is no part of the chain:
     CanSNPer2 names it ``-name-`` and passes it. Every other node of the
@@ -263,7 +264,7 @@ def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Seq
     node itself and the node directly above it on the chain are derived, at
     least ``min_required_hits`` of its nodes are derived, and they are at
     least ``strictness`` of the chain (``NewickTree._confirm_path`` of
-    CanSNPer2 2.2.1).
+    CanSNPer2 2.2.1 to 2.3.0).
 
     Returns:
         ("", "") when confirmed; otherwise the reason and the node it
@@ -294,7 +295,7 @@ def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Seq
 def single_call(first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
                 min_required_hits: int, strictness: float = STRICTNESS,
                 labels: Set[str] = frozenset()) -> str | None:
-    """The call of CanSNPer2 2.2.1 and 2.2.2 from the state of each node's first canSNP:
+    """The call of CanSNPer2 2.3.0 from the state of each node's first canSNP:
     the deepest node whose chain ``confirm_chain`` confirms. Two confirmed
     nodes at the greatest depth give no call. (CanSNPer2 also requires the
     genome to have ``min_required_hits`` derived nodes in all, which a
@@ -366,10 +367,8 @@ def scheme_columns(scheme: Scheme, mapping: AlignmentMap, genome: str | None
             continue
         if snp.node not in scheme.hierarchy.parents:
             continue
-        column = None
-        if 1 <= snp.position <= mapping.reference.length:
-            column = mapping.to_column(snp.position - 1)
-        by_node.setdefault(snp.node, []).append((snp, column))
+        by_node.setdefault(snp.node, []).append(
+            (snp, mapping.column_at(snp.sequence, snp.position)))
     return by_node
 
 
@@ -463,7 +462,7 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         result.states = "".join("".join(states) for states in per_node.values())
 
         nodes = {node: node_state(states) for node, states in per_node.items()}
-        # CanSNPer2 2.2.1 tells a third base, which breaks a chain, from no
+        # CanSNPer2 2.3.0 tells a third base, which breaks a chain, from no
         # base, which is a gap in it.
         first = {node: (MISSING if not has_first[node] or snps[0][1] is None
                         else cansnper2_state(sequence[snps[0][1]], snps[0][0]))
@@ -498,7 +497,7 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         starts[node] = total
         total += len(snps)
     counted = [result for result in typed if result.role == ISOLATE]
-    report.snp_rows = _snp_rows(by_node, starts, typed, reference)
+    report.snp_rows = _snp_rows(by_node, starts, typed)
     report.node_rows = _node_rows(hierarchy.nodes, by_node, starts, typed, lineage)
     report.rank_rows = _rank_rows(report.snp_rows)
     report.stops = [(node, reason, count) for (node, reason), count in sorted(
@@ -651,8 +650,8 @@ def set_apart(start: int, count: int, typed: Sequence[GenomeTyping],
     return apart
 
 
-def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping],
-              reference: Reference) -> list[list[str]]:
+def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]
+              ) -> list[list[str]]:
     rows = []
     crowded = [node for node, snps in by_node.items() if len(snps) > MAX_SET_LABELLED]
     if crowded:
@@ -689,12 +688,8 @@ def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping],
                 elif not on_path and state == DERIVED:
                     counts["derived_off_path"] += 1
             called = counts[DERIVED] + counts[ANCESTRAL] + counts[OTHER]
-            contig, local = NA, NA
-            if 1 <= snp.position <= reference.length:
-                found, offset = reference.locate(snp.position - 1)
-                contig, local = found.name, str(offset + 1)
             rows.append([
-                node, str(snp.rank), snp.genome, str(snp.position), contig, local,
+                node, str(snp.rank), snp.genome, snp.sequence, str(snp.position),
                 snp.derived, snp.ancestral,
                 str(len(typed)), str(called), str(counts[MISSING]), str(counts[DERIVED]),
                 str(counts[ANCESTRAL]), str(counts[OTHER]), str(counts["discordant"]),
@@ -934,18 +929,26 @@ class Observed:
     before the column was added."""
 
 
-def read_observed(path: str) -> dict[tuple[str, int], Observed]:
-    """Read PREFIX_snps.tsv, keyed by (node, 1-based position over the
-    concatenated reference).
+def read_observed(path: str) -> dict[tuple[str, str, int], Observed]:
+    """Read PREFIX_snps.tsv, keyed by (node, reference sequence, 1-based
+    position on that sequence).
 
     Raises:
-        ValueError: If the table is not one, or holds canSNPs of more than
-            one reference genome, whose positions cannot be told apart.
+        ValueError: If the table is not one, gives positions along the
+            joined reference sequences as tables before the ``sequence``
+            column did, or holds canSNPs of more than one reference genome,
+            whose positions cannot be told apart.
     """
-    observed: dict[tuple[str, int], Observed] = {}
+    observed: dict[tuple[str, str, int], Observed] = {}
     genomes: set[str] = set()
     with open(path) as handle:
         header = handle.readline().rstrip("\n").split("\t")
+        if "position" in header and "node" in header and "sequence" not in header:
+            raise ValueError(
+                f"{path}: has no sequence column, so its positions are counted along the "
+                f"joined reference sequences, as CanSNPer2 2.2 and the typing reports of "
+                f"cansnpcreator 0.5 give them. Write the typing report again with audit "
+                f"--typing-report on a scheme in the CanSNPer2 2.3.0 format")
         lacking = [column for column in OBSERVED_COLUMNS if column not in header]
         named = "reference_genome" if "reference_genome" in header else "genome"
         if named not in header:
@@ -963,7 +966,8 @@ def read_observed(path: str) -> dict[tuple[str, int], Observed]:
             if not line.strip():
                 continue
             try:
-                key = (fields[at["node"]], int(fields[at["position"]]))
+                key = (fields[at["node"]], fields[at["sequence"]],
+                       int(fields[at["position"]]))
                 genomes.add(fields[at[named]])
                 row = Observed(
                     genomes=int(fields[at["derived"]]) + int(fields[at["ancestral"]]),
@@ -1050,8 +1054,8 @@ def _width_groups(rows: Sequence[Observed]) -> tuple[list[list[Observed]], bool]
 
 
 def judge_by_narrowest_group(
-        observed: Mapping[tuple[str, int], Observed]
-) -> tuple[dict[tuple[str, int], Observed], list[str]]:
+        observed: Mapping[tuple[str, str, int], Observed]
+) -> tuple[dict[tuple[str, str, int], Observed], list[str]]:
     """Judge the canSNPs of nodes that hold no majority by their narrowest group.
 
     The typing report counts a canSNP as disagreeing where it differs from
@@ -1087,7 +1091,7 @@ def judge_by_narrowest_group(
     Returns:
         The observations, changed for those nodes, and the nodes.
     """
-    by_node: dict[str, list[tuple[tuple[str, int], Observed]]] = {}
+    by_node: dict[str, list[tuple[tuple[str, str, int], Observed]]] = {}
     for key, row in observed.items():
         by_node.setdefault(key[0], []).append((key, row))
     judged = dict(observed)

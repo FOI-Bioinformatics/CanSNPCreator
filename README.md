@@ -13,6 +13,17 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
+## Upgrading to 0.6.0
+
+Version 0.6.0 writes and reads only the CanSNPer2 2.3.0 scheme format, in
+which each canSNP is a sequence (a GenBank accession) and a position on it.
+A scheme made for an earlier version is converted with
+`CanSNPer2-database --convert` (CanSNPer2 2.3.0) before `audit` or `place` reads
+it. A `_snps.tsv` table written by `audit --typing-report` before 0.6.0 has no
+`sequence` column and is refused by `evaluate --observed`; write it again. The
+`_snps.tsv` of the typing report now has the columns `sequence` and `position`
+in place of `contig` and `contig_position`.
+
 ## Installation
 
 Python 3.13 or later; the package has no dependencies.
@@ -240,7 +251,13 @@ for a scheme exported from these canSNPs, and records in
 canSNP behaved in the genomes typed. A canSNP that was typed with and held is
 ranked before one that was never observed, and one that disagreed with its
 node after both. For a ranking of every candidate, export the scheme the
-report types with using `--snps-per-node all --min-spacing 0`.
+report types with using `--snps-per-node all --min-spacing 0`. The table is
+matched to the candidates by node, sequence and position; a sequence the
+table names by its GenBank accession is matched to a candidate on the RefSeq
+sequence that `--contig-aliases` pairs with it. A table without the
+`sequence` column, written by an earlier version, gives positions along the
+joined reference sequences and is refused; write it again with
+`audit --typing-report`.
 
 Two split-half tests give an indication of what this ranking changes. Genomes
 left out of a scheme's tree were divided in two, every candidate was typed on
@@ -336,10 +353,31 @@ scheme a larger `--min-spacing` is worth trying.
 
 `export` takes the highest scoring passing canSNP of each node and writes
 `<organism>_tree.txt`, `<organism>_snp.txt` and `<organism>_references.txt` as
-CanSNPer2-data expects them, with positions counted over the concatenated
-genome, since its SNP file has no contig column. That repository's rules are
-checked first, so the result passes its `validate.py` unchanged. A node with no
-canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
+CanSNPer2-data expects them in the format of CanSNPer2 2.3.0: each canSNP names
+its reference sequence (`sequence`) and gives a 1-based position on that
+sequence (`sequence_position`), not a position along the sequences joined in
+file order as earlier versions wrote it. The SNP file has the columns
+
+```
+snp_id	strain	reference	genome	sequence	sequence_position	derived_base	ancestral_base
+```
+
+A sequence is named by its GenBank accession, as in the FASTA files
+CanSNPer2-download fetches. A reference whose sequences carry RefSeq names
+(`NC_`, `NZ_`, `AC_`) needs `--contig-aliases <assembly_report.txt>`, NCBI's
+assembly report for the assembly; each such sequence is written as the one name
+of its alias set that is a versioned GenBank accession (letters, digits, a
+version, no underscore), and the export stops when there is none or more than
+one. It also stops when the assembly report gives the RefSeq and the GenBank
+sequence as not identical (Relationship `<>`), since a position on one need not
+hold on the other; such a scheme is evaluated and exported against the GenBank
+assembly. Any other name, as of a local assembly or a RefSeq contig or scaffold
+(`NT_`, `NW_`), is written as it is, with a warning that CanSNPer2-download
+will not find a genome by it. Schemes written before
+2.3.0, with one position along the joined reference sequences, are converted
+with `CanSNPer2-database --convert`; `audit` and `place` refuse them with that
+hint. That repository's rules are checked first, so the result passes its
+`validate.py` unchanged. A node with no canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
 children to the nearest node that has one. With `--genome-map` (which needs
 `--alignment`) the warning also gives the number of genomes moved to an ancestor
 and the deepest pruned depth.
@@ -350,11 +388,11 @@ as `evaluate --top-n` chooses them, at least `--min-spacing` bases apart, and
 writes them all to `<organism>_canSNPs.txt`:
 
 ```
-node	rank	genome	position	derived_base	ancestral_base	score
+node	rank	genome	sequence	sequence_position	derived_base	ancestral_base	score
 ```
 
-ranked within each node, with rank 1 the SNP of the SNP file. Positions count
-over the concatenated genome, as in the SNP file. CanSNPer2-data's
+ranked within each node, with rank 1 the SNP of the SNP file. Each canSNP is
+given by sequence and position on it, as in the SNP file. CanSNPer2-data's
 `validate.py` checks that rank 1 agrees with the SNP file, and `audit` checks
 every rank against the reference and the genomes.
 
@@ -431,12 +469,20 @@ CanSNPer2-data's `validate.py` answers whether a scheme is well formed; the
 audit answers whether it can be typed with, and how it would be extended or
 modified.
 
+A scheme in the CanSNPer2 2.3.0 format names each canSNP's sequence by its
+GenBank accession. When `--reference` holds the same assembly under RefSeq
+names, pass `--contig-aliases <assembly_report.txt>`: the scheme's sequence
+names are resolved to the reference's contigs through it. A sequence that
+neither the reference nor the aliases hold is reported as a `sequence` problem,
+with the names the reference does hold. A scheme in the earlier format is
+refused, with the hint to convert it with `CanSNPer2-database --convert`.
+
 | Check | Needs | What it reports |
 | ----- | ----- | --------------- |
 | tree | | a node under two parents, a node with no SNP or two, a SNP naming a node the tree does not hold |
 | alleles | | a base outside A, C, G and T, which can never be called derived; equal derived and ancestral bases; two nodes at one position |
 | references | | a genome name with an underscore, a malformed accession, a SNP on a genome the references file lacks |
-| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes without a SNP (`unreachable`), which CanSNPer2 2.2.1 and 2.2.2 pass but cannot call |
+| callability | | nodes with fewer than `--min-required-hits` SNPs on the path from the root, and nodes without a SNP (`unreachable`), which CanSNPer2 2.3.0 passes but cannot call |
 | spacing | | two SNPs of the SNP file closer than `--proximity` bases, which a deletion or a poorly aligned stretch removes together |
 | clustered set | | a node more than half of whose ranked canSNPs, and at least three, lie within `--set-region` bases (default 10000; 0 turns it off), so that one deletion removes most of the node's set from a genome |
 | reference base | `--reference` | a position whose reference base is neither allele; when most are, coordinates taken against another version of the assembly |
@@ -499,7 +545,7 @@ scheme's columns.
 `--typing-report PREFIX` evaluates the scheme on the genomes of `--alignment`
 without being told where they belong, so it can be run on genomes the scheme
 was not made from. Every genome is typed twice: by the rule of CanSNPer2
-2.2.1 and 2.2.2, which reads the first canSNP of each node and calls the deepest
+2.3.0, which reads the first canSNP of each node and calls the deepest
 derived node whose chain from the root holds no ancestral canSNP or third
 base, holds at least `--min-required-hits` derived nodes that make up at
 least `--strictness` (default 0.7) of the chain, and whose parent is
@@ -544,7 +590,8 @@ tables are written:
   the node expected.
 - `PREFIX_snps.tsv`: for each canSNP, in how many genomes it has no base,
   disagrees with the other canSNPs of its node, is ancestral on the genome's
-  path or derived off it, with its contig and position there. A last column,
+  path or derived off it, with its reference sequence (`sequence`) and its
+  position on that sequence (`position`), as the scheme gives them. A last column,
   `derived_set`, labels the canSNPs of each node by the genomes they are
   derived in: canSNPs of one label are derived in the same genomes, but for
   one in a hundred (at least two), genomes without a base allowing for either

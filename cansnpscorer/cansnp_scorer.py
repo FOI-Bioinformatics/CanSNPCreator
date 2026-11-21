@@ -184,12 +184,15 @@ def add_rule(parser) -> None:
              "Default: jaccard.")
 
 
-def add_contig_aliases(parser) -> None:
+CONTIG_ALIASES_PURPOSE = ("so that annotation files from another naming of the same assembly "
+                          "can be used")
+
+
+def add_contig_aliases(parser, purpose: str = CONTIG_ALIASES_PURPOSE) -> None:
     parser.add_argument(
         "--contig-aliases", default=None, metavar="FILE",
-        help="Other names of the reference's contigs, so that annotation files from another "
-             "naming of the same assembly can be used: NCBI's assembly_report.txt, which pairs "
-             "GenBank and RefSeq accessions, or a UCSC chromAlias table.")
+        help=f"Other names of the reference's contigs, {purpose}: NCBI's assembly_report.txt, "
+             f"which pairs GenBank and RefSeq accessions, or a UCSC chromAlias table.")
 
 
 def main():
@@ -301,8 +304,8 @@ def main():
         "export", help="Write scored canSNPs as the source files of a CanSNPer2-data scheme.")
     export.add_argument("--scores", required=True, help="The scored canSNPs evaluate wrote.")
     add_hierarchy(export)
-    add_reference(export, purpose="Its contig lengths turn positions into the concatenated "
-                                  "coordinates the scheme's SNP file uses.")
+    add_reference(export, purpose="Its sequences are checked against the canSNPs' positions "
+                                  "and bases, and name the sequence column of the SNP file.")
     export.add_argument("--organism", required=True,
                         help="Names the three files, as in francisella_tularensis.")
     export.add_argument("--genome", required=True,
@@ -336,6 +339,10 @@ def main():
                         help="Leave out nodes that have no canSNP, instead of refusing to write "
                              "a scheme. Their children then hang from the nearest node that has "
                              "one.")
+    add_contig_aliases(export, purpose="so that a sequence the reference names by its RefSeq "
+                                       "accession (NC_, NZ_, AC_) is written under its GenBank "
+                                       "accession, as CanSNPer2 2.3.0 names reference sequences. "
+                                       "Without it, such a name stops the export")
     add_version(export)
 
     # audit
@@ -359,7 +366,9 @@ def main():
                        help="Which of the scheme's reference genomes --reference holds, when "
                             "the scheme names more than one.")
     add_masks(audit, "SNPs of the scheme in them are reported. Needs --reference.")
-    add_contig_aliases(audit)
+    add_contig_aliases(audit, purpose="so that the scheme's sequences, as a GenBank name of "
+                       "a sequence the reference names by its RefSeq accession, and the "
+                       "sequences of --masks are found in the reference")
     audit.add_argument("--min-required-hits", type=at_least(1), default=MINIMUM_SNPS_PER_NODE,
                        help=f"The SNPs CanSNPer2 requires on the path to a node before it calls "
                             f"it. Default: {MINIMUM_SNPS_PER_NODE}, as CanSNPer2 uses.")
@@ -580,7 +589,7 @@ def run(args, parser, evaluate, place) -> int:
             citation=args.citation, genbank_id=args.genbank_id, refseq_id=args.refseq_id,
             assembly_name=args.assembly_name, prune=args.prune, genome_map=args.genome_map,
             alignment=args.alignment, snps_per_node=args.snps_per_node,
-            spacing=args.min_spacing)
+            spacing=args.min_spacing, contig_aliases=args.contig_aliases)
     if args.command == "audit":
         return cansnp_audit.main(
             scheme_dir=args.scheme_dir, organism=args.organism, reference=args.reference,

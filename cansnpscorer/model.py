@@ -241,6 +241,21 @@ class AlignmentMap:
         column = self._columns[position]
         return None if column < 0 else column
 
+    def column_at(self, sequence: str, position: int) -> int | None:
+        """The column holding a 1-based position on one sequence of the reference.
+
+        None when the reference holds no sequence of that name, the position
+        lies outside it, or no column covers it. The alignment is addressed
+        along the joined reference sequences; that joined position is used
+        here only and is not returned.
+        """
+        if sequence not in self.reference.names:
+            return None
+        contig = self.reference.contig(sequence)
+        if not 1 <= position <= contig.length:
+            return None
+        return self.to_column(contig.start + position - 1)
+
     def locate(self, column: int) -> tuple[Contig, int] | None:
         """The contig and 1-based position for a column, or None if the reference is gapped."""
         position = self.to_reference(column)

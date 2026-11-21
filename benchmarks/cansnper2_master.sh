@@ -12,6 +12,9 @@
 #   comparison.tsv/.txt   compare_cansnper2.py
 # The held-out alignment is projected again when it is missing.
 #
+# The held-out scheme is read as the CanSNPer2 2.3.0 format, so CANSNPER2_SRC
+# must be a 2.3.0 source tree and cansnper2_type.sh must create the database
+# with 2.3.0.
 # CanSNPer2 is run from CANSNPER2_SRC (a copy of its source tree, for example
 # from `git archive`) with --aligner minimap2 and its default
 # --min_required_hits 3 and --strictness 0.7. CANSNPER2_PY must be Python
