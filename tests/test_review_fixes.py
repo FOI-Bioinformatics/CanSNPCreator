@@ -23,7 +23,7 @@ from cansnpscorer.scheme import Scheme, SchemeSnp, hierarchy_from_paths, schemes
 
 def scheme_of(paths, snps):
     hierarchy, _conflicts, _problems = hierarchy_from_paths(paths)
-    rows = [SchemeSnp(node=node, strain="s", reference="r", genome=genome, position=position,
+    rows = [SchemeSnp(node=node, strain="s", reference="r", genome=genome, sequence="c1", position=position,
                       derived=derived, ancestral=ancestral)
             for node, genome, position, derived, ancestral in snps]
     return Scheme(organism="t", paths=paths, snps=rows, hierarchy=hierarchy)
@@ -70,8 +70,9 @@ def test_audit_from_the_genomes_file_keeps_the_genome_option(tmp_path, caplog):
     directory.mkdir()
     (directory / "t_tree.txt").write_text("R\nR\tN\n")
     (directory / "t_snp.txt").write_text(
-        "snp_id\tstrain\treference\tgenome\tposition\tderived_base\tancestral_base\n"
-        "R\ts\tr\tREF\t1\tA\tG\nN\ts\tr\tREF\t3\tT\tG\n")
+        "snp_id\tstrain\treference\tgenome\tsequence\tsequence_position\tderived_base\t"
+        "ancestral_base\n"
+        "R\ts\tr\tREF\tc1\t1\tA\tG\nN\ts\tr\tREF\tc1\t3\tT\tG\n")
     (directory / "t_references.txt").write_text(
         "genome\tstrain\tgenbank_id\trefseq_id\tassembly_name\n"
         "REF\ts\tGCA_000000001.1\tGCF_000000001.1\tASM1v1\n")

@@ -12,12 +12,13 @@ describes existing behaviour and makes no change to CanSNPer2.
 `<organism>_tree.txt` and `<organism>_snp.txt` (README, section "Export"):
 
 ```
-node	rank	genome	position	derived_base	ancestral_base	score
+node	rank	genome	sequence	sequence_position	derived_base	ancestral_base	score
 ```
 
 Rank is counted within each node. Rank 1 is the SNP of `<organism>_snp.txt`, so a
-reader that ignores the set sees the single-SNP scheme. Positions are counted over
-the concatenated reference genome, as in the SNP file. With the default
+reader that ignores the set sees the single-SNP scheme. Each canSNP is given by
+its reference sequence and a 1-based position on it, as in the SNP file
+(CanSNPer2 2.3.0). With the default
 `--snps-per-node 1` the file holds rank 1 only.
 
 ## 2. State of a node (`snp_state`, `node_state`)

@@ -7,10 +7,18 @@ be audited, so what is wrong with it must survive reading rather than stop it.
 Rows that cannot be read at all are collected as problems and handed to the
 caller together with the scheme.
 
-The three files are described in the source/README.md of the CanSNPer2-data
+The three files are described in the schemes/README.md of the CanSNPer2-data
 repository. In short: the tree file holds one line per path from the root, the
 SNP file one line per node with a header, and the references file one line per
 reference genome with a header.
+
+The SNP file and the optional canSNP set are read in the format of CanSNPer2
+2.3.0, in which each canSNP names a reference sequence, by its GenBank
+accession, and gives a 1-based position on that sequence. Columns are found by
+the names in the header. A file written before 2.3.0, with one position along
+the reference sequences joined in file order, is refused with the command that
+converts it, since that position cannot be placed on a sequence without the
+reference genome.
 """
 
 import glob
@@ -26,11 +34,16 @@ SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
 GENOMES_SUFFIX = "_genomes.txt"
 SNP_SET_SUFFIX = "_canSNPs.txt"
-SNP_SET_COLUMNS = ("node", "rank", "genome", "position", "derived_base", "ancestral_base",
-                   "score")
+SNP_SET_COLUMNS = ("node", "rank", "genome", "sequence", "sequence_position", "derived_base",
+                   "ancestral_base", "score")
 
-SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
+SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "sequence", "sequence_position",
                "derived_base", "ancestral_base")
+#: What a file with the header of CanSNPer2 before 2.3.0 is told to do.
+CONVERT_HINT = ("it has the header of CanSNPer2 before 2.3.0, with one position along the "
+                "reference sequences joined in file order; convert it with "
+                "CanSNPer2-database --convert (CanSNPer2 2.3.0), which gives each canSNP a "
+                "sequence and a position on it")
 REFERENCE_COLUMNS = ("genome", "strain", "genbank_id", "refseq_id", "assembly_name")
 GENOME_COLUMNS = ("genome", "node", "role")
 GENOME_ROLES = ("representative", "member", "outgroup")
@@ -48,7 +61,10 @@ class SchemeSnp:
     strain: str
     reference: str
     genome: str
+    sequence: str
+    """The reference sequence the canSNP is on, as the SNP file names it."""
     position: int
+    """1-based position on ``sequence``."""
     derived: str
     ancestral: str
     line: int = 0
@@ -57,7 +73,7 @@ class SchemeSnp:
 
     @property
     def where(self) -> str:
-        return f"{self.genome}:{self.position}"
+        return f"{self.genome} {self.sequence}:{self.position}"
 
     def tag(self, text: str) -> str:
         """A finding's text, saying which canSNP of the node it is about when
@@ -144,7 +160,17 @@ def paths_for(directory: str, organism: str) -> tuple[str, str, str]:
 
 
 def _rows(path: str, columns: Sequence[str], problems: list[str]) -> list[tuple[int, list[str]]]:
-    """Read a tab separated file with a header, checking the column names."""
+    """Read a tab separated file with a header, by the names of its columns.
+
+    Each row is returned with its fields in the order of ``columns``, whatever
+    order the file gives them in. A header without one of the columns is a
+    problem and no rows are read; a column not among them is a problem, and the
+    rows are read without it. A header with a position and no
+    sequence_position is that of CanSNPer2 before 2.3.0, which is refused.
+
+    Raises:
+        SchemeError: If the file has the header of CanSNPer2 before 2.3.0.
+    """
     rows: list[tuple[int, list[str]]] = []
     with open(path, newline="") as handle:
         # Only LF and CR LF end a line; splitlines would also split on Unicode
@@ -157,23 +183,32 @@ def _rows(path: str, columns: Sequence[str], problems: list[str]) -> list[tuple[
         problems.append(f"{os.path.basename(path)} is empty")
         return rows
 
-    header = lines[0].split("\t")
-    if [name.strip() for name in header] != list(columns):
+    name = os.path.basename(path)
+    header = [column.strip() for column in lines[0].split("\t")]
+    if "sequence_position" in columns and "position" in header \
+            and "sequence_position" not in header:
+        raise SchemeError(f"{name}: {CONVERT_HINT}")
+    missing = [column for column in columns if column not in header]
+    if missing or len(set(header)) != len(header):
         problems.append(
-            f"{os.path.basename(path)} has the header {', '.join(header)} where "
-            f"{', '.join(columns)} is expected")
+            f"{name} has the header {', '.join(header)} where the columns "
+            f"{', '.join(columns)} are expected, each once")
         return rows
+    extra = [column for column in header if column not in columns]
+    if extra:
+        problems.append(f"{name} has the columns {', '.join(extra)}, which are not read")
+    order = [header.index(column) for column in columns]
 
     for number, line in enumerate(lines[1:], 2):
         if not line.strip():
             continue
         fields = line.split("\t")
-        if len(fields) != len(columns):
+        if len(fields) != len(header):
             problems.append(
-                f"{os.path.basename(path)} line {number} holds {len(fields)} columns where "
-                f"{len(columns)} are expected")
+                f"{name} line {number} holds {len(fields)} columns where "
+                f"{len(header)} are expected")
             continue
-        rows.append((number, fields))
+        rows.append((number, [fields[index] for index in order]))
     return rows
 
 
@@ -242,7 +277,8 @@ def read_scheme(directory: str, organism: str | None = None) -> Scheme:
         The scheme, with whatever could not be read listed in ``problems``.
 
     Raises:
-        SchemeError: If the scheme's files are not there.
+        SchemeError: If the scheme's files are not there, or its SNP file or
+            canSNP set has the header of CanSNPer2 before 2.3.0.
         OSError: If a file cannot be read.
     """
     available = schemes_in(directory)
@@ -272,16 +308,20 @@ def read_scheme(directory: str, organism: str | None = None) -> Scheme:
 
     snps: list[SchemeSnp] = []
     for number, fields in _rows(snp_path, SNP_COLUMNS, problems):
-        node, strain, reference, genome, position, derived, ancestral = fields
+        node, strain, reference, genome, sequence, position, derived, ancestral = fields
         try:
             value = int(position)
         except ValueError:
             problems.append(
-                f"{os.path.basename(snp_path)} line {number} gives the position of '{node}' as "
-                f"'{position}', which is not a whole number")
+                f"{os.path.basename(snp_path)} line {number} gives the sequence_position of "
+                f"'{node}' as '{position}', which is not a whole number")
+            continue
+        if not sequence.strip():
+            problems.append(
+                f"{os.path.basename(snp_path)} line {number} names no sequence for '{node}'")
             continue
         snps.append(SchemeSnp(node=node.strip(), strain=strain, reference=reference,
-                              genome=genome.strip(), position=value,
+                              genome=genome.strip(), sequence=sequence.strip(), position=value,
                               derived=derived.strip(), ancestral=ancestral.strip(),
                               line=number))
 
@@ -325,15 +365,19 @@ def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: list[str]) -> l
     name = os.path.basename(path)
     snp_set: list[SchemeSnp] = []
     for number, fields in _rows(path, SNP_SET_COLUMNS, problems):
-        node, rank, genome, position, derived, ancestral, _score = (f.strip() for f in fields)
+        node, rank, genome, sequence, position, derived, ancestral, _score = (
+            f.strip() for f in fields)
         try:
             rank_value, position_value = int(rank), int(position)
         except ValueError:
-            problems.append(f"{name} line {number} gives the rank '{rank}' and position "
+            problems.append(f"{name} line {number} gives the rank '{rank}' and sequence_position "
                             f"'{position}', which are not both whole numbers")
             continue
+        if not sequence:
+            problems.append(f"{name} line {number} names no sequence for '{node}'")
+            continue
         snp_set.append(SchemeSnp(node=node, strain="", reference="", genome=genome,
-                                 position=position_value, derived=derived,
+                                 sequence=sequence, position=position_value, derived=derived,
                                  ancestral=ancestral, line=number, rank=rank_value))
 
     # Export numbers each node's canSNPs 1, 2, 3 ... in file order. A gap or a
@@ -348,8 +392,9 @@ def read_snp_set(path: str, snps: Sequence[SchemeSnp], problems: list[str]) -> l
                 f"{name} gives node '{node}' the ranks {', '.join(map(str, found))}, where "
                 f"1 to {len(found)} in order are expected")
 
-    called = {snp.node: (snp.genome, snp.position, snp.derived, snp.ancestral) for snp in snps}
-    first = {snp.node: (snp.genome, snp.position, snp.derived, snp.ancestral)
+    called = {snp.node: (snp.genome, snp.sequence, snp.position, snp.derived, snp.ancestral)
+              for snp in snps}
+    first = {snp.node: (snp.genome, snp.sequence, snp.position, snp.derived, snp.ancestral)
              for snp in snp_set if snp.rank == 1}
     for node in sorted(set(called) & set(first)):
         if called[node] != first[node]:

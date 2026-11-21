@@ -124,8 +124,9 @@ def test_a_genome_outside_the_node_with_the_derived_base_is_reported(written, da
 def test_swapped_alleles_are_reported_as_polarity(written, dataset):
     outdir, _scores = written
     column, ancestral, derived = PLANTED["A.1"]
-    edit(outdir, SNPS, f"\t{column + 1}\t{derived}\t{ancestral}\n",
-         f"\t{column + 1}\t{ancestral}\t{derived}\n")
+    sequence, position = dataset.contig_of(column)
+    edit(outdir, SNPS, f"\t{sequence}\t{position}\t{derived}\t{ancestral}\n",
+         f"\t{sequence}\t{position}\t{ancestral}\t{derived}\n")
     # The isolates below A.1 now carry what the scheme calls ancestral, and
     # every genome outside it what the scheme calls derived.
     findings = audit(outdir, dataset)
@@ -165,8 +166,10 @@ def write_snp_set(outdir, extra_rows):
     """A canSNP set whose rank 1 is the SNP file, with these further rows."""
     with open(os.path.join(outdir, SNPS)) as handle:
         rows = [line.rstrip("\n").split("\t") for line in handle][1:]
-    lines = ["node\trank\tgenome\tposition\tderived_base\tancestral_base\tscore"]
-    lines += [f"{row[0]}\t1\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}\t500" for row in rows]
+    lines = ["node\trank\tgenome\tsequence\tsequence_position\tderived_base\tancestral_base\t"
+             "score"]
+    lines += [f"{row[0]}\t1\t{row[3]}\t{row[4]}\t{row[5]}\t{row[6]}\t{row[7]}\t500"
+              for row in rows]
     lines += extra_rows
     path = os.path.join(outdir, SNPS.replace("_snp.txt", "_canSNPs.txt"))
     with open(path, "w") as handle:
@@ -178,7 +181,9 @@ def test_every_ranked_canSNP_is_checked_in_the_genomes(written, dataset):
     outdir = written[0]
     column, ancestral, derived, _isolates = INCONGRUENT
     genome = write_snp_set(outdir, [])
-    write_snp_set(outdir, [f"A.1\t2\t{genome}\t{column + 1}\t{derived}\t{ancestral}\t400"])
+    sequence, position = dataset.contig_of(column)
+    write_snp_set(outdir, [f"A.1\t2\t{genome}\t{sequence}\t{position}\t{derived}\t{ancestral}"
+                           f"\t400"])
     scheme = read_scheme(outdir)
     assert scheme.problems == []
     assert [snp.rank for snp in scheme.checked_snps if snp.node == "A.1"] == [1, 2]
@@ -200,7 +205,9 @@ def test_a_rank_one_that_is_not_the_snp_file_is_a_problem(written, dataset):
     with open(path) as handle:
         text = handle.read()
     column, _ancestral, _derived = PLANTED["B.1"]
-    text = text.replace(f"B.1\t1\t{genome}\t{column + 1}\t", f"B.1\t1\t{genome}\t{column + 2}\t")
+    sequence, position = dataset.contig_of(column)
+    text = text.replace(f"B.1\t1\t{genome}\t{sequence}\t{position}\t",
+                        f"B.1\t1\t{genome}\t{sequence}\t{position + 1}\t")
     with open(path, "w") as handle:
         handle.write(text)
     problems = read_scheme(outdir).problems
@@ -311,7 +318,7 @@ def small_scheme(snps):
 
     paths = [["root"], ["root", "A"], ["root", "X"], ["root", "Y"]]
     hierarchy, _conflicts, _problems = hierarchy_from_paths(paths)
-    rows = [SchemeSnp(node=node, strain="t", reference="t", genome="REF", position=position,
+    rows = [SchemeSnp(node=node, strain="t", reference="t", genome="REF", sequence="c1", position=position,
                       derived=derived, ancestral=ancestral)
             for node, position, derived, ancestral in snps]
     return Scheme(organism="small", paths=paths, snps=rows, hierarchy=hierarchy)

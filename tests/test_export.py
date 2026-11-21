@@ -1,8 +1,10 @@
 """Export of a scored scheme as CanSNPer2-data source files.
 
-The rules checked here are the ones that repository's source/README.md sets out
-and its validate.py enforces. The last test runs that validate.py itself, when
-the repository is checked out beside this one.
+The rules checked here are the ones that repository's schemes/README.md sets
+out and its validate.py enforces. Some tests run that validate.py itself, from
+the checkout CANSNPER2_DATA names or one beside this repository, and one builds
+the exported scheme with CanSNPer2 2.3.0, from the python CANSNPER2_PYTHON
+names or this one.
 """
 
 import os
@@ -105,26 +107,31 @@ def test_the_scheme_is_written_and_is_complete(dataset, scheme):
         assert not any(line != line.rstrip() for line in text.splitlines())
 
 
-def test_positions_are_counted_over_the_concatenated_genome(dataset, scheme):
-    # The SNP file has no contig column, so a SNP on the second contig is
-    # offset by the length of the first, as the published schemes do it.
+def test_positions_are_given_per_sequence(dataset, scheme):
+    # From CanSNPer2 2.3.0 each SNP names its reference sequence and gives a
+    # 1-based position on it, so a SNP on the second sequence is not offset
+    # by the length of the first.
     scores, outdir = scheme
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
+    lines = read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()
+    assert lines[0].split("\t") == ["snp_id", "strain", "reference", "genome", "sequence",
+                                    "sequence_position", "derived_base", "ancestral_base"]
     positions = {}
-    for line in read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]:
+    for line in lines[1:]:
         fields = line.split("\t")
-        positions[fields[0]] = int(fields[4])
+        positions[fields[0]] = (fields[4], int(fields[5]))
 
     for node, (column, _ancestral, _derived) in PLANTED.items():
-        assert positions[node] == column + 1, node
-    assert positions["B.2"] == 701, "the first base of the second contig"
+        assert positions[node] == dataset.contig_of(column), node
+    assert positions["B.2"] == ("c2", 1), "the first base of the second sequence"
 
 
 def test_the_polarity_survives_the_round_trip(dataset, scheme):
     scores, outdir = scheme
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
     for line in read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]:
-        node, _strain, _reference, _genome, _position, derived, ancestral = line.split("\t")
+        node, _strain, _reference, _genome, _sequence, _position, derived, ancestral = (
+            line.split("\t"))
         planted_ancestral, planted_derived = PLANTED[node][1], PLANTED[node][2]
         assert (derived, ancestral) == (planted_derived, planted_ancestral), node
 
@@ -225,32 +232,231 @@ def test_only_canSNPs_that_passed_are_exported(dataset, scheme, tmp_path, caplog
 
 
 # -- against the real validator ----------------------------------------------
+#
+# CanSNPer2-data's validate.py takes the repository layout from its own
+# location, so it is copied into a checkout holding nothing but the exported
+# scheme, in schemes/<organism>/ with a README in the required layout. The
+# checkout is taken from CANSNPER2_DATA, or found beside this repository.
 
 
-CANSNPER2_DATA = os.path.join(
+CANSNPER2_DATA = os.environ.get("CANSNPER2_DATA") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-data", "validate.py")
+    "CanSNPer2-data")
+VALIDATOR = os.path.join(CANSNPER2_DATA, "validate.py")
 
 
-@pytest.mark.skipif(not os.path.exists(CANSNPER2_DATA),
-                    reason="CanSNPer2-data is not checked out beside this repository")
+def validator_skip_reason():
+    if not os.path.exists(VALIDATOR):
+        return f"no CanSNPer2-data checkout at {CANSNPER2_DATA}; set CANSNPER2_DATA"
+    if '"sequence_position"' not in read(VALIDATOR):
+        return (f"the validate.py of {CANSNPER2_DATA} expects the SNP file of CanSNPer2 "
+                f"before 2.3.0; set CANSNPER2_DATA to a checkout with the 2.3.0 format")
+    return None
+
+
+needs_validator = pytest.mark.skipif(validator_skip_reason() is not None,
+                                     reason=validator_skip_reason() or "")
+
+
+def scheme_checkout(outdir, tmp_path, organism="testus_organismus"):
+    """A copy of the validator with the exported scheme as its only scheme."""
+    checkout = tmp_path / "checkout"
+    folder = checkout / "schemes" / organism
+    folder.mkdir(parents=True)
+    shutil.copy(VALIDATOR, checkout / "validate.py")
+    (checkout / "schemes.toml").write_text("")
+    for name in os.listdir(outdir):
+        shutil.copy(os.path.join(outdir, name), folder / name)
+
+    nodes = len(read(os.path.join(outdir, f"{organism}_tree.txt")).splitlines())
+    per_node = "1"
+    snp_set_path = os.path.join(outdir, f"{organism}_canSNPs.txt")
+    if os.path.exists(snp_set_path):
+        ranks = [int(line.split("\t")[1]) for line in read(snp_set_path).splitlines()[1:]]
+        if max(ranks) > 1:
+            per_node = f"up to {max(ranks)}"
+    facts = [("Scheme", f"`{organism}`"), ("Status", "draft"), ("Organisms", "Testus"),
+             ("Reference genome", METADATA["genbank_id"]), ("Nodes", str(nodes)),
+             ("canSNPs per node", per_node), ("Origin", "CanSNPCreator test"),
+             ("Last changed", "2026-11-21")]
+    sections = ["Description", "Origin", "Validation", "Known issues", "References",
+                "Changes"]
+    (folder / "README.md").write_text(
+        f"# {organism}\n\n| | |\n|---|---|\n"
+        + "".join(f"| {key} | {value} |\n" for key, value in facts)
+        + "".join(f"\n## {section}\n\nNone.\n" for section in sections))
+    return checkout
+
+
+def run_validator(checkout):
+    return subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
+                          capture_output=True, text=True)
+
+
+@needs_validator
 def test_the_exported_scheme_passes_the_cansnper2_data_validator(dataset, scheme, tmp_path):
     scores, outdir = scheme
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
 
-    # That script takes the repository layout from its own location, so give it
-    # one holding nothing but the exported scheme.
-    checkout = tmp_path / "checkout"
-    (checkout / "source").mkdir(parents=True)
-    shutil.copy(CANSNPER2_DATA, checkout / "validate.py")
-    (checkout / "schemes.toml").write_text("")
-    for name in os.listdir(outdir):
-        shutil.copy(os.path.join(outdir, name), checkout / "source" / name)
-
-    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
-                               capture_output=True, text=True)
+    completed = run_validator(scheme_checkout(outdir, tmp_path))
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "All 1 schemes valid" in completed.stdout
+
+
+# -- names of the reference sequences ------------------------------------------
+#
+# CanSNPer2 2.3.0 names each reference sequence by its GenBank accession, as
+# in the FASTA files CanSNPer2-download fetches. A reference whose sequences
+# carry RefSeq names is written with their GenBank names from an alias table.
+
+REFSEQ_NAMES = {"c1": "NC_000001.1", "c2": "NC_000002.1"}
+GENBANK_NAMES = {"c1": "CP000001.1", "c2": "CP000002.1"}
+
+
+@pytest.fixture
+def refseq(dataset, scheme, tmp_path):
+    """The scores and the reference of the dataset, with RefSeq sequence names,
+    and an NCBI assembly report pairing them with GenBank names."""
+    from dataclasses import replace
+
+    from conftest import write_fasta
+
+    from cansnpscorer import vcf
+    from cansnpscorer.helpers.file_utils import reference_parser
+    from cansnpscorer.model import Reference
+
+    scores, outdir = scheme
+    reference = reference_parser(dataset.reference)
+    renamed = Reference.from_records(
+        (REFSEQ_NAMES[contig.name], contig.sequence) for contig in reference)
+    fasta = str(tmp_path / "refseq.fasta")
+    write_fasta(fasta, [(contig.name, contig.sequence) for contig in renamed])
+    planted = [replace(score, contig=REFSEQ_NAMES[score.contig])
+               for score in vcf.read_scores(scores, reference)]
+    path = str(tmp_path / "refseq.vcf")
+    vcf.write_scores(path, planted, renamed, fasta, 0, None, DEFAULT_WEIGHTS)
+
+    report = tmp_path / "assembly_report.txt"
+    report.write_text(
+        "# Assembly name:  ASM712v1\n"
+        "# Sequence-Name\tSequence-Role\tAssigned-Molecule\tAssigned-Molecule-Location/Type"
+        "\tGenBank-Accn\tRelationship\tRefSeq-Accn\tAssembly-Unit\tSequence-Length"
+        "\tUCSC-style-name\n"
+        + "".join(f"chr{index}\tassembled-molecule\t{index}\tChromosome\t"
+                  f"{GENBANK_NAMES[name]}\t=\t{REFSEQ_NAMES[name]}\tPrimary Assembly\t"
+                  f"{reference.contig(name).length}\tna\n"
+                  for index, name in enumerate(("c1", "c2"), 1)))
+    return path, fasta, str(report), outdir
+
+
+def sequences_of(outdir):
+    lines = read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]
+    return {fields[0]: (fields[4], int(fields[5]))
+            for fields in (line.split("\t") for line in lines)}
+
+
+def test_refseq_contigs_are_written_with_genbank_names(dataset, refseq):
+    scores, fasta, report, outdir = refseq
+    metadata = [f"--{key.replace('_', '-')}={value}" for key, value in METADATA.items()]
+    assert cli_run("export", "--scores", scores, "--hierarchy", dataset.hierarchy,
+                   "--reference", fasta, "--outdir", outdir, *metadata,
+                   "--contig-aliases", report, "--snps-per-node", "2") == 0
+
+    found = sequences_of(outdir)
+    for node, (column, _ancestral, _derived) in PLANTED.items():
+        contig, position = dataset.contig_of(column)
+        assert found[node] == (GENBANK_NAMES[contig], position), node
+    snp_set = read(os.path.join(outdir, "testus_organismus_canSNPs.txt"))
+    assert "NC_" not in snp_set
+    assert {line.split("\t")[3] for line in snp_set.splitlines()[1:]} \
+        == set(GENBANK_NAMES.values())
+
+
+def test_refseq_contigs_without_aliases_are_refused(dataset, refseq, caplog):
+    scores, fasta, _report, outdir = refseq
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, **METADATA) == 2
+    assert "NC_000001.1" in caplog.text
+    assert "--contig-aliases <assembly_report.txt>" in caplog.text
+    assert not os.path.exists(os.path.join(outdir, "testus_organismus_snp.txt"))
+
+
+def test_refseq_contigs_with_no_genbank_alias_are_refused(dataset, refseq, tmp_path, caplog):
+    scores, fasta, _report, outdir = refseq
+    aliases = tmp_path / "chromAlias.txt"
+    aliases.write_text("NC_000001.1\tchr1\nNC_000002.1\tchr2\n")
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(aliases),
+                       **METADATA) == 2
+    assert "NC_000002.1" in caplog.text
+
+
+def test_a_local_sequence_name_is_written_with_one_warning(dataset, scheme, caplog):
+    scores, outdir = scheme
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
+    warnings = [record.getMessage() for record in caplog.records
+                if record.levelname == "WARNING" and "CanSNPer2-download" in record.getMessage()]
+    assert len(warnings) == 1
+    assert "c1" in warnings[0] and "c2" in warnings[0]
+    assert sequences_of(outdir)["B.2"] == ("c2", 1)
+
+
+def test_an_unreadable_alias_file_is_refused(dataset, refseq, tmp_path, caplog):
+    scores, fasta, _report, outdir = refseq
+    empty = tmp_path / "empty.txt"
+    empty.write_text("")
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(empty),
+                       **METADATA) == 1
+    assert "empty.txt" in caplog.text
+
+
+# -- against CanSNPer2 2.3.0 ---------------------------------------------------
+
+
+CANSNPER2_PYTHON = os.environ.get("CANSNPER2_PYTHON") or sys.executable
+
+
+def cansnper2_230_missing():
+    try:
+        completed = subprocess.run(
+            [CANSNPER2_PYTHON, "-c", "import CanSNPer2.modules.SchemeInfo"],
+            capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return completed.returncode != 0
+
+
+@pytest.mark.skipif(cansnper2_230_missing(),
+                    reason="CanSNPer2 2.3.0 is not importable; set CANSNPER2_PYTHON to a python "
+                           "that has it")
+def test_the_export_builds_with_cansnper2_230(dataset, scheme, tmp_path):
+    scores, outdir = scheme
+    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
+                       snps_per_node=2, spacing=0) == 0
+    database = str(tmp_path / "testus.db")
+    completed = subprocess.run(
+        [CANSNPER2_PYTHON, "-m", "CanSNPer2.SNPDatabase", "--create", "-db", database,
+         "--tree", os.path.join(outdir, "testus_organismus_tree.txt"),
+         "--annotation", os.path.join(outdir, "testus_organismus_snp.txt"),
+         "--references", os.path.join(outdir, "testus_organismus_references.txt"),
+         "--tmpdir", str(tmp_path)],
+        cwd=str(tmp_path), capture_output=True, text=True, timeout=300)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert os.path.getsize(database) > 0
+
+    # The database gives back the SNPs as they were written.
+    exported = tmp_path / "exported"
+    completed = subprocess.run(
+        [CANSNPER2_PYTHON, "-m", "CanSNPer2.SNPDatabase", "-db", database, "--export",
+         "-o", str(exported)],
+        cwd=str(tmp_path), capture_output=True, text=True, timeout=300)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    written = sequences_of(outdir)
+    found = {}
+    for path in exported.rglob("*_snp*.txt"):
+        rows = [line.split("\t") for line in path.read_text().splitlines()]
+        at = {name: index for index, name in enumerate(rows[0])}
+        for row in rows[1:]:
+            found[row[at["snp_id"]]] = (row[at["sequence"]], int(row[at["sequence_position"]]))
+    assert found == written
 
 
 # -- more than one canSNP per node -------------------------------------------
@@ -286,8 +492,8 @@ def several(dataset, scheme, tmp_path):
 def snp_set(outdir):
     rows = [line.split("\t") for line in
             read(os.path.join(outdir, "testus_organismus_canSNPs.txt")).splitlines()]
-    assert rows[0] == ["node", "rank", "genome", "position", "derived_base", "ancestral_base",
-                       "score"]
+    assert rows[0] == ["node", "rank", "genome", "sequence", "sequence_position",
+                       "derived_base", "ancestral_base", "score"]
     return rows[1:]
 
 
@@ -305,12 +511,12 @@ def test_the_snp_set_ranks_each_node_and_keeps_the_snp_file_as_rank_one(dataset,
     assert len(rows) == 3 * len(PLANTED)
     snp = [line.split("\t") for line in
            read(os.path.join(outdir, "testus_organismus_snp.txt")).splitlines()[1:]]
-    first = {row[0]: (row[3], row[4], row[5]) for row in rows if row[1] == "1"}
-    assert first == {row[0]: (row[4], row[5], row[6]) for row in snp}
+    first = {row[0]: (row[3], row[4], row[5], row[6]) for row in rows if row[1] == "1"}
+    assert first == {row[0]: (row[4], row[5], row[6], row[7]) for row in snp}
     for node in PLANTED:
         ranked = [row for row in rows if row[0] == node]
         assert [row[1] for row in ranked] == ["1", "2", "3"]
-        assert [int(row[6]) for row in ranked] == sorted((int(row[6]) for row in ranked),
+        assert [int(row[7]) for row in ranked] == sorted((int(row[7]) for row in ranked),
                                                          reverse=True)
 
 
@@ -320,7 +526,7 @@ def test_spacing_passes_over_a_canSNP_beside_one_already_kept(dataset, several):
                        snps_per_node=2, spacing=10) == 0
     rows = snp_set(outdir)
     for node in PLANTED:
-        positions = [int(row[3]) for row in rows if row[0] == node]
+        positions = [int(row[4]) for row in rows if row[0] == node]
         # The one 5 bases away gives way to the one 20 bases away.
         assert len(positions) == 2 and positions[1] - positions[0] == 20
 
@@ -334,29 +540,22 @@ def test_the_snp_set_is_chosen_from_the_command_line(dataset, several):
     assert len(snp_set(outdir)) == 3 * len(PLANTED)
 
 
-@pytest.mark.skipif(not os.path.exists(CANSNPER2_DATA),
-                    reason="CanSNPer2-data is not checked out beside this repository")
+@needs_validator
 def test_the_snp_set_passes_the_cansnper2_data_validator(dataset, several, tmp_path):
     scores, outdir = several
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
                        snps_per_node=None, spacing=0) == 0
-    checkout = tmp_path / "checkout"
-    (checkout / "source").mkdir(parents=True)
-    shutil.copy(CANSNPER2_DATA, checkout / "validate.py")
-    (checkout / "schemes.toml").write_text("")
-    for name in os.listdir(outdir):
-        shutil.copy(os.path.join(outdir, name), checkout / "source" / name)
-    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
-                               capture_output=True, text=True)
+    checkout = scheme_checkout(outdir, tmp_path)
+    completed = run_validator(checkout)
     assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "All 1 schemes valid" in completed.stdout
 
     # A rank 1 that differs from the SNP file is refused, so the file is read.
-    snp_set_path = checkout / "source" / "testus_organismus_canSNPs.txt"
+    snp_set_path = checkout / "schemes" / "testus_organismus" / "testus_organismus_canSNPs.txt"
     lines = snp_set_path.read_text().splitlines()
     lines[1], lines[2] = lines[2].replace("\t2\t", "\t1\t", 1), lines[1].replace("\t1\t", "\t2\t", 1)
     snp_set_path.write_text("\n".join(lines) + "\n")
-    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
-                               capture_output=True, text=True)
+    completed = run_validator(checkout)
     assert completed.returncode == 1
     assert "is not the SNP" in completed.stdout
 
@@ -433,8 +632,7 @@ def test_the_genomes_file_is_written_validated_and_audited(dataset, tmp_path):
     assert "single-site" in report.read_text(), "the genome checks ran"
 
 
-@pytest.mark.skipif(not os.path.exists(CANSNPER2_DATA),
-                    reason="CanSNPer2-data is not checked out beside this repository")
+@needs_validator
 def test_the_genomes_file_passes_the_cansnper2_data_validator(dataset, tmp_path):
     aligned, genome_map = accessioned(dataset, tmp_path)
     snps, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "scores.vcf")
@@ -448,14 +646,7 @@ def test_the_genomes_file_passes_the_cansnper2_data_validator(dataset, tmp_path)
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir,
                        genome_map=genome_map, alignment=aligned, **METADATA) == 0
 
-    checkout = tmp_path / "checkout"
-    (checkout / "source").mkdir(parents=True)
-    shutil.copy(CANSNPER2_DATA, checkout / "validate.py")
-    (checkout / "schemes.toml").write_text("")
-    for name in os.listdir(outdir):
-        shutil.copy(os.path.join(outdir, name), checkout / "source" / name)
-    completed = subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
-                               capture_output=True, text=True)
+    completed = run_validator(scheme_checkout(outdir, tmp_path))
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "All 1 schemes valid" in completed.stdout
 

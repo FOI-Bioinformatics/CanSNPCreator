@@ -155,7 +155,7 @@ def test_a_reference_row_that_breaks_the_rules_is_reported(written, dataset, rep
 
 def test_a_snp_on_an_unknown_genome_is_reported(written, dataset):
     outdir, _scores = written
-    edit(outdir, SNPS, "\tTEST1\t201\t", "\tTEST2\t201\t")
+    edit(outdir, SNPS, "\tTEST1\tc1\t201\t", "\tTEST2\tc1\t201\t")
     findings = findings_of(outdir, dataset)
     assert "unknown-genome" in categories(findings, PROBLEM)
 
@@ -185,8 +185,8 @@ def test_coordinates_taken_against_another_assembly_are_reported(written, datase
     changed = []
     for row in rows:
         fields = row.split("\t")
-        base = reference.base(int(fields[4]) - 1).upper()
-        fields[5], fields[6] = sorted(set("ACGT") - {base})[:2]
+        base = reference.contig(fields[4]).base(int(fields[5]) - 1).upper()
+        fields[6], fields[7] = sorted(set("ACGT") - {base})[:2]
         changed.append("\t".join(fields))
     with open(os.path.join(outdir, SNPS), "w") as handle:
         handle.write("\n".join([header, *changed]) + "\n")

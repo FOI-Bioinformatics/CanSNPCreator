@@ -85,11 +85,11 @@ def test_accession_versions_have_one_or_two_digits_as_cansnper2_data_requires():
 def test_ranks_of_a_node_that_skip_or_repeat_are_a_problem(tmp_path):
     path = tmp_path / "t_canSNPs.txt"
     path.write_text(
-        "node\trank\tgenome\tposition\tderived_base\tancestral_base\tscore\n"
-        "A\t1\tG\t10\tA\tC\t9\nA\t3\tG\t20\tA\tC\t8\n"
-        "B\t1\tG\t30\tA\tC\t9\nB\t1\tG\t40\tA\tC\t8\n"
-        "R\t1\tG\t50\tA\tC\t9\nR\t2\tG\t60\tA\tC\t8\n")
-    snps = [SchemeSnp(node=node, strain="", reference="", genome="G", position=position,
+        "node\trank\tgenome\tsequence\tsequence_position\tderived_base\tancestral_base\tscore\n"
+        "A\t1\tG\tc1\t10\tA\tC\t9\nA\t3\tG\tc1\t20\tA\tC\t8\n"
+        "B\t1\tG\tc1\t30\tA\tC\t9\nB\t1\tG\tc1\t40\tA\tC\t8\n"
+        "R\t1\tG\tc1\t50\tA\tC\t9\nR\t2\tG\tc1\t60\tA\tC\t8\n")
+    snps = [SchemeSnp(node=node, strain="", reference="", genome="G", sequence="c1", position=position,
                       derived="A", ancestral="C")
             for node, position in (("A", 10), ("B", 30), ("R", 50))]
     problems: list[str] = []

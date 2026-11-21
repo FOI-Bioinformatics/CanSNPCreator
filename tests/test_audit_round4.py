@@ -80,10 +80,10 @@ def chain_scheme(extra=()):
 def test_a_single_call_on_another_branch_is_labelled_as_such():
     # First canSNPs: derived down root, A, A.1. B's set of three is derived by
     # majority and A's set is ancestral by majority, so the set rule calls B.
-    extra = [SchemeSnp("A", "", "", "G", 10, "G", "A", rank=2),
-             SchemeSnp("A", "", "", "G", 11, "G", "A", rank=3),
-             SchemeSnp("B", "", "", "G", 12, "G", "A", rank=2),
-             SchemeSnp("B", "", "", "G", 13, "G", "A", rank=3)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 10, "G", "A", rank=2),
+             SchemeSnp("A", "", "", "G", "c1", 11, "G", "A", rank=3),
+             SchemeSnp("B", "", "", "G", "c1", 12, "G", "A", rank=2),
+             SchemeSnp("B", "", "", "G", "c1", 13, "G", "A", rank=3)]
     alignment = {"ref": "AAAAAAAAAAAAAA",
                  #        .G.G.G.A.AAGG
                  "g": "AGAGAGAAAAAGGA"}
@@ -99,7 +99,7 @@ def test_a_single_call_on_another_branch_is_labelled_as_such():
 
 
 def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
-    scheme = chain_scheme([SchemeSnp("A", "", "", "G", 4, "G", "A", rank=2)])
+    scheme = chain_scheme([SchemeSnp("A", "", "", "G", "c1", 4, "G", "A", rank=2)])
     scheme.snps = [row for row in scheme.snps if row.node != "A"]
     genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
     assert genomes["g"].single_call is None, "CanSNPer2 has no SNP at A"
@@ -278,7 +278,7 @@ def test_one_outgroup_of_an_unrooted_tree_stays_outside_the_root():
 
 def test_a_node_is_placed_by_its_best_cansnp_not_only_its_first():
     scheme = scheme_of([["root"], ["root", "X"]], [("X", "G", 3, "T", "G")])
-    scheme.snp_set = [SchemeSnp("X", "", "", "G", 6, "A", "C", rank=2)]
+    scheme.snp_set = [SchemeSnp("X", "", "", "G", "c1", 6, "A", "C", rank=2)]
     reference = Reference.from_records([("c1", "ACGTACGT")])
     # Rank 1 is derived in x1 and in y2; rank 2 in exactly x1, x2 and x3.
     alignment = {"r": "ACGTACGT", "x1": "ACTTAAGT", "x2": "ACGTAAGT", "x3": "ACGTAAGT",

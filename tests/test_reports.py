@@ -52,8 +52,8 @@ def test_the_reference_and_the_outgroups_are_typed_but_not_counted():
 def test_the_summary_tallies_why_the_single_rule_stopped_and_names_the_nodes():
     # N at the canSNP of A in two genomes, ancestral there in a third whose
     # set of three still calls A derived.
-    extra = [SchemeSnp("A", "", "", "G", 7, "G", "A", rank=2),
-             SchemeSnp("A", "", "", "G", 8, "G", "A", rank=3)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 7, "G", "A", rank=2),
+             SchemeSnp("A", "", "", "G", "c1", 8, "G", "A", rank=3)]
     alignment = {"ref": "AAAAAAAA", "m1": "AGANAGGG", "m2": "AGANAGGG", "a1": "AGAAAGGG"}
     scheme = chain_scheme(extra)
     scheme.snps = [row for row in scheme.snps if row.node != "B"]
@@ -85,7 +85,7 @@ def test_nodes_no_genome_passes_through_are_listed():
 
 
 def test_the_ranks_table_sums_the_cansnps_of_each_rank():
-    extra = [SchemeSnp("A", "", "", "G", 7, "G", "A", rank=2)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 7, "G", "A", rank=2)]
     alignment = {"ref": "AAAAAAAA", "g": "AGAGAGNA", "h": "AGAGAGGA"}
     _genomes, report = typed(chain_scheme(extra), alignment)
     ranks = {row[0]: dict(zip(RANK_COLUMNS, row, strict=True)) for row in report.rank_rows}
@@ -156,10 +156,10 @@ def test_the_run_is_written_beside_the_tables(written, dataset, tmp_path):
 def test_spacing_compares_the_snps_cansnper2_calls_and_no_further_rank():
     scheme = scheme_of([["R"], ["R", "A"], ["R", "B"]],
                        [("A", "G", 100, "T", "G"), ("B", "G", 5000, "T", "G")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", 100, "T", "G", rank=1),
-                      SchemeSnp("B", "", "", "G", 110, "T", "G", rank=2)]
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", 100, "T", "G", rank=1),
+                      SchemeSnp("B", "", "", "G", "c1", 110, "T", "G", rank=2)]
     assert check_spacing(scheme, 50) == []
-    scheme.snps.append(SchemeSnp("C", "s", "r", "G", 5010, "T", "G"))
+    scheme.snps.append(SchemeSnp("C", "s", "r", "G", "c1", 5010, "T", "G"))
     (found,) = check_spacing(scheme, 50)
     assert found.node == "B, C" and "assay of the other" in found.detail
     assert "primer" not in found.detail
@@ -168,8 +168,8 @@ def test_spacing_compares_the_snps_cansnper2_calls_and_no_further_rank():
 def test_the_summary_counts_ranked_cansnps_and_names_each_node_once():
     scheme = scheme_of([["R"], ["R", "A"], ["R", "B"]],
                        [("A", "G", 100, "T", "G"), ("B", "G", 110, "T", "G")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", 100, "T", "G", rank=1),
-                      SchemeSnp("A", "", "", "G", 900, "T", "G", rank=2)]
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", 100, "T", "G", rank=1),
+                      SchemeSnp("A", "", "", "G", "c1", 900, "T", "G", rank=2)]
     findings = [recommendation(MODIFY, "spacing", "A, B", "close"),
                 problem(MODIFY, "homoplasy", "A", "x"),
                 problem(MODIFY, "homoplasy", "B", "y")]
@@ -224,8 +224,8 @@ def test_single_site_says_whether_the_site_is_the_schemes_and_counts_its_set():
 
     # A second canSNP of B that lacks a base in one genome is no clean site,
     # but it is part of the set, and the finding says so.
-    scheme.snp_set = [SchemeSnp("B", "", "", "G", 4, "G", "A", rank=1),
-                      SchemeSnp("B", "", "", "G", 8, "G", "A", rank=2)]
+    scheme.snp_set = [SchemeSnp("B", "", "", "G", "c1", 4, "G", "A", rank=1),
+                      SchemeSnp("B", "", "", "G", "c1", 8, "G", "A", rank=2)]
     for name in clusters["B"]:
         alignment[name] = "AAAGAAAG"
     alignment[clusters["B"][0]] = "AAAGAAAN"
@@ -237,8 +237,8 @@ def test_single_site_says_whether_the_site_is_the_schemes_and_counts_its_set():
 
 def test_reference_derived_names_each_node_once():
     scheme = scheme_of([["R"], ["R", "A"]], [("A", "G", 2, "G", "A")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", 2, "G", "A", rank=1),
-                      SchemeSnp("A", "", "", "G", 4, "G", "A", rank=2)]
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", 2, "G", "A", rank=1),
+                      SchemeSnp("A", "", "", "G", "c1", 4, "G", "A", rank=2)]
     reference = Reference.from_records([("c1", "AGAGAA")])
     (found,) = [f for f in check_against_reference(scheme, reference)
                 if f.category == "reference-derived"]
@@ -249,7 +249,7 @@ def test_reference_derived_names_each_node_once():
 
 
 def test_the_markdown_report_holds_the_run_the_findings_and_the_typing():
-    extra = [SchemeSnp("A", "", "", "G", 7, "G", "A", rank=2)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 7, "G", "A", rank=2)]
     alignment = {"ref": "AAAAAAAA", "g": "AGANAGGA", "h": "AGAGAGAA"}
     scheme = chain_scheme(extra)
     _genomes, report = typed(scheme, alignment)
@@ -305,7 +305,7 @@ def test_the_report_is_written_without_an_alignment_too(written, dataset, tmp_pa
 def set_scheme(positions):
     """A node A whose ranked canSNPs lie at the given positions of genome G."""
     scheme = scheme_of([["R"], ["R", "A"]], [("A", "G", positions[0], "T", "G")])
-    scheme.snp_set = [SchemeSnp("A", "", "", "G", position, "T", "G", rank=rank)
+    scheme.snp_set = [SchemeSnp("A", "", "", "G", "c1", position, "T", "G", rank=rank)
                       for rank, position in enumerate(positions, start=1)]
     return scheme
 

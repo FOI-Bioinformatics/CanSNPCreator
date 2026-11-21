@@ -54,7 +54,7 @@ def test_a_deep_tree_is_read_collapsed_and_used_for_placing_without_recursion():
     paths = [["root"], ["root", "X"]]
     hierarchy, _, _ = hierarchy_from_paths(paths)
     scheme = Scheme(organism="t", paths=paths, hierarchy=hierarchy, snps=[
-        SchemeSnp(node="X", strain="t", reference="t", genome="REF", position=2,
+        SchemeSnp(node="X", strain="t", reference="t", genome="REF", sequence="c", position=2,
                   derived="G", ancestral="A")])
     # The 10 genomes deepest in the caterpillar carry the derived base.
     alignment = {"ref": "AAA"}

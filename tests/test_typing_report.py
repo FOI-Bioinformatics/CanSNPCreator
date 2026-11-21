@@ -5,7 +5,7 @@ of a node's canSNPs so that they fail independently."""
 import csv
 import os
 
-from conftest import CLUSTERS, PLANTED, SNPS, cli_run, vcf_records, write_fasta
+from conftest import CLUSTERS, CONTIGS, PLANTED, SNPS, cli_run, vcf_records, write_fasta
 
 from cansnpscorer.helpers.data_utils import ranking, select_per_node
 from cansnpscorer.helpers.file_utils import read_alignment
@@ -53,18 +53,29 @@ def changed(dataset, tmp_path, changes):
     return path
 
 
+def contig_of(column):
+    """The sequence and 1-based position on it of an alignment column."""
+    for name, start, end in CONTIGS:
+        if start <= column < end:
+            return name, column - start + 1
+    raise AssertionError(f"column {column} is outside the reference")
+
+
 def add_set(outdir, extra):
     """Write the scheme's canSNP set: its SNP file as rank 1, and further
     ranks given as {node: [(column, derived, ancestral), ...]}."""
     with open(os.path.join(outdir, SNPS)) as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    lines = ["node\trank\tgenome\tposition\tderived_base\tancestral_base\tscore"]
+    lines = ["node\trank\tgenome\tsequence\tsequence_position\tderived_base\tancestral_base\t"
+             "score"]
     for row in rows:
-        lines.append("\t".join([row["snp_id"], "1", row["genome"], row["position"],
-                                row["derived_base"], row["ancestral_base"], "600"]))
+        lines.append("\t".join([row["snp_id"], "1", row["genome"], row["sequence"],
+                                row["sequence_position"], row["derived_base"],
+                                row["ancestral_base"], "600"]))
         for rank, (column, derived, ancestral) in enumerate(extra.get(row["snp_id"], []), 2):
-            lines.append("\t".join([row["snp_id"], str(rank), row["genome"], str(column + 1),
-                                    derived, ancestral, "600"]))
+            sequence, position = contig_of(column)
+            lines.append("\t".join([row["snp_id"], str(rank), row["genome"], sequence,
+                                    str(position), derived, ancestral, "600"]))
     with open(os.path.join(outdir, SNPS.replace("_snp.txt", "_canSNPs.txt")), "w") as handle:
         handle.write("\n".join(lines) + "\n")
 
@@ -387,7 +398,7 @@ def derived_set_rows(states_by_genome, discordant=()):
     from cansnpscorer.typing_report import GenomeTyping, _snp_rows
 
     width = len(next(iter(states_by_genome.values())))
-    snps = [(SchemeSnp("A", "", "", "G", 10 + index, "T", "C", rank=index + 1), index)
+    snps = [(SchemeSnp("A", "", "", "G", "c1", 10 + index, "T", "C", rank=index + 1), index)
             for index in range(width)]
     typed = [GenomeTyping(genome=name, states=states, discordant=name in discordant)
              for name, states in states_by_genome.items()]
@@ -725,7 +736,7 @@ def test_an_ambiguity_code_is_another_base_for_the_single_rule():
     from cansnpscorer.scheme import SchemeSnp
     from cansnpscorer.typing_report import cansnper2_state, snp_state
 
-    snp = SchemeSnp("A", "", "", "G", 10, "T", "C", rank=1)
+    snp = SchemeSnp("A", "", "", "G", "c1", 10, "T", "C", rank=1)
     assert cansnper2_state("R", snp) == OTHER and snp_state("R", snp) == MISSING
     assert cansnper2_state("n", snp) == MISSING and cansnper2_state("-", snp) == MISSING
     assert cansnper2_state("t", snp) == DERIVED and cansnper2_state("G", snp) == OTHER

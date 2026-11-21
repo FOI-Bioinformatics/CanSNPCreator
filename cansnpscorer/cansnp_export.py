@@ -2,13 +2,18 @@
 
 CanSNPer2-data holds a scheme as three tab separated files: the tree as one
 line per path from the root, one SNP per node, and the reference genomes. The
-rules those files must follow are set out in that repository's source/README.md
+rules those files must follow are set out in that repository's schemes/README.md
 and enforced by its validate.py, and the checks here are the same ones, so that
 what this writes can be added to that repository without hand editing:
 
 - every node of the tree carries exactly one SNP
-- positions are 1-based over the concatenated reference genome, since the SNP
-  file has no contig column
+- each SNP names its reference sequence and gives a 1-based position on that
+  sequence, as CanSNPer2 2.3.0 reads them
+- a sequence is named by its GenBank accession, as in the FASTA files
+  CanSNPer2-download fetches. A sequence the reference names by its RefSeq
+  accession (NC_, NZ_ or AC_) is written under the GenBank accession that
+  --contig-aliases pairs it with, and the export stops when there is none. A
+  name that is neither is written as it is, with a warning
 - a genome name holds no underscore, because CanSNPer2 recovers the reference
   name from an alignment file name by splitting on the first one
 - no semicolon appears anywhere, because the tree reader turns tabs into
@@ -31,6 +36,7 @@ from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import ranking, select_per_node
 from cansnpscorer.helpers.file_utils import (
     fasta_ids,
+    read_contig_aliases,
     read_genome_map,
     read_hierarchy,
     reference_parser,
@@ -38,6 +44,7 @@ from cansnpscorer.helpers.file_utils import (
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
+from cansnpscorer.scheme import SNP_COLUMNS, SNP_SET_COLUMNS
 from cansnpscorer.validate import report
 
 #: The version of an accession has one or two digits, as CanSNPer2-data's
@@ -56,15 +63,16 @@ SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
 GENOMES_SUFFIX = "_genomes.txt"
 SNP_SET_SUFFIX = "_canSNPs.txt"
-SNP_SET_COLUMNS = ("node", "rank", "genome", "position", "derived_base", "ancestral_base",
-                   "score")
 GENOME_COLUMNS = ("genome", "node", "role")
 ACCESSION = re.compile(r"GC[AF]_\d{9}" + VERSION)
 #: An accession in any version or none, to say why a name gave no accession.
 ANY_ACCESSION = re.compile(r"GC[AF]_\d{9}")
+#: A sequence named by its RefSeq accession, as NC_002971.4.
+REFSEQ_SEQUENCE = re.compile(r"(NC|NZ|AC)_")
+#: A sequence named by its GenBank (INSDC) accession with a version, as
+#: AE016828.3 or JAABCD010000001.1: letters, then digits, then the version.
+GENBANK_SEQUENCE = re.compile(r"[A-Z]{1,6}[0-9]+\.[0-9]+")
 
-SNP_COLUMNS = ("snp_id", "strain", "reference", "genome", "position",
-               "derived_base", "ancestral_base")
 REFERENCE_COLUMNS = ("genome", "strain", "genbank_id", "refseq_id", "assembly_name")
 
 
@@ -176,6 +184,74 @@ def check_scheme(hierarchy: Hierarchy, best: dict[str, ScoredSnp],
                     f"{score.derived}/{score.ancestral}, but the reference base there is {base}")
 
     return problems, warnings
+
+
+def sequence_names(contigs: Sequence[str], aliases: Sequence[set[str]] | None,
+                   ) -> tuple[dict[str, str], list[str], list[str]]:
+    """The name each reference sequence is written under in the scheme.
+
+    CanSNPer2 2.3.0 finds a canSNP's sequence by name in the reference FASTA
+    that CanSNPer2-download fetches from GenBank, so a sequence is written
+    under its GenBank accession. The rule, for each sequence name:
+
+    - a GenBank accession with a version is written as it is;
+    - a RefSeq accession (NC_, NZ_ or AC_) is written as the one name of its
+      alias set, from --contig-aliases, that is a GenBank accession with a
+      version and no underscore. With no alias table, no such name, or more
+      than one, the export stops;
+    - any other name, as of a local assembly, is written as it is, and one
+      warning lists these names.
+
+    Returns:
+        The name to write for each contig, the problems, and the warnings.
+    """
+    names: dict[str, str] = {}
+    problems: list[str] = []
+    local: list[str] = []
+    for contig in contigs:
+        if REFSEQ_SEQUENCE.match(contig):
+            found = sorted({name for group in aliases or () if contig in group
+                            for name in group if GENBANK_SEQUENCE.fullmatch(name)})
+            if len(found) == 1:
+                names[contig] = found[0]
+                continue
+            if aliases is None:
+                problems.append(
+                    f"the reference sequence '{contig}' is named by its RefSeq accession, "
+                    f"while CanSNPer2 2.3.0 names reference sequences by their GenBank "
+                    f"accession. Give the names of both with --contig-aliases "
+                    f"<assembly_report.txt>, the assembly report NCBI distributes with the "
+                    f"assembly")
+            elif not found:
+                problems.append(
+                    f"--contig-aliases gives no GenBank accession for the reference sequence "
+                    f"'{contig}'; give it with --contig-aliases <assembly_report.txt>, the "
+                    f"assembly report NCBI distributes with the assembly")
+            else:
+                problems.append(
+                    f"--contig-aliases gives more than one GenBank accession for the reference "
+                    f"sequence '{contig}': {', '.join(found)}")
+            continue
+        if not GENBANK_SEQUENCE.fullmatch(contig):
+            local.append(contig)
+        names[contig] = contig
+
+    written: dict[str, list[str]] = {}
+    for contig, name in names.items():
+        written.setdefault(name, []).append(contig)
+    for name, given in sorted(written.items()):
+        if len(given) > 1:
+            problems.append(f"the reference sequences {', '.join(given)} would all be written "
+                            f"as '{name}'")
+
+    warnings: list[str] = []
+    if local:
+        warnings.append(
+            f"{len(local)} reference sequences are named by neither a GenBank nor a RefSeq "
+            f"accession and are written as they are: {', '.join(local[:5])}. CanSNPer2-download "
+            f"will not find a genome with sequences of these names, so the reference must be "
+            f"provided by hand")
+    return names, problems, warnings
 
 
 def repeated_positions(scores: Sequence[ScoredSnp]) -> list[str]:
@@ -319,32 +395,34 @@ def write_genomes(outdir: str, organism: str, rows: Sequence[tuple[str, str, str
 
 
 def write_snp_set(outdir: str, organism: str, paths: Sequence[Sequence[str]],
-                  chosen: dict[str, Sequence[ScoredSnp]], reference: Reference,
+                  chosen: dict[str, Sequence[ScoredSnp]], names: dict[str, str],
                   genome: str) -> str:
     """Write every chosen canSNP of each kept node, ranked within the node.
 
-    Positions are over the concatenated genome, as in the SNP file, and rank 1
-    of each node is the SNP the SNP file carries for it.
+    Each is given by sequence, named as ``names`` gives it, and position on
+    that sequence, as in the SNP file, and rank 1 of each node is the SNP the
+    SNP file carries for it.
     """
     path = os.path.join(outdir, organism + SNP_SET_SUFFIX)
     with open(path, "w", newline="\n") as handle:
         handle.write("\t".join(SNP_SET_COLUMNS) + "\n")
         for tree_path in paths:
             node = tree_path[-1]
-            for rank, score in enumerate(chosen[node], start=1):
-                position = reference.contig(score.contig).start + score.position
-                handle.write("\t".join([
-                    node, str(rank), genome, str(position), score.derived, score.ancestral,
-                    str(score.total),
-                ]) + "\n")
+            handle.writelines("\t".join([
+                node, str(rank), genome, names[score.contig], str(score.position),
+                score.derived, score.ancestral, str(score.total),
+            ]) + "\n" for rank, score in enumerate(chosen[node], start=1))
     return path
 
 
 def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
-                 best: dict[str, ScoredSnp], reference: Reference, genome: str, strain: str,
+                 best: dict[str, ScoredSnp], names: dict[str, str], genome: str, strain: str,
                  citation: str, genbank_id: str, refseq_id: str,
                  assembly_name: str) -> list[str]:
-    """Write the three source files and return their paths."""
+    """Write the three source files and return their paths.
+
+    ``names`` gives the name each contig of the reference is written under.
+    """
     os.makedirs(outdir, exist_ok=True)
     written = []
 
@@ -359,11 +437,8 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
         for path in paths:
             node = path[-1]
             score = best[node]
-            # The SNP file has no contig column, so positions are counted over
-            # the concatenated genome, as the published multi-contig schemes do.
-            position = reference.contig(score.contig).start + score.position
             handle.write("\t".join([
-                node, strain, citation, genome, str(position),
+                node, strain, citation, genome, names[score.contig], str(score.position),
                 score.derived, score.ancestral,
             ]) + "\n")
     written.append(snp_path)
@@ -380,12 +455,14 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
 def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
          genome=None, strain=None, citation=None, genbank_id=None, refseq_id=None,
          assembly_name=None, prune=False, genome_map=None, alignment=None,
-         snps_per_node=1, spacing=1000) -> int:
+         snps_per_node=1, spacing=1000, contig_aliases=None) -> int:
     """Write a scored scheme as CanSNPer2-data source files. Returns an exit status.
 
     ``snps_per_node`` is how many canSNPs of each node to keep, at least
     ``spacing`` bases apart, or None for all of them. With more than one the
-    full set is written to <organism>_canSNPs.txt.
+    full set is written to <organism>_canSNPs.txt. ``contig_aliases`` is an
+    NCBI assembly report or UCSC chromAlias table that gives the GenBank
+    accession of each sequence the reference names by its RefSeq accession.
     """
     if bool(genome_map) != bool(alignment):
         logging.error("the genomes file needs both --genome-map and --alignment: where each "
@@ -397,6 +474,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
         tree = read_hierarchy(hierarchy)
         sequence = reference_parser(reference)
         scored = [score for score in vcf.read_scores(scores, sequence) if score.passed]
+        aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
@@ -405,6 +483,12 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     best = {node: picked[0] for node, picked in chosen.items() if picked}
     problems, warnings = check_scheme(tree, best, sequence)
     problems += repeated_positions(scored)
+    # Only the sequences that carry a canSNP of the scheme are named in it.
+    used = {score.contig for picked in chosen.values() for score in picked}
+    names, naming_problems, naming_warnings = sequence_names(
+        [name for name in sequence.names if name in used], aliases)
+    problems += naming_problems
+    warnings += naming_warnings
     problems += check_metadata(genome, strain, citation, genbank_id, refseq_id,
                                assembly_name, organism)
 
@@ -438,7 +522,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
 
     kept = [node for node in tree.nodes if node in best]
     paths = paths_for(tree, kept)
-    written = write_scheme(outdir, organism, paths, best, sequence, genome, strain,
+    written = write_scheme(outdir, organism, paths, best, names, genome, strain,
                            citation, genbank_id, refseq_id, assembly_name)
     # The optional files of an earlier export into the same directory would
     # otherwise stay beside this scheme, and describe another one.
@@ -450,7 +534,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
             logging.warning(f"Removed {stale}, which an earlier export wrote and this one does "
                             f"not")
     if snps_per_node != 1:
-        written.append(write_snp_set(outdir, organism, paths, chosen, sequence, genome))
+        written.append(write_snp_set(outdir, organism, paths, chosen, names, genome))
         counts = sorted(len(chosen[path[-1]]) for path in paths)
         short = [path[-1] for path in paths
                  if snps_per_node is not None and len(chosen[path[-1]]) < snps_per_node]

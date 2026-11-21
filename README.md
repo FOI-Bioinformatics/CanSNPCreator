@@ -336,9 +336,25 @@ scheme a larger `--min-spacing` is worth trying.
 
 `export` takes the highest scoring passing canSNP of each node and writes
 `<organism>_tree.txt`, `<organism>_snp.txt` and `<organism>_references.txt` as
-CanSNPer2-data expects them, with positions counted over the concatenated
-genome, since its SNP file has no contig column. That repository's rules are
-checked first, so the result passes its `validate.py` unchanged. A node with no
+CanSNPer2-data expects them in the format of CanSNPer2 2.3.0: each canSNP names
+its reference sequence and gives a 1-based position on that sequence,
+
+```
+snp_id	strain	reference	genome	sequence	sequence_position	derived_base	ancestral_base
+```
+
+A sequence is named by its GenBank accession, as in the FASTA files
+CanSNPer2-download fetches. A reference whose sequences carry RefSeq names
+(`NC_`, `NZ_`, `AC_`) needs `--contig-aliases <assembly_report.txt>`, NCBI's
+assembly report for the assembly; each such sequence is written as the one name
+of its alias set that is a versioned GenBank accession (letters, digits, a
+version, no underscore), and the export stops when there is none or more than
+one. Any other name, as of a local assembly, is written as it is, with a warning
+that CanSNPer2-download will not find a genome by it. Schemes written before
+2.3.0, with one position along the joined reference sequences, are converted
+with `CanSNPer2-database --convert`; `audit` and `place` refuse them with that
+hint. That repository's rules are checked first, so the result passes its
+`validate.py` unchanged. A node with no
 canSNP refuses the scheme; `--prune` leaves such nodes out, joining their
 children to the nearest node that has one. With `--genome-map` (which needs
 `--alignment`) the warning also gives the number of genomes moved to an ancestor
@@ -350,11 +366,11 @@ as `evaluate --top-n` chooses them, at least `--min-spacing` bases apart, and
 writes them all to `<organism>_canSNPs.txt`:
 
 ```
-node	rank	genome	position	derived_base	ancestral_base	score
+node	rank	genome	sequence	sequence_position	derived_base	ancestral_base	score
 ```
 
-ranked within each node, with rank 1 the SNP of the SNP file. Positions count
-over the concatenated genome, as in the SNP file. CanSNPer2-data's
+ranked within each node, with rank 1 the SNP of the SNP file. Each canSNP is
+given by sequence and position on it, as in the SNP file. CanSNPer2-data's
 `validate.py` checks that rank 1 agrees with the SNP file, and `audit` checks
 every rank against the reference and the genomes.
 
