@@ -69,6 +69,8 @@ ACCESSION = re.compile(r"GC[AF]_\d{9}" + VERSION)
 ANY_ACCESSION = re.compile(r"GC[AF]_\d{9}")
 #: A sequence named by its RefSeq accession, as NC_002971.4.
 REFSEQ_SEQUENCE = re.compile(r"(NC|NZ|AC)_")
+#: A RefSeq contig or scaffold, as NT_ or NW_, which is written as it is.
+OTHER_REFSEQ = re.compile(r"(NT|NW)_")
 #: A sequence named by its GenBank (INSDC) accession with a version, as
 #: AE016828.3 or JAABCD010000001.1: letters, then digits, then the version.
 GENBANK_SEQUENCE = re.compile(r"[A-Z]{1,6}[0-9]+\.[0-9]+")
@@ -187,6 +189,7 @@ def check_scheme(hierarchy: Hierarchy, best: dict[str, ScoredSnp],
 
 
 def sequence_names(contigs: Sequence[str], aliases: Sequence[set[str]] | None,
+                   alias_file: str | None = None,
                    ) -> tuple[dict[str, str], list[str], list[str]]:
     """The name each reference sequence is written under in the scheme.
 
@@ -198,9 +201,12 @@ def sequence_names(contigs: Sequence[str], aliases: Sequence[set[str]] | None,
     - a RefSeq accession (NC_, NZ_ or AC_) is written as the one name of its
       alias set, from --contig-aliases, that is a GenBank accession with a
       version and no underscore. With no alias table, no such name, or more
-      than one, the export stops;
-    - any other name, as of a local assembly, is written as it is, and one
-      warning lists these names.
+      than one, the export stops. It also stops when the alias table, an
+      NCBI assembly report, gives the two sequences as not identical
+      (Relationship ``<>``), since a position on one need not hold on the
+      other;
+    - any other name, as of a local assembly or a RefSeq contig or scaffold
+      (NT_, NW_), is written as it is, and one warning lists these names.
 
     Returns:
         The name to write for each contig, the problems, and the warnings.
@@ -210,8 +216,18 @@ def sequence_names(contigs: Sequence[str], aliases: Sequence[set[str]] | None,
     local: list[str] = []
     for contig in contigs:
         if REFSEQ_SEQUENCE.match(contig):
-            found = sorted({name for group in aliases or () if contig in group
+            groups = [group for group in aliases or () if contig in group]
+            found = sorted({name for group in groups
                             for name in group if GENBANK_SEQUENCE.fullmatch(name)})
+            differs = any(contig in getattr(group, "differs", ()) for group in groups)
+            if len(found) == 1 and differs:
+                source = f"the assembly report {alias_file}" if alias_file else "the alias table"
+                problems.append(
+                    f"{source} gives the RefSeq sequence '{contig}' and the GenBank sequence "
+                    f"'{found[0]}' as not identical (Relationship <>), so a position on "
+                    f"'{contig}' need not be the same position on '{found[0]}'. Evaluate and "
+                    f"export against the GenBank assembly instead")
+                continue
             if len(found) == 1:
                 names[contig] = found[0]
                 continue
@@ -224,13 +240,15 @@ def sequence_names(contigs: Sequence[str], aliases: Sequence[set[str]] | None,
                     f"assembly")
             elif not found:
                 problems.append(
-                    f"--contig-aliases gives no GenBank accession for the reference sequence "
-                    f"'{contig}'; give it with --contig-aliases <assembly_report.txt>, the "
-                    f"assembly report NCBI distributes with the assembly")
+                    f"the alias file {alias_file or 'of --contig-aliases'} gives no GenBank "
+                    f"accession for the reference sequence '{contig}'. Add one to it, or use "
+                    f"the assembly report NCBI distributes with the assembly "
+                    f"(assembly_report.txt), which names both")
             else:
                 problems.append(
-                    f"--contig-aliases gives more than one GenBank accession for the reference "
-                    f"sequence '{contig}': {', '.join(found)}")
+                    f"the alias file {alias_file or 'of --contig-aliases'} gives more than one "
+                    f"GenBank accession for the reference sequence '{contig}': "
+                    f"{', '.join(found)}")
             continue
         if not GENBANK_SEQUENCE.fullmatch(contig):
             local.append(contig)
@@ -246,11 +264,14 @@ def sequence_names(contigs: Sequence[str], aliases: Sequence[set[str]] | None,
 
     warnings: list[str] = []
     if local:
+        other_refseq = ("RefSeq contigs and scaffolds (NT_, NW_) are among them and are not "
+                        "replaced. " if any(OTHER_REFSEQ.match(name) for name in local) else "")
         warnings.append(
-            f"{len(local)} reference sequences are named by neither a GenBank nor a RefSeq "
-            f"accession and are written as they are: {', '.join(local[:5])}. CanSNPer2-download "
-            f"will not find a genome with sequences of these names, so the reference must be "
-            f"provided by hand")
+            f"{len(local)} reference sequences are named neither by a versioned GenBank "
+            f"accession nor by a RefSeq accession of the NC_, NZ_ or AC_ kind, which would "
+            f"be replaced by its GenBank name; they are written as they are: "
+            f"{', '.join(local[:5])}. {other_refseq}CanSNPer2-download will not find a genome "
+            f"with sequences of these names, so the reference must be provided by hand")
     return names, problems, warnings
 
 
@@ -486,7 +507,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     # Only the sequences that carry a canSNP of the scheme are named in it.
     used = {score.contig for picked in chosen.values() for score in picked}
     names, naming_problems, naming_warnings = sequence_names(
-        [name for name in sequence.names if name in used], aliases)
+        [name for name in sequence.names if name in used], aliases, contig_aliases)
     problems += naming_problems
     warnings += naming_warnings
     problems += check_metadata(genome, strain, citation, genbank_id, refseq_id,

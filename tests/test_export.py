@@ -387,6 +387,60 @@ def test_refseq_contigs_with_no_genbank_alias_are_refused(dataset, refseq, tmp_p
     assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(aliases),
                        **METADATA) == 2
     assert "NC_000002.1" in caplog.text
+    # The file was given; asking for --contig-aliases again would not help.
+    refusals = [record.getMessage() for record in caplog.records
+                if "NC_000002.1" in record.getMessage()]
+    assert any(f"{aliases} gives no GenBank accession" in message for message in refusals)
+    assert not any("give it with --contig-aliases" in message for message in refusals)
+
+
+def test_a_refseq_sequence_not_identical_to_its_genbank_one_is_refused(dataset, refseq,
+                                                                       caplog):
+    # NCBI gives the Relationship <> when the RefSeq sequence is not identical
+    # to the GenBank one, so a position on one need not hold on the other.
+    scores, fasta, report, outdir = refseq
+    with open(report) as handle:
+        text = handle.read()
+    with open(report, "w") as handle:
+        handle.write(text.replace("CP000002.1\t=\t", "CP000002.1\t<>\t"))
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=report,
+                       **METADATA) == 2
+    refusals = [record.getMessage() for record in caplog.records
+                if "not identical" in record.getMessage()]
+    assert len(refusals) == 1
+    assert "NC_000002.1" in refusals[0] and "CP000002.1" in refusals[0]
+    assert "NC_000001.1" not in refusals[0]
+    assert not os.path.exists(os.path.join(outdir, "testus_organismus_snp.txt"))
+
+
+def test_the_alias_reader_keeps_which_sequences_are_not_identical(tmp_path):
+    from cansnpscorer.helpers.file_utils import read_contig_aliases
+
+    report = tmp_path / "assembly_report.txt"
+    report.write_text(
+        "# Sequence-Name\tSequence-Role\tAssigned-Molecule\tAssigned-Molecule-Location/Type"
+        "\tGenBank-Accn\tRelationship\tRefSeq-Accn\tAssembly-Unit\tSequence-Length"
+        "\tUCSC-style-name\n"
+        "chr1\tassembled-molecule\t1\tChromosome\tCP000001.1\t=\tNC_000001.1\tPrimary"
+        "\t10\tna\n"
+        "pX\tassembled-molecule\tpX\tPlasmid\tCP000002.1\t<>\tNC_000002.1\tPrimary"
+        "\t10\tna\n")
+    same, different = read_contig_aliases(str(report))
+    assert same == {"chr1", "CP000001.1", "NC_000001.1"} and not same.differs
+    assert different == {"pX", "CP000002.1", "NC_000002.1"}
+    assert different.differs == {"NC_000002.1"}
+
+
+@pytest.mark.parametrize("name", ["NT_000003.1", "NW_000004.1"])
+def test_a_refseq_contig_or_scaffold_name_is_not_called_neither_kind(name):
+    from cansnpscorer.cansnp_export import sequence_names
+
+    names, problems, warnings = sequence_names([name, "contig_7"], None)
+    assert names == {name: name, "contig_7": "contig_7"} and problems == []
+    (warning,) = warnings
+    assert "neither a GenBank nor a RefSeq accession" not in warning
+    assert name in warning and "contig_7" in warning
+    assert "NT_" in warning and "NW_" in warning
 
 
 def test_a_local_sequence_name_is_written_with_one_warning(dataset, scheme, caplog):

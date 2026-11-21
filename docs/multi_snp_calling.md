@@ -58,7 +58,7 @@ derived nodes first and depth second.
 
 For comparison, the single rule (`single_call`) reads only the rank 1 canSNP of
 each node, counts a node as derived only when its rank 1 canSNP is derived, and
-follows CanSNPer2 2.2.1 and 2.2.2 (section 4, `confirm_chain`): an ancestral or third-base
+follows CanSNPer2 2.3.0 (section 4, `confirm_chain`): an ancestral or third-base
 rank 1 canSNP on the lineage breaks the chain, a missing one is a gap, a node
 without a SNP is passed and not counted, and the
 call is the deepest derived node with at least `min_required_hits` derived nodes
@@ -71,7 +71,7 @@ CanSNPer2 2.2.0, where a missing rank 1 SNP ended the chain.
 
 CanSNPer2 calls one SNP per node. The rule below is that of CanSNPer2 2.2.1
 (commit 2e8391c, PR #55), `NewickTree._confirm_path`, and is unchanged in
-2.2.2 (upstream master, commit dc660a9, PRs #59 and #60). Each SNP
+2.2.2 (upstream master, commit dc660a9, PRs #59 and #60) and in 2.3.0. Each SNP
 on the chain from the root to the node is one of:
 
 - called: derived in the query, counted as a hit;
@@ -100,7 +100,7 @@ Under the set rule, the corresponding reading in CanSNPCreator is:
 - The set rule counts the missing nodes on the path (`missing_on_path`), so that
   a call resting on many unknown nodes can be recognised.
 
-In 2.2.1 and 2.2.2, `--min_required_hits` is a minimum count of called SNPs and
+In 2.2.1 to 2.3.0, `--min_required_hits` is a minimum count of called SNPs and
 `--strictness` is the tolerated fraction of SNPs without data on the chain; this
 already covers a path with unknown nodes. What a set rule would add is the state
 of a node from several SNPs (section 2), so that one missing or discordant base

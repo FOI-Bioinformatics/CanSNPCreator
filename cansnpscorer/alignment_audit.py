@@ -53,8 +53,9 @@ def _names(genomes: Sequence[str]) -> str:
     return ", ".join(shown) + (f" and {more} more" if more > 0 else "")
 
 
-def _where(reference: Reference, column_position: int) -> str:
-    contig, local = reference.locate(column_position)
+def _where(reference: Reference, joined_position: int) -> str:
+    """A 0-based position along the joined reference sequences, as sequence:position."""
+    contig, local = reference.locate(joined_position)
     return f"{contig.name}:{local + 1}"
 
 
@@ -153,9 +154,10 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
     for snp in scheme.checked_snps:
         if genome is not None and snp.genome != genome:
             continue
-        if snp.node not in placement.below or snp.position < 1:
+        if snp.node not in placement.below:
             continue
-        if snp.position > mapping.reference.length:
+        if (snp.sequence not in mapping.reference.names
+                or not 1 <= snp.position <= mapping.reference.contig(snp.sequence).length):
             continue  # reported by the reference check
         inside = placement.below[snp.node]
         if not inside:
@@ -163,13 +165,12 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
                 untested.append(snp.node)
             continue
 
-        column = mapping.to_column(snp.position - 1)
+        column = mapping.column_at(snp.sequence, snp.position)
         if column is None:
             findings.append(recommendation(
                 CHECK, "not-aligned", snp.node, snp.tag(
-                f"no column of the alignment covers position {snp.position} "
-                f"({_where(mapping.reference, snp.position - 1)}), so the SNP cannot be checked "
-                f"in these genomes")))
+                f"no column of the alignment covers {snp.sequence}:{snp.position}, so the SNP "
+                f"cannot be checked in these genomes")))
             continue
 
         outside = [name for name in placement.genomes if name not in inside]
@@ -180,14 +181,15 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
             findings.append(recommendation(
                 CHECK, "no-outgroup", snp.node, snp.tag(
                 f"every genome of the alignment sits below this node, so nothing tests whether "
-                f"its SNP at {snp.position} marks it, nor which base is ancestral. Add an "
+                f"its SNP at {snp.sequence}:{snp.position} marks it, nor which base is "
+                f"ancestral. Add an "
                 f"outgroup genome to the alignment, placed at no node")))
             continue
 
         within = _bases_at(alignment, column, sorted(inside))
         beyond = _bases_at(alignment, column, outside)
         derived, ancestral = snp.derived.upper(), snp.ancestral.upper()
-        where = f"at {snp.position} ({_where(mapping.reference, snp.position - 1)})"
+        where = f"at {snp.sequence}:{snp.position}"
 
         called_inside = {base for base in within if base != "missing"}
         bad = False
@@ -299,7 +301,7 @@ def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: Al
     root, as the typing report's set rule takes it; two such nodes on
     different branches leave the path at the nodes they share. A node of
     unknown state may lie on the path, as when its canSNPs have no base in
-    the genome; CanSNPer2 2.2.1 and 2.2.2 pass such a node but calls neither it nor
+    the genome; CanSNPer2 2.3.0 passes such a node but calls neither it nor
     the node directly below it, so the path is where the genome's canSNPs
     place it, which can lie below where CanSNPer2 would type it.
 
@@ -322,9 +324,9 @@ def check_genome_paths(scheme: Scheme, alignment: Mapping[str, str], mapping: Al
     for snp in scheme.checked_snps:
         if genome is not None and snp.genome != genome:
             continue
-        if snp.node not in hierarchy.parents or not 1 <= snp.position <= mapping.reference.length:
+        if snp.node not in hierarchy.parents:
             continue
-        column = mapping.to_column(snp.position - 1)
+        column = mapping.column_at(snp.sequence, snp.position)
         if column is not None:
             by_node.setdefault(snp.node, []).append(
                 (column, snp.derived.upper(), snp.ancestral.upper()))
@@ -404,7 +406,9 @@ def scan_alignment(alignment: Mapping[str, str], mapping: AlignmentMap,
     extract subcommand uses them.
 
     Returns:
-        - canonical sites per node, as (position, derived, ancestral)
+        - canonical sites per node, as (position, derived, ancestral); the
+          position is 0-based along the joined reference sequences, for use
+          within this module only, and is written out as sequence:position
         - sites per candidate new clade, keyed by (parent node, genomes)
         - conflicting sites per node
         - conflicting sites per genome
@@ -478,7 +482,7 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
     reference = mapping.reference
 
     def described(entries: Sequence[tuple[int, str, str]]) -> str:
-        shown = [f"{position + 1} ({_where(reference, position)}, {ancestral}>{derived})"
+        shown = [f"{_where(reference, position)} ({ancestral}>{derived})"
                  for position, derived, ancestral in entries[:3]]
         return "; ".join(shown) + (" and others" if len(entries) > 3 else "")
 
@@ -500,10 +504,14 @@ def check_extension(scheme: Scheme, mapping: AlignmentMap, placement: Placement,
                 "these genomes it is not a clade. Check the placement of its isolates, or "
                 "whether the node should be merged with its parent"))
         elif len(found) == 1 and node != scheme.hierarchy.root:
-            # found[0] is 0-based over the reference; the scheme counts from 1.
-            own = {snp.position for snp in scheme.checked_snps if snp.node == node}
-            others = len(own - {found[0][0] + 1})
-            if found[0][0] + 1 in own:
+            # found[0] is 0-based along the joined reference sequences; the
+            # scheme gives a 1-based position on one sequence.
+            contig, local = reference.locate(found[0][0])
+            site = (contig.name, local + 1)
+            own = {(snp.sequence, snp.position) for snp in scheme.checked_snps
+                   if snp.node == node}
+            others = len(own - {site})
+            if site in own:
                 which = "one of the scheme's own canSNPs"
             else:
                 which = f"which is not a canSNP of the scheme ({described(found)})"

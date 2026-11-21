@@ -377,9 +377,21 @@ def main(snps=None, reference=None, genes=None, repeats=None, hierarchy=None, ou
                 f"of the other groups would divide these branches: {', '.join(regrouped)}")
         matched = 0
         other_alleles = 0
+        # The report names each sequence as the scheme does, which for an
+        # exported scheme is its GenBank accession; the scores name it as the
+        # reference does, which the alias table may relate to it.
+        named: dict[str, list[str]] = {}
         for score in scores:
-            seen = behaviour.get(
-                (score.node, genome.contig(score.contig).start + score.position))
+            if score.contig not in named:
+                # A pair NCBI gives as not identical (<>) is not related.
+                named[score.contig] = [score.contig, *sorted(
+                    {name for group in aliases or ()
+                     if score.contig in group and not getattr(group, "differs", ())
+                     for name in group} - {score.contig})]
+        for score in scores:
+            seen = next((behaviour[key] for key in (
+                (score.node, name, score.position) for name in named[score.contig])
+                if key in behaviour), None)
             if seen is not None and (seen.derived, seen.ancestral) != (
                     (score.derived or "").upper(), (score.ancestral or "").upper()):
                 # The same node and position with other alleles is another

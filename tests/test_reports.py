@@ -3,7 +3,9 @@ findings that were corrected in the fourth audit round, and the Markdown
 report."""
 
 import os
+from dataclasses import replace
 
+import pytest
 from conftest import PLANTED, cli_run
 from test_audit_round4 import chain_scheme, typed
 from test_review_fixes import scheme_of
@@ -95,9 +97,12 @@ def test_the_ranks_table_sums_the_cansnps_of_each_rank():
     assert ranks["1"]["missing"] == "0"
 
 
-def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
+def test_the_snp_table_gives_the_sequence_and_no_field_is_left_empty(tmp_path):
     alignment = {"ref": "AAAAAAAA", "g": "AGAGAGAA", "none": "AAAAAAAA"}
     scheme = chain_scheme()
+    # A.1 and B lie on the second sequence, at its first and third base.
+    scheme.snps = [replace(snp, sequence="c2", position=snp.position - 5)
+                   if snp.node in ("A.1", "B") else snp for snp in scheme.snps]
     reference = Reference.from_records([("c1", "AAAAA"), ("c2", "AAA")])
     from cansnpscorer.typing_report import type_alignment
 
@@ -109,8 +114,9 @@ def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
         "t_run.tsv"]
     snps = {row["node"]: row for row in table(prefix + "_snps.tsv")}
     assert list(snps["A"]) == list(SNP_COLUMNS)
-    assert (snps["A"]["contig"], snps["A"]["contig_position"]) == ("c1", "4")
-    assert (snps["A.1"]["contig"], snps["A.1"]["contig_position"]) == ("c2", "1")
+    assert (snps["A"]["sequence"], snps["A"]["position"]) == ("c1", "4")
+    assert (snps["A.1"]["sequence"], snps["A.1"]["position"]) == ("c2", "1")
+    assert snps["A.1"]["derived"] == "1" and snps["B"]["ancestral"] == "3"
     for suffix, columns in (("_genomes.tsv", GENOME_COLUMNS), ("_nodes.tsv", NODE_COLUMNS),
                             ("_snps.tsv", SNP_COLUMNS)):
         for row in table(prefix + suffix):
@@ -126,15 +132,36 @@ def test_the_snp_table_gives_the_contig_and_no_field_is_left_empty(tmp_path):
 
 
 def test_a_table_written_before_the_columns_were_renamed_is_still_read(tmp_path):
-    old = ("node", "rank", "genome", "position", "derived_base", "ancestral_base", "genomes",
-           "called", "missing", "derived", "ancestral", "other", "discordant_in_set",
-           "ancestral_on_path", "derived_off_path")
+    old = ("node", "rank", "genome", "sequence", "position", "derived_base", "ancestral_base",
+           "genomes", "called", "missing", "derived", "ancestral", "other",
+           "discordant_in_set", "ancestral_on_path", "derived_off_path")
     path = tmp_path / "old_snps.tsv"
     path.write_text("\t".join(old) + "\n"
-                    + "\t".join(["A", "1", "G", "4", "G", "A", "9", "8", "1", "5", "3", "0",
-                                 "1", "0", "2"]) + "\n")
-    found = read_observed(str(path))[("A", 4)]
+                    + "\t".join(["A", "1", "G", "c1", "4", "G", "A", "9", "8", "1", "5", "3",
+                                 "0", "1", "0", "2"]) + "\n")
+    found = read_observed(str(path))[("A", "c1", 4)]
     assert (found.genomes, found.missing, found.discordant) == (8, 1, 2)
+
+
+@pytest.mark.parametrize("columns", [
+    ("node", "rank", "genome", "position"),
+    ("node", "rank", "reference_genome", "position", "contig", "contig_position")])
+def test_a_table_with_positions_along_the_joined_sequences_is_refused(tmp_path, columns):
+    # Before CanSNPer2 2.3.0 a typing report gave each position along the
+    # joined reference sequences, which a position on one sequence is not.
+    rest = ("derived_base", "ancestral_base", "genomes", "called", "missing", "derived",
+            "ancestral", "other", "discordant_in_set", "ancestral_on_path", "derived_off_path")
+    path = tmp_path / "old_snps.tsv"
+    values = {"node": "A", "rank": "1", "genome": "G", "reference_genome": "G",
+              "position": "704", "contig": "c2", "contig_position": "4"}
+    path.write_text("\t".join((*columns, *rest)) + "\n"
+                    + "\t".join([values[column] for column in columns]
+                                + ["G", "A", "9", "8", "1", "5", "3", "0", "1", "0", "2"])
+                    + "\n")
+    with pytest.raises(ValueError, match="has no sequence column") as raised:
+        read_observed(str(path))
+    assert "audit --typing-report" in str(raised.value)
+    assert "CanSNPer2 2.3.0" in str(raised.value)
 
 
 def test_many_genomes_and_cansnps_are_held_as_one_string_each():

@@ -224,8 +224,8 @@ def test_a_set_outvotes_one_discordant_base_and_the_snp_is_counted(written, data
     assert nodes["A"]["split"] == "1" and nodes["A"]["all_derived"] == "2"
 
     observed = read_observed(prefix + "_snps.tsv")
-    assert observed[("A", column + 1)].discordant == 1
-    assert observed[("A", 211)].discordant == 0
+    assert observed[("A", *contig_of(column))].discordant == 1
+    assert observed[("A", *contig_of(210))].discordant == 0
 
 
 # -- ranking by what was observed -------------------------------------------
@@ -393,7 +393,6 @@ def test_typing_only_audit_reads_the_scheme_columns(written, dataset, tmp_path, 
 def derived_set_rows(states_by_genome, discordant=()):
     """The _snps.tsv rows of one node 'A' whose canSNPs have these states,
     given per genome as one character per canSNP."""
-    from cansnpscorer.model import Reference
     from cansnpscorer.scheme import SchemeSnp
     from cansnpscorer.typing_report import GenomeTyping, _snp_rows
 
@@ -402,8 +401,7 @@ def derived_set_rows(states_by_genome, discordant=()):
             for index in range(width)]
     typed = [GenomeTyping(genome=name, states=states, discordant=name in discordant)
              for name, states in states_by_genome.items()]
-    reference = Reference.from_records([("c1", "A" * 400)])
-    return _snp_rows({"A": snps}, {"A": 0}, typed, reference)
+    return _snp_rows({"A": snps}, {"A": 0}, typed)
 
 
 def labels_of(rows):
@@ -468,7 +466,7 @@ def group_table(tmp_path, rows, with_sets=True, apart=None):
                     and (apart is not None or column != "set_apart"))
     lines = ["\t".join(columns)]
     for index, (derived, missing, label) in enumerate(rows):
-        fields = ["A", str(index + 1), "G", str(100 + index), "c1", str(100 + index), "T", "C",
+        fields = ["A", str(index + 1), "G", "c1", str(100 + index), "T", "C",
                   "300", str(300 - missing), str(missing), str(derived),
                   str(300 - missing - derived), "0", "5", "0", "0"]
         if with_sets:
@@ -494,7 +492,7 @@ def test_derived_set_groups_canSNPs_of_equal_counts_apart(tmp_path):
     assert nodes == ["A"]
     # The narrowest group is the last set; its most common count is 59 (ties
     # go to the smaller count).
-    assert [judged[("A", 100 + index)].discordant for index in range(6)] == [91, 91, 1, 1, 1, 0]
+    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [91, 91, 1, 1, 1, 0]
 
 
 def test_old_table_without_derived_set_reads_and_groups_by_count(tmp_path):
@@ -597,7 +595,7 @@ def test_evaluate_judges_by_set_apart_when_the_table_holds_it(tmp_path):
     assert [row.set_apart for row in observed.values()] == [90, 90, 120, 119, 0, 1]
     judged, nodes = judge_by_narrowest_group(observed)
     assert nodes == ["A"]
-    assert [judged[("A", 100 + index)].discordant for index in range(6)] == [
+    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [
         90, 90, 120, 119, 0, 1]
 
 
@@ -607,7 +605,7 @@ def test_evaluate_judges_by_counts_when_a_set_apart_is_empty(tmp_path):
     rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 3), (59, 0, 3)]
     observed = read_observed(group_table(tmp_path, rows, apart=[90, 90, None, 119, 0, 1]))
     judged, _nodes = judge_by_narrowest_group(observed)
-    assert [judged[("A", 100 + index)].discordant for index in range(6)] == [
+    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [
         91, 91, 1, 1, 1, 0]
 
 
@@ -627,7 +625,7 @@ def test_set_apart_round_trip_judges_against_the_narrowest_set(tmp_path):
     judged, nodes = judge_by_narrowest_group(observed)
     assert nodes == ["A"]
     # By counts the set of g1-g4 would agree with that of g5-g8.
-    assert [judged[("A", 10 + index)].discordant for index in range(6)] == [8, 8, 8, 8, 0, 0]
+    assert [judged[("A", "c1", 10 + index)].discordant for index in range(6)] == [8, 8, 8, 8, 0, 0]
 
 
 def test_a_position_listed_twice_is_judged_by_counts(tmp_path):
@@ -637,11 +635,11 @@ def test_a_position_listed_twice_is_judged_by_counts(tmp_path):
     at = SNP_COLUMNS.index("position")
     rows[5][at] = rows[4][at]  # the set of g5-g8 is one position, listed twice
     observed = read_observed(write_rows(tmp_path, rows))
-    assert observed[("A", 14)].set_apart is None
+    assert observed[("A", "c1", 14)].set_apart is None
     judged, nodes = judge_by_narrowest_group(observed)
     # Read back, the narrowest set of two is that of g1-g4, derived in four.
     assert nodes == ["A"]
-    assert [judged[("A", 10 + index)].discordant for index in range(5)] == [8, 8, 0, 0, 0]
+    assert [judged[("A", "c1", 10 + index)].discordant for index in range(5)] == [8, 8, 0, 0, 0]
 
 
 # -- the single rule of CanSNPer2 2.2.1 ---------------------------------------

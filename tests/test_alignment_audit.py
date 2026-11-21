@@ -148,7 +148,8 @@ def test_a_failed_snp_is_offered_a_replacement(written, dataset, tmp_path):
 
     replacement = of(audit(written[0], dataset, alignment_path=path), "replacement")
     assert [finding.node for finding in replacement] == ["A.1"]
-    assert f"{spare + 1} (c1:{spare + 1}, {base}>{other})" in replacement[0].detail
+    # The site is given on its sequence only, not along the joined sequences.
+    assert f"replace its SNP: c1:{spare + 1} ({base}>{other})" in replacement[0].detail
 
 
 def test_a_site_no_genome_has_a_base_at_is_reported(written, dataset, tmp_path):
