@@ -8,18 +8,19 @@ describes existing behaviour and makes no change to CanSNPer2.
 
 ## 1. Input
 
-`export --snps-per-node N` writes `<organism>_canSNPs.txt` next to the usual
-`<organism>_tree.txt` and `<organism>_snp.txt` (README, section "Export"):
+`export` writes `<organism>_canSNPs.txt` next to `<organism>_tree.txt` and
+`<organism>_references.txt` (README, section "Export"):
 
 ```
-node	rank	genome	sequence	sequence_position	derived_base	ancestral_base	score
+node	rank	reference	genome	sequence	sequence_position	derived_base	ancestral_base	score	typed
 ```
 
-Rank is counted within each node. Rank 1 is the SNP of `<organism>_snp.txt`, so a
-reader that ignores the set sees the single-SNP scheme. Each canSNP is given by
-its reference sequence and a 1-based position on it, as in the SNP file
-(CanSNPer2 2.3.0). With the default
-`--snps-per-node 1` the file holds rank 1 only.
+Rank is counted within each node, and rank 1 is the node's best canSNP. `typed`
+marks the canSNPs CanSNPer2 calls, one per node, so a reader that ignores the
+other ranks sees the single-canSNP scheme. Each canSNP is given by its reference
+sequence and a 1-based position on it (CanSNPer2 2.3.0 and later), and CanSNPer2
+reads the file itself from 2.4.0. With the
+default `--snps-per-node 1` each node has rank 1 alone.
 
 ## 2. State of a node (`snp_state`, `node_state`)
 
@@ -56,16 +57,16 @@ The call is not the deepest node on a chain of derived nodes in the strict
 sense. A missing node on the way is passed, and the choice is by number of
 derived nodes first and depth second.
 
-For comparison, the single rule (`single_call`) reads only the rank 1 canSNP of
-each node, counts a node as derived only when its rank 1 canSNP is derived, and
+For comparison, the single rule (`single_call`) reads only the typed canSNP of
+each node, counts a node as derived only when its typed canSNP is derived, and
 follows CanSNPer2 2.3.0 (section 4, `confirm_chain`): an ancestral or third-base
-rank 1 canSNP on the lineage breaks the chain, a missing one is a gap, a node
-without a SNP is passed and not counted, and the
+typed canSNP on the lineage breaks the chain, a missing one is a gap, a node
+without a canSNP is passed and not counted, and the
 call is the deepest derived node with at least `min_required_hits` derived nodes
 on its lineage (the root counts as one), a derived fraction of at least
 `strictness`, and a derived parent. Two deepest confirmed nodes at the same depth
 give no call. The single-rule figures in section 6 were measured with the rule of
-CanSNPer2 2.2.0, where a missing rank 1 SNP ended the chain.
+CanSNPer2 2.2.0, where a missing typed canSNP ended the chain.
 
 ## 4. `--min_required_hits` and `--strictness` under the set rule
 

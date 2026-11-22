@@ -13,9 +13,18 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
+## Upgrading to 0.7.0
+
+Version 0.7.0 writes and reads the canSNP file of a scheme,
+`<organism>_canSNPs.txt`, which holds every canSNP of every node with the ones the
+scheme types marked, and no longer writes `<organism>_snp.txt`. It is the format
+CanSNPer2 2.4.0 reads, and CanSNPer2-data holds. `audit` and `place` read a
+`<organism>_snp.txt` an earlier version exported as rank 1 of each node, typed, so
+an older export is still audited.
+
 ## Upgrading to 0.6.0
 
-Version 0.6.0 writes and reads only the CanSNPer2 2.3.0 scheme format, in
+Version 0.6.0 wrote and read the CanSNPer2 2.3.0 scheme format, in
 which each canSNP is a sequence (a GenBank accession) and a position on it.
 A scheme made for an earlier version is converted with
 `CanSNPer2-database --convert` (CanSNPer2 2.3.0) before `audit` or `place` reads
@@ -351,16 +360,25 @@ scheme a larger `--min-spacing` is worth trying.
 
 ### Export
 
-`export` takes the highest scoring passing canSNP of each node and writes
-`<organism>_tree.txt`, `<organism>_snp.txt` and `<organism>_references.txt` as
-CanSNPer2-data expects them in the format of CanSNPer2 2.3.0: each canSNP names
+`export` writes `<organism>_tree.txt`, `<organism>_canSNPs.txt` and
+`<organism>_references.txt` as CanSNPer2-data expects them: each canSNP names
 its reference sequence (`sequence`) and gives a 1-based position on that
 sequence (`sequence_position`), not a position along the sequences joined in
-file order as earlier versions wrote it. The SNP file has the columns
+file order as versions before CanSNPer2 2.3.0 wrote it. CanSNPer2 reads this file
+from 2.4.0. It has the
+columns
 
 ```
-snp_id	strain	reference	genome	sequence	sequence_position	derived_base	ancestral_base
+node	rank	reference	genome	sequence	sequence_position	derived_base	ancestral_base	score	typed
 ```
+
+`rank` counts from 1 within a node, in the order `evaluate --top-n` chooses the
+canSNPs, so rank 1 is the node's best. `reference` is the `--citation` value,
+`score` is what the canSNP scored, and `typed` marks the canSNPs CanSNPer2 calls:
+rank 1 of each node, since CanSNPer2 calls one canSNP per node. The other canSNPs
+of a node are its alternatives, for an assay that types several canSNPs of a
+branch. `<organism>_snp.txt`, which held one canSNP per node, is no longer
+written; a stale one from an earlier export is removed.
 
 A sequence is named by its GenBank accession, as in the FASTA files
 CanSNPer2-download fetches. A reference whose sequences carry RefSeq names
@@ -382,19 +400,11 @@ children to the nearest node that has one. With `--genome-map` (which needs
 `--alignment`) the warning also gives the number of genomes moved to an ancestor
 and the deepest pruned depth.
 
-CanSNPer2 calls one SNP per node, so the SNP file always holds the best of
-each. `--snps-per-node N` (or `all`) keeps up to N canSNPs of each node, chosen
-as `evaluate --top-n` chooses them, at least `--min-spacing` bases apart, and
-writes them all to `<organism>_canSNPs.txt`:
-
-```
-node	rank	genome	sequence	sequence_position	derived_base	ancestral_base	score
-```
-
-ranked within each node, with rank 1 the SNP of the SNP file. Each canSNP is
-given by sequence and position on it, as in the SNP file. CanSNPer2-data's
-`validate.py` checks that rank 1 agrees with the SNP file, and `audit` checks
-every rank against the reference and the genomes.
+At the default `--snps-per-node 1` each node has rank 1 alone.
+`--snps-per-node N` (or `all`) keeps up to N canSNPs of each node, chosen as
+`evaluate --top-n` chooses them and at least `--min-spacing` bases apart.
+CanSNPer2-data's `validate.py` checks every column of the file, and `audit`
+checks every canSNP against the reference and the genomes.
 
 With `--genome-map` and `--alignment` it also writes `<organism>_genomes.txt`,
 the genomes the scheme was made from: each by its versioned assembly
@@ -490,10 +500,10 @@ refused, with the hint to convert it with `CanSNPer2-database --convert`.
 | better SNPs | `--reference`, `--scores` | a node where a higher scoring passing canSNP is available, or one the scores do not cover |
 | genomes | `--reference`, `--alignment`, and `--genome-map`, `--tree` or the scheme's own genomes file | the checks below |
 
-When the scheme has an `<organism>_canSNPs.txt`, every rank in it is checked
-by the reference base, masked and genome checks, and a finding about
-a rank other than 1 says which rank it is about. Only a failing rank 1, the SNP
-CanSNPer2 calls, is offered a replacement.
+Every canSNP of the canSNP file is checked by the reference base, masked and
+genome checks, and a finding about a canSNP the scheme does not type says which
+rank it is about. Only a failing typed canSNP, the one CanSNPer2 calls, is
+offered a replacement.
 
 The genome checks are the only ones that test what defines a canSNP. For each
 SNP of the scheme the audit reports genomes below the node without the derived

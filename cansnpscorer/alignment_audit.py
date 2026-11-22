@@ -161,7 +161,7 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
             continue  # reported by the reference check
         inside = placement.below[snp.node]
         if not inside:
-            if snp.rank == 1:
+            if snp.typed:
                 untested.append(snp.node)
             continue
 
@@ -206,7 +206,7 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
                 f"as the ancestral base, and {len(derived_outside)} genomes outside it carry the "
                 f"derived '{derived}'. The two columns appear swapped")))
             not_canonical += 1
-            if snp.rank == 1:
+            if snp.typed:
                 failed.add(snp.node)
             continue
 
@@ -243,8 +243,8 @@ def check_scheme_snps(scheme: Scheme, alignment: Mapping[str, str], mapping: Ali
             canonical += 1
             continue
         not_canonical += 1
-        if snp.rank == 1:
-            # Only the SNP CanSNPer2 calls is offered a replacement.
+        if snp.typed:
+            # Only the canSNP CanSNPer2 calls is offered a replacement.
             failed.add(snp.node)
 
     if rarely_missing:

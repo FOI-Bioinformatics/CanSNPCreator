@@ -44,7 +44,7 @@ from cansnpscorer.helpers.file_utils import (
 from cansnpscorer.helpers.scoring_methods import ScoredSnp
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference, ReferenceError
-from cansnpscorer.scheme import SNP_COLUMNS, SNP_SET_COLUMNS
+from cansnpscorer.scheme import CANSNP_COLUMNS, CANSNP_SUFFIX
 from cansnpscorer.validate import report
 
 #: The version of an accession has one or two digits, as CanSNPer2-data's
@@ -62,7 +62,7 @@ TREE_SUFFIX = "_tree.txt"
 SNP_SUFFIX = "_snp.txt"
 REFERENCES_SUFFIX = "_references.txt"
 GENOMES_SUFFIX = "_genomes.txt"
-SNP_SET_SUFFIX = "_canSNPs.txt"
+
 GENOME_COLUMNS = ("genome", "node", "role")
 ACCESSION = re.compile(r"GC[AF]_\d{9}" + VERSION)
 #: An accession in any version or none, to say why a name gave no accession.
@@ -415,23 +415,23 @@ def write_genomes(outdir: str, organism: str, rows: Sequence[tuple[str, str, str
     return path
 
 
-def write_snp_set(outdir: str, organism: str, paths: Sequence[Sequence[str]],
+def write_cansnps(outdir: str, organism: str, paths: Sequence[Sequence[str]],
                   chosen: dict[str, Sequence[ScoredSnp]], names: dict[str, str],
-                  genome: str) -> str:
+                  genome: str, citation: str) -> str:
     """Write every chosen canSNP of each kept node, ranked within the node.
 
-    Each is given by sequence, named as ``names`` gives it, and position on
-    that sequence, as in the SNP file, and rank 1 of each node is the SNP the
-    SNP file carries for it.
+    Each is given by sequence, named as ``names`` gives it, and position on that
+    sequence. Rank 1 of a node is its first by :func:`ranking`, and it is the one
+    marked typed, which is what CanSNPer2 calls.
     """
-    path = os.path.join(outdir, organism + SNP_SET_SUFFIX)
+    path = os.path.join(outdir, organism + CANSNP_SUFFIX)
     with open(path, "w", newline="\n") as handle:
-        handle.write("\t".join(SNP_SET_COLUMNS) + "\n")
+        handle.write("\t".join(CANSNP_COLUMNS) + "\n")
         for tree_path in paths:
             node = tree_path[-1]
             handle.writelines("\t".join([
-                node, str(rank), genome, names[score.contig], str(score.position),
-                score.derived, score.ancestral, str(score.total),
+                node, str(rank), citation, genome, names[score.contig], str(score.position),
+                score.derived, score.ancestral, str(score.total), "yes" if rank == 1 else "no",
             ]) + "\n" for rank, score in enumerate(chosen[node], start=1))
     return path
 
@@ -440,9 +440,10 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
                  best: dict[str, ScoredSnp], names: dict[str, str], genome: str, strain: str,
                  citation: str, genbank_id: str, refseq_id: str,
                  assembly_name: str) -> list[str]:
-    """Write the three source files and return their paths.
+    """Write the tree and references files and return their paths.
 
-    ``names`` gives the name each contig of the reference is written under.
+    The canSNPs are written by :func:`write_cansnps`. ``names`` gives the name each
+    contig of the reference is written under.
     """
     os.makedirs(outdir, exist_ok=True)
     written = []
@@ -451,18 +452,6 @@ def write_scheme(outdir: str, organism: str, paths: Sequence[Sequence[str]],
     with open(tree_path, "w", newline="\n") as handle:
         handle.writelines("\t".join(path) + "\n" for path in paths)
     written.append(tree_path)
-
-    snp_path = os.path.join(outdir, organism + SNP_SUFFIX)
-    with open(snp_path, "w", newline="\n") as handle:
-        handle.write("\t".join(SNP_COLUMNS) + "\n")
-        for path in paths:
-            node = path[-1]
-            score = best[node]
-            handle.write("\t".join([
-                node, strain, citation, genome, names[score.contig], str(score.position),
-                score.derived, score.ancestral,
-            ]) + "\n")
-    written.append(snp_path)
 
     references_path = os.path.join(outdir, organism + REFERENCES_SUFFIX)
     with open(references_path, "w", newline="\n") as handle:
@@ -545,17 +534,17 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     paths = paths_for(tree, kept)
     written = write_scheme(outdir, organism, paths, best, names, genome, strain,
                            citation, genbank_id, refseq_id, assembly_name)
+    written.append(write_cansnps(outdir, organism, paths, chosen, names, genome, citation))
     # The optional files of an earlier export into the same directory would
-    # otherwise stay beside this scheme, and describe another one.
-    for suffix, wanted in ((SNP_SET_SUFFIX, snps_per_node != 1),
-                           (GENOMES_SUFFIX, clusters is not None)):
+    # otherwise stay beside this scheme, and describe another one. The SNP file of
+    # CanSNPer2 2.3.0 and earlier is no longer written at all.
+    for suffix, wanted in ((SNP_SUFFIX, False), (GENOMES_SUFFIX, clusters is not None)):
         stale = os.path.join(outdir, organism + suffix)
         if not wanted and os.path.exists(stale):
             os.remove(stale)
             logging.warning(f"Removed {stale}, which an earlier export wrote and this one does "
                             f"not")
     if snps_per_node != 1:
-        written.append(write_snp_set(outdir, organism, paths, chosen, names, genome))
         counts = sorted(len(chosen[path[-1]]) for path in paths)
         short = [path[-1] for path in paths
                  if snps_per_node is not None and len(chosen[path[-1]]) < snps_per_node]

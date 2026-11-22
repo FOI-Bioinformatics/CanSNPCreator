@@ -267,7 +267,7 @@ METADATA = {
 }
 
 TREE = "testus_organismus_tree.txt"
-SNPS = "testus_organismus_snp.txt"
+SNPS = "testus_organismus_canSNPs.txt"
 REFERENCES = "testus_organismus_references.txt"
 
 

@@ -62,21 +62,21 @@ def contig_of(column):
 
 
 def add_set(outdir, extra):
-    """Write the scheme's canSNP set: its SNP file as rank 1, and further
-    ranks given as {node: [(column, derived, ancestral), ...]}."""
-    with open(os.path.join(outdir, SNPS)) as handle:
+    """Add alternative canSNPs to the scheme's canSNP file, which holds each node's
+    typed canSNP as rank 1. They are given as {node: [(column, derived, ancestral), ...]}
+    and are ranked from 2, not typed."""
+    path = os.path.join(outdir, SNPS)
+    with open(path) as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    lines = ["node\trank\tgenome\tsequence\tsequence_position\tderived_base\tancestral_base\t"
-             "score"]
+        columns = list(rows[0])
+    lines = ["\t".join(columns)]
     for row in rows:
-        lines.append("\t".join([row["snp_id"], "1", row["genome"], row["sequence"],
-                                row["sequence_position"], row["derived_base"],
-                                row["ancestral_base"], "600"]))
-        for rank, (column, derived, ancestral) in enumerate(extra.get(row["snp_id"], []), 2):
+        lines.append("\t".join(row.values()))
+        for rank, (column, derived, ancestral) in enumerate(extra.get(row["node"], []), 2):
             sequence, position = contig_of(column)
-            lines.append("\t".join([row["snp_id"], str(rank), row["genome"], sequence,
-                                    str(position), derived, ancestral, "600"]))
-    with open(os.path.join(outdir, SNPS.replace("_snp.txt", "_canSNPs.txt")), "w") as handle:
+            lines.append("\t".join([row["node"], str(rank), row["reference"], row["genome"],
+                                    sequence, str(position), derived, ancestral, "600", "no"]))
+    with open(path, "w") as handle:
         handle.write("\n".join(lines) + "\n")
 
 
@@ -397,7 +397,8 @@ def derived_set_rows(states_by_genome, discordant=()):
     from cansnpscorer.typing_report import GenomeTyping, _snp_rows
 
     width = len(next(iter(states_by_genome.values())))
-    snps = [(SchemeSnp("A", "", "", "G", "c1", 10 + index, "T", "C", rank=index + 1), index)
+    snps = [(SchemeSnp("A", "", "", "G", "c1", 10 + index, "T", "C", rank=index + 1,
+                       typed=index == 0), index)
             for index in range(width)]
     typed = [GenomeTyping(genome=name, states=states, discordant=name in discordant)
              for name, states in states_by_genome.items()]

@@ -147,11 +147,16 @@ def test_files_an_earlier_export_wrote_are_removed(dataset, several):  # noqa: F
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir,
                        snps_per_node=3, genome_map=dataset.genome_map,
                        alignment=dataset.alignment, **METADATA) == 0
-    set_file = os.path.join(outdir, organism + "_canSNPs.txt")
+    cansnp_file = os.path.join(outdir, organism + "_canSNPs.txt")
+    old_snp_file = os.path.join(outdir, organism + "_snp.txt")
     genomes_file = os.path.join(outdir, organism + "_genomes.txt")
-    assert os.path.exists(set_file) and os.path.exists(genomes_file)
+    assert os.path.exists(cansnp_file) and os.path.exists(genomes_file)
+    # The SNP file of an export before the canSNP file.
+    with open(old_snp_file, "w") as handle:
+        handle.write("snp_id\tstrain\n")
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
-    assert not os.path.exists(set_file) and not os.path.exists(genomes_file)
+    assert not os.path.exists(old_snp_file) and not os.path.exists(genomes_file)
+    assert os.path.exists(cansnp_file), "the canSNP file is written at every export"
 
 
 # -- evaluate and extract ------------------------------------------------------
