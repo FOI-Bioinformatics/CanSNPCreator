@@ -100,7 +100,7 @@ def test_the_exit_status_separates_problems_from_recommendations(written, datase
 
 def test_a_node_without_a_snp_is_reported(written, dataset):
     outdir, _scores = written
-    edit(outdir, SNPS, "A.1\ttestus", "A.9\ttestus")
+    edit(outdir, SNPS, "A.1\t1\t", "A.9\t1\t")
     findings = findings_of(outdir, dataset)
     assert {"no-snp", "unknown-node"} <= categories(findings, PROBLEM)
 
@@ -111,7 +111,8 @@ def test_a_node_with_two_snps_is_reported(written, dataset):
         lines = handle.read().splitlines()
     repeated = next(line for line in lines if line.startswith("A.1\t"))
     with open(os.path.join(outdir, SNPS), "a") as handle:
-        handle.write(repeated.replace("\t401\t", "\t411\t") + "\n")
+        # A second typed canSNP of the node, as its rank 2.
+        handle.write(repeated.replace("\t401\t", "\t411\t").replace("\t1\t", "\t2\t", 1) + "\n")
 
     findings = findings_of(outdir, dataset)
     assert "repeated-snp" in categories(findings, PROBLEM)
@@ -129,8 +130,8 @@ def test_a_node_under_two_parents_is_reported(written, dataset):
 @pytest.mark.parametrize("replace,with_text,category", [
     # The three published Yersinia canSNPs carry a slash where the derived base
     # belongs, and can never be called derived.
-    ("\tG\tC\n", "\t/\tC\n", "allele"),
-    ("\tG\tC\n", "\tC\tC\n", "allele"),
+    ("\tG\tC\t350\t", "\t/\tC\t350\t", "allele"),
+    ("\tG\tC\t350\t", "\tC\tC\t350\t", "allele"),
     ("\t201\t", "\t401\t", "shared-position"),
     ("\t201\t", "\t0\t", "position"),
     ("\t201\t", "\t99999\t", "position"),
@@ -165,7 +166,7 @@ def test_a_snp_on_an_unknown_genome_is_reported(written, dataset):
 
 def test_a_position_disagreeing_with_the_reference_is_reported(written, dataset):
     outdir, _scores = written
-    edit(outdir, SNPS, "\t201\tC\tG\n", "\t201\tC\tT\n")
+    edit(outdir, SNPS, "\t201\tC\tG\t", "\t201\tC\tT\t")
     findings = findings_of(outdir, dataset)
     reference_base = [finding for finding in findings if finding.category == "reference-base"]
     assert reference_base and reference_base[0].severity == PROBLEM
@@ -198,7 +199,7 @@ def test_coordinates_taken_against_another_assembly_are_reported(written, datase
 
 def test_the_reference_base_is_not_checked_without_a_reference_file(written, dataset):
     outdir, _scores = written
-    edit(outdir, SNPS, "\t201\tC\tG\n", "\t201\tC\tT\n")
+    edit(outdir, SNPS, "\t201\tC\tG\t", "\t201\tC\tT\t")
     assert "reference-base" not in categories(findings_of(outdir))
 
 
@@ -258,7 +259,7 @@ def test_the_audit_runs_from_the_command_line(written, dataset, tmp_path):
 
 def test_a_broken_scheme_exits_two_from_the_command_line(written, dataset):
     outdir, _scores = written
-    edit(outdir, SNPS, "\tG\tC\n", "\t/\tC\n")
+    edit(outdir, SNPS, "\tG\tC\t350\t", "\t/\tC\t350\t")
     assert cli_run("audit", "--scheme-dir", outdir,
                    "--reference", dataset.reference) == 2
 
@@ -268,21 +269,21 @@ def test_a_broken_scheme_exits_two_from_the_command_line(written, dataset):
 
 DATA = os.environ.get("CANSNPER2_DATA") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-data")
+    "CanSNPer2-data-canSNPs")
 PUBLISHED = os.path.join(DATA, "schemes")
 
 
 def published(organism):
     """The folder of a published scheme, or a skip when the checkout does not
-    hold it in the CanSNPer2 2.3.0 format."""
+    hold it with a canSNP file."""
     folder = os.path.join(PUBLISHED, organism)
-    snps = os.path.join(folder, f"{organism}_snp.txt")
+    snps = os.path.join(folder, f"{organism}_canSNPs.txt")
     if not os.path.isfile(snps):
         pytest.skip(f"{folder} does not exist; set CANSNPER2_DATA to a CanSNPer2-data checkout")
     with open(snps) as handle:
-        if "sequence_position" not in handle.readline().split("\t"):
-            pytest.skip(f"{snps} is in the format of CanSNPer2 before 2.3.0; set "
-                        f"CANSNPER2_DATA to a checkout with the 2.3.0 format")
+        if "typed" not in handle.readline().split():
+            pytest.skip(f"{snps} has no typed column; set CANSNPER2_DATA to a checkout "
+                        f"with the canSNP file")
     return folder
 
 
@@ -296,7 +297,7 @@ def test_the_published_yersinia_scheme_has_no_allele_problem():
                if finding.category == "allele" and finding.severity == PROBLEM]
     assert alleles == []
     assert not {"1.ANT2.b", "1.ORI2.c", "1.ORI3.b"} & set(scheme.snps_by_node)
-    assert all("/" not in snp.derived + snp.ancestral for snp in scheme.snps)
+    assert all("/" not in snp.derived + snp.ancestral for snp in scheme.snp_set)
 
 
 @pytest.mark.parametrize("organism", ["bacillus_anthracis", "brucella_classical",

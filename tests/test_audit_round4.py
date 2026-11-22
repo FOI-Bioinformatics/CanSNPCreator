@@ -1,6 +1,7 @@
 """Defects found in the fourth audit round, each pinned by the input that showed it."""
 
 import logging
+from dataclasses import replace
 
 from conftest import cli_run, vcf_records
 from test_review_fixes import scheme_of
@@ -73,17 +74,18 @@ def chain_scheme(extra=()):
     scheme = scheme_of([["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "B"]],
                        [("root", "G", 2, "G", "A"), ("A", "G", 4, "G", "A"),
                         ("A.1", "G", 6, "G", "A"), ("B", "G", 8, "G", "A")])
-    scheme.snp_set = list(extra)
+    # The canSNP file holds every canSNP of every node: the typed ones and these.
+    scheme.snp_set = [*scheme.snps, *extra] if extra else []
     return scheme
 
 
 def test_a_single_call_on_another_branch_is_labelled_as_such():
     # First canSNPs: derived down root, A, A.1. B's set of three is derived by
     # majority and A's set is ancestral by majority, so the set rule calls B.
-    extra = [SchemeSnp("A", "", "", "G", "c1", 10, "G", "A", rank=2),
-             SchemeSnp("A", "", "", "G", "c1", 11, "G", "A", rank=3),
-             SchemeSnp("B", "", "", "G", "c1", 12, "G", "A", rank=2),
-             SchemeSnp("B", "", "", "G", "c1", 13, "G", "A", rank=3)]
+    extra = [SchemeSnp("A", "", "", "G", "c1", 10, "G", "A", rank=2, typed=False),
+             SchemeSnp("A", "", "", "G", "c1", 11, "G", "A", rank=3, typed=False),
+             SchemeSnp("B", "", "", "G", "c1", 12, "G", "A", rank=2, typed=False),
+             SchemeSnp("B", "", "", "G", "c1", 13, "G", "A", rank=3, typed=False)]
     alignment = {"ref": "AAAAAAAAAAAAAA",
                  #        .G.G.G.A.AAGG
                  "g": "AGAGAGAAAAAGGA"}
@@ -98,8 +100,10 @@ def test_a_single_call_on_another_branch_is_labelled_as_such():
     assert summary["single call above the set call"] == "0"
 
 
-def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
-    scheme = chain_scheme([SchemeSnp("A", "", "", "G", "c1", 4, "G", "A", rank=2)])
+def test_the_single_rule_does_not_read_an_alternative_where_no_canSNP_is_typed():
+    scheme = chain_scheme()
+    scheme.snp_set = [replace(snp, typed=False) if snp.node == "A" else snp
+                      for snp in scheme.snps]
     scheme.snps = [row for row in scheme.snps if row.node != "A"]
     genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
     assert genomes["g"].single_call is None, "CanSNPer2 has no SNP at A"
@@ -109,6 +113,25 @@ def test_the_single_rule_does_not_read_rank_2_where_rank_1_is_absent():
     assert genomes["g"].single_stop == ("", "min-hits")
     two, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"}, min_required_hits=2)
     assert two["g"].single_call == "A.1"
+
+
+def test_the_single_rule_reads_the_typed_cansnp_and_not_rank_one():
+    # A has two canSNPs. Rank 1, at position 3, is not typed; rank 2, at position 4,
+    # is the one the scheme types.
+    scheme = chain_scheme()
+    typed_a = next(snp for snp in scheme.snps if snp.node == "A")
+    untyped = SchemeSnp("A", "", "", "G", "c1", 3, "G", "A", rank=1, typed=False)
+    scheme.snp_set = [untyped if snp is typed_a else snp for snp in scheme.snps]
+    scheme.snp_set.append(replace(typed_a, rank=2))
+    assert [snp.rank for snp in scheme.snp_set if snp.node == "A"] == [1, 2]
+
+    # Typed canSNP derived, rank 1 ancestral: the single call follows the typed one.
+    genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
+    assert genomes["g"].single_call == "A.1"
+    # Typed canSNP ancestral, rank 1 derived: the chain closes at A.
+    genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGGAAGAA"})
+    assert genomes["g"].single_call != "A.1"
+    assert genomes["g"].single_call in (None, "root")
 
 
 def test_the_summary_counts_the_stop_reasons_of_2_2_1():

@@ -418,17 +418,21 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     by_node = scheme_columns(scheme, mapping, genome)
     if not by_node:
         raise TypingError("the scheme holds no canSNP at a node of its tree for this genome")
-    # The single rule reads the canSNP of rank 1 and no other, and passes the
-    # nodes of the tree without one, as CanSNPer2 does.
-    has_first = {node: snps[0][0].rank == 1 for node, snps in by_node.items()}
+    # The single rule reads the canSNP the scheme types and no other, and passes
+    # the nodes of the tree without one, as CanSNPer2 does. The typed canSNP is not
+    # always rank 1: in a published scheme the canSNP the papers give may score lower
+    # than another of its node.
+    called = {node: next((entry for entry in snps if entry[0].typed), None)
+              for node, snps in by_node.items()}
+    has_first = {node: entry is not None for node, entry in called.items()}
     labels = frozenset(hierarchy.nodes) - {snp.node for snp in scheme.snps}
     # Nodes whose canSNPs are all annotated on another reference genome cannot
     # be read in this alignment. CanSNPer2 aligns to every reference, so the
     # single rule's column is not its call below such a node.
     elsewhere = {snp.node for snp in scheme.checked_snps} - set(by_node)
-    # A node whose rank 1 canSNP lies on another reference genome is read
-    # from its further ranks by the set rule, but has no base here for the
-    # single rule.
+    # A node whose typed canSNP lies on another reference genome is read from
+    # its other canSNPs by the set rule, but has no base here for the single
+    # rule.
     first_elsewhere = elsewhere | {node for node, present in has_first.items()
                                    if not present}
     if elsewhere:
@@ -464,9 +468,9 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         nodes = {node: node_state(states) for node, states in per_node.items()}
         # CanSNPer2 2.3.0 tells a third base, which breaks a chain, from no
         # base, which is a gap in it.
-        first = {node: (MISSING if not has_first[node] or snps[0][1] is None
-                        else cansnper2_state(sequence[snps[0][1]], snps[0][0]))
-                 for node, snps in by_node.items()}
+        first = {node: (MISSING if called[node] is None or called[node][1] is None
+                        else cansnper2_state(sequence[called[node][1]], called[node][0]))
+                 for node in by_node}
         result.set_call, result.path = set_path(nodes, lineage)
         result.single_call = single_call(first, lineage, min_required_hits, strictness,
                                          labels)

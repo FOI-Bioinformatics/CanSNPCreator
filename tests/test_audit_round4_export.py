@@ -7,7 +7,7 @@ from cansnpscorer.cansnp_export import check_metadata, check_scheme, genome_rows
 from cansnpscorer.cansnp_export import main as export_main
 from cansnpscorer.hierarchy import Hierarchy
 from cansnpscorer.model import Reference
-from cansnpscorer.scheme import SchemeSnp, read_snp_set
+from cansnpscorer.scheme import CANSNP_COLUMNS, read_cansnps
 
 TREE = Hierarchy([("root", None), ("A", "root"), ("A.1", "A"), ("B", "root")])
 
@@ -84,16 +84,18 @@ def test_accession_versions_have_one_or_two_digits_as_cansnper2_data_requires():
 
 def test_ranks_of_a_node_that_skip_or_repeat_are_a_problem(tmp_path):
     path = tmp_path / "t_canSNPs.txt"
-    path.write_text(
-        "node\trank\tgenome\tsequence\tsequence_position\tderived_base\tancestral_base\tscore\n"
-        "A\t1\tG\tc1\t10\tA\tC\t9\nA\t3\tG\tc1\t20\tA\tC\t8\n"
-        "B\t1\tG\tc1\t30\tA\tC\t9\nB\t1\tG\tc1\t40\tA\tC\t8\n"
-        "R\t1\tG\tc1\t50\tA\tC\t9\nR\t2\tG\tc1\t60\tA\tC\t8\n")
-    snps = [SchemeSnp(node=node, strain="", reference="", genome="G", sequence="c1", position=position,
-                      derived="A", ancestral="C")
-            for node, position in (("A", 10), ("B", 30), ("R", 50))]
+    header = "\t".join(CANSNP_COLUMNS)
+
+    def row(node, rank, position, typed):
+        return f"{node}\t{rank}\tref\tG\tc1\t{position}\tA\tC\t9\t{typed}"
+
+    path.write_text("\n".join([
+        header,
+        row("A", 1, 10, "yes"), row("A", 3, 20, "no"),
+        row("B", 1, 30, "yes"), row("B", 1, 40, "no"),
+        row("R", 1, 50, "yes"), row("R", 2, 60, "no")]) + "\n")
     problems: list[str] = []
-    read_snp_set(str(path), snps, problems)
+    read_cansnps(str(path), problems)
     assert any("node 'A' the ranks 1, 3" in problem for problem in problems)
     assert any("node 'B' the ranks 1, 1" in problem for problem in problems)
     assert not any("'R'" in problem for problem in problems)

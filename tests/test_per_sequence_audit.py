@@ -23,11 +23,13 @@ REFERENCE = Reference.from_records([("c1", "AAAAA"), ("c2", "CCCCC")])
 
 
 def snp(node, sequence, position, derived="G", ancestral="C", rank=1):
-    return SchemeSnp(node, "s", "r", "G1", sequence, position, derived, ancestral, rank=rank)
+    return SchemeSnp(node, "s", "r", "G1", sequence, position, derived, ancestral, rank=rank,
+                     typed=rank == 1)
 
 
 def scheme_with(*snps, snp_set=()):
-    return Scheme(organism="t", snps=list(snps), snp_set=list(snp_set))
+    """A scheme whose canSNP file holds the typed canSNPs and then these further ones."""
+    return Scheme(organism="t", snps=list(snps), snp_set=[*snps, *snp_set] if snp_set else [])
 
 
 def categories(findings):
@@ -134,7 +136,7 @@ def test_a_scheme_sequence_is_resolved_through_an_alias_group():
     resolved = resolve_sequences(scheme, REFERENCE, aliases)
     assert [snp.sequence for snp in resolved.snps] == ["c1"]
     # NCBI gives that pair as not identical (<>), so it is not used.
-    assert [snp.sequence for snp in resolved.snp_set] == ["CP000002.1"]
+    assert [snp.sequence for snp in resolved.snp_set] == ["c1", "CP000002.1"]
     assert resolve_sequences(scheme, REFERENCE, None) is scheme
 
 

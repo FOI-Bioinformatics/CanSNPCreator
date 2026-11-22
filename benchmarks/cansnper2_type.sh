@@ -3,7 +3,7 @@
 #
 # usage: cansnper2_type.sh SCHEME_DIR REFFASTA NAMES GENOME_DIR OUT [JOBS]
 #
-# SCHEME_DIR holds the exported *_tree.txt, *_snp.txt and *_references.txt.
+# SCHEME_DIR holds the exported *_tree.txt, *_canSNPs.txt and *_references.txt.
 # NAMES lists one genome per line; GENOME_DIR holds NAME.fasta or
 # PREFIX_NAME.fasta. Each query is linked into OUT/genomes under its accession
 # (GCA_/GCF_ number) when the name holds one, so that CanSNPer2 names the
@@ -28,7 +28,7 @@ ln -s $REFFASTA $OUT/refs/$REFGENOME.fna
 
 rm -f $OUT/scheme.db
 (cd $OUT && PYTHONPATH=$SRC $PY -m CanSNPer2.SNPDatabase -db $OUT/scheme.db --tree ${P}_tree.txt \
-   --annotation ${P}_snp.txt --references ${P}_references.txt --create) > $OUT/database.log 2>&1
+   --annotation ${P}_canSNPs.txt --references ${P}_references.txt --create) > $OUT/database.log 2>&1
 
 while read -r g; do
   [[ -n $g ]] || continue
