@@ -52,7 +52,7 @@ CONVERT_HINT = ("it has the header of CanSNPer2 before 2.3.0, with one position 
 REFERENCE_COLUMNS = ("genome", "strain", "genbank_id", "refseq_id", "assembly_name")
 GENOME_COLUMNS = ("genome", "node", "role")
 #: The genomes file may record where each genome comes from, in two more columns.
-GENOME_COLUMNS_WITH_SOURCE = GENOME_COLUMNS + ("basis", "source")
+GENOME_COLUMNS_WITH_SOURCE = (*GENOME_COLUMNS, "basis", "source")
 GENOME_ROLES = ("representative", "member", "outgroup")
 
 
