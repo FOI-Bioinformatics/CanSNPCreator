@@ -43,14 +43,14 @@ def test_a_node_name_with_a_tab_or_line_break_is_refused():
 def test_the_representative_of_an_assembly_is_kept_whatever_the_order():
     # The GCA_ name of the assembly comes first and is not aligned; the GCF_
     # name is aligned. Before, the first met was kept, as a member.
-    clusters = {"A.1": ["GCA_000000021.1", "GCF_000000021.1"],
-                "B": ["GCA_000000022.1"], "A": ["GCF_000000022.1"]}
+    clusters = {"A.1": ["GCA_000000021.1", "GCF_000000021.1", "GCA_000000022.1"],
+                "B": ["GCF_000000022.1"]}
     aligned = ["ref_GCF_000000001.1", "GCF_000000021.1", "x_GCF_000000022.1"]
     rows, warnings = genome_rows(TREE, TREE.nodes, clusters, aligned)
     assert ("GCF_000000021.1", "A.1", "representative") in rows
-    assert ("GCF_000000022.1", "A", "representative") in rows
+    assert ("GCF_000000022.1", "B", "representative") in rows
     assert not any(row[0] in ("GCA_000000021.1", "GCA_000000022.1") for row in rows)
-    assert any("GCA_000000022.1/GCF_000000022.1 at A and B" in warning for warning in warnings)
+    assert any("GCA_000000022.1/GCF_000000022.1 at A.1 and B" in warning for warning in warnings)
 
 
 def test_an_unplaced_reference_is_listed_as_an_outgroup_with_a_warning():
@@ -60,10 +60,21 @@ def test_an_unplaced_reference_is_listed_as_an_outgroup_with_a_warning():
     assert any("reference genome 'ref_GCF_000000001.1' is placed at no node" in warning
                for warning in warnings)
     # Placed, it is a representative and nothing is said.
-    rows, warnings = genome_rows(TREE, TREE.nodes, {"A": ["ref_GCF_000000001.1"]},
+    rows, warnings = genome_rows(TREE, TREE.nodes, {"A.1": ["ref_GCF_000000001.1"]},
                                  ["ref_GCF_000000001.1"])
-    assert rows == [("GCF_000000001.1", "A", "representative")]
+    assert rows == [("GCF_000000001.1", "A.1", "representative")]
     assert warnings == []
+
+
+def test_a_genome_at_an_inner_node_is_left_out_with_a_warning():
+    """The genomes file holds the genomes of the terminal nodes, so a row means one
+    thing. A genome at an inner node still helped find the canSNPs."""
+    rows, warnings = genome_rows(TREE, TREE.nodes,
+                                 {"A": ["GCF_000000005.1"], "A.1": ["GCF_000000006.1"]},
+                                 ["ref", "GCF_000000005.1", "GCF_000000006.1"])
+    assert [row[:2] for row in rows] == [("GCF_000000006.1", "A.1")]
+    assert any("GCF_000000005.1 (A)" in warning and "terminal nodes" in warning
+               for warning in warnings)
 
 
 def test_accession_versions_have_one_or_two_digits_as_cansnper2_data_requires():
@@ -75,7 +86,7 @@ def test_accession_versions_have_one_or_two_digits_as_cansnper2_data_requires():
     assert any("well formed GenBank" in problem for problem in check_metadata(**values))
 
     rows, warnings = genome_rows(TREE, TREE.nodes,
-                                 {"A": ["GCA_000000003.12"], "B": ["GCA_000000004.123"]},
+                                 {"A.1": ["GCA_000000003.12"], "B": ["GCA_000000004.123"]},
                                  ["ref"])
     assert [row[0] for row in rows] == ["GCA_000000003.12"]
     assert any("GCA_000000004.123" in warning and "one or two digits" in warning
