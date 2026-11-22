@@ -537,7 +537,7 @@ def main(scores=None, hierarchy=None, reference=None, outdir=".", organism=None,
     written.append(write_cansnps(outdir, organism, paths, chosen, names, genome, citation))
     # The optional files of an earlier export into the same directory would
     # otherwise stay beside this scheme, and describe another one. The SNP file of
-    # CanSNPer2 2.3.0 is no longer written at all.
+    # CanSNPer2 2.3.0 and earlier is no longer written at all.
     for suffix, wanted in ((SNP_SUFFIX, False), (GENOMES_SUFFIX, clusters is not None)):
         stale = os.path.join(outdir, organism + suffix)
         if not wanted and os.path.exists(stale):

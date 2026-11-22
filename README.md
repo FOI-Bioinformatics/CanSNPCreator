@@ -13,9 +13,18 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
+## Upgrading to 0.7.0
+
+Version 0.7.0 writes and reads the canSNP file of a scheme,
+`<organism>_canSNPs.txt`, which holds every canSNP of every node with the ones the
+scheme types marked, and no longer writes `<organism>_snp.txt`. It is the format
+CanSNPer2 2.4.0 reads, and CanSNPer2-data holds. `audit` and `place` read a
+`<organism>_snp.txt` an earlier version exported as rank 1 of each node, typed, so
+an older export is still audited.
+
 ## Upgrading to 0.6.0
 
-Version 0.6.0 writes and reads only the CanSNPer2 2.3.0 scheme format, in
+Version 0.6.0 wrote and read the CanSNPer2 2.3.0 scheme format, in
 which each canSNP is a sequence (a GenBank accession) and a position on it.
 A scheme made for an earlier version is converted with
 `CanSNPer2-database --convert` (CanSNPer2 2.3.0) before `audit` or `place` reads
@@ -355,7 +364,8 @@ scheme a larger `--min-spacing` is worth trying.
 `<organism>_references.txt` as CanSNPer2-data expects them: each canSNP names
 its reference sequence (`sequence`) and gives a 1-based position on that
 sequence (`sequence_position`), not a position along the sequences joined in
-file order as versions before CanSNPer2 2.3.0 wrote it. The canSNP file has the
+file order as versions before CanSNPer2 2.3.0 wrote it. CanSNPer2 reads this file
+from 2.4.0. It has the
 columns
 
 ```

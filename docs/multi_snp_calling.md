@@ -18,7 +18,8 @@ node	rank	reference	genome	sequence	sequence_position	derived_base	ancestral_bas
 Rank is counted within each node, and rank 1 is the node's best canSNP. `typed`
 marks the canSNPs CanSNPer2 calls, one per node, so a reader that ignores the
 other ranks sees the single-canSNP scheme. Each canSNP is given by its reference
-sequence and a 1-based position on it (CanSNPer2 2.3.0 and later). With the
+sequence and a 1-based position on it (CanSNPer2 2.3.0 and later), and CanSNPer2
+reads the file itself from 2.4.0. With the
 default `--snps-per-node 1` each node has rank 1 alone.
 
 ## 2. State of a node (`snp_state`, `node_state`)
