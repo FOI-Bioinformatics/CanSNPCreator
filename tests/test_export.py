@@ -245,14 +245,14 @@ def test_only_canSNPs_that_passed_are_exported(dataset, scheme, tmp_path, caplog
 
 CANSNPER2_DATA = os.environ.get("CANSNPER2_DATA") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-data-canSNPs")
+    "CanSNPer2-data")
 VALIDATOR = os.path.join(CANSNPER2_DATA, "validate.py")
 
 
 def validator_skip_reason():
     if not os.path.exists(VALIDATOR):
         return f"no CanSNPer2-data checkout at {CANSNPER2_DATA}; set CANSNPER2_DATA"
-    if '"sequence_position"' not in read(VALIDATOR):
+    if "CANSNP_HEADER" not in read(VALIDATOR):
         return (f"the validate.py of {CANSNPER2_DATA} does not read the canSNP file; set "
                 f"CANSNPER2_DATA to a checkout that does")
     return None
@@ -520,7 +520,7 @@ CANSNPER2_PYTHON = os.environ.get("CANSNPER2_PYTHON") or sys.executable
 # repository. It is put first on the path of the python above, so that it is the one imported.
 CANSNPER2 = os.environ.get("CANSNPER2") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-canSNPs")
+    "CanSNPer2")
 
 
 def cansnper2_env():
