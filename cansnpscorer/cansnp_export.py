@@ -314,10 +314,14 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
     """The rows of the genomes file, and warnings about genomes left out.
 
     A genome placed at a node the scheme left out moves to the nearest node
-    above it that was kept, as that node's children do. A genome whose
-    sequence is in the alignment is a representative; one placed only through
-    the genome map is a member; an aligned genome placed at no node is an
-    outgroup, since extract counted it as outside every node. That includes
+    above it that was kept, as that node's children do. Only the genomes of the
+    terminal nodes are written, so that a row means one thing, a genome that
+    represents that terminal group, as CanSNPer2-data requires; a genome that
+    ends up at an inner node is left out with a warning, and it was used to find
+    the canSNPs all the same. A genome whose sequence is in the alignment is a
+    representative; one placed only through the genome map is a member; an
+    aligned genome placed at no node is an outgroup, since extract counted it as
+    outside every node. That includes
     the reference genome, the alignment's first record, when it is placed at
     no node; CanSNPer2-data defines no other role for it, so it is listed as
     an outgroup and a warning says so.
@@ -357,12 +361,18 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
         given.setdefault(accession[4:13], []).append((accession, node, role))
 
     unplaced: list[str] = []
+    inner: list[str] = []
+    # A node that no kept node gives as its parent is terminal.
+    parents_of_kept = {hierarchy.parents.get(node) for node in keeping}
     for genome, node in placed.items():
         if node not in hierarchy:
             unplaced.append(f"{genome} ({node})")
             continue
-        add(genome, kept_at(node) or hierarchy.root,
-            "representative" if genome in matched else "member")
+        at = kept_at(node) or hierarchy.root
+        if at in parents_of_kept:
+            inner.append(f"{genome} ({at})")
+            continue
+        add(genome, at, "representative" if genome in matched else "member")
     for record in aligned:
         if record not in aligned_placed:
             add(record, "", "outgroup")
@@ -381,6 +391,11 @@ def genome_rows(hierarchy: Hierarchy, kept: Sequence[str], clusters: dict[str, l
         warnings.append(
             f"{len(unplaced)} genomes are placed at nodes the hierarchy does not hold and were "
             f"left out of the genomes file: {', '.join(sorted(unplaced)[:5])}")
+    if inner:
+        warnings.append(
+            f"{len(inner)} genomes sit at an inner node and were left out of the genomes file, "
+            f"which lists the genomes of the terminal nodes; they were used to find the canSNPs: "
+            f"{', '.join(sorted(inner)[:5])}")
     if split:
         warnings.append(
             f"{len(split)} assemblies are given at more than one node, under their GCA_ and "
