@@ -48,4 +48,8 @@ for part in $OUT/queries_*; do
 done
 wait
 rm -f $OUT/queries_*(N)
-cat $OUT/calls_*/snps_summary.txt | awk -F'\t' 'BEGIN{OFS="\t"; print "genome","call"} {print $1, ($2==""?"NA":$2)}' > $OUT/cansnper2_calls.tsv
+# snps_summary.txt from CanSNPer2 2.3.0 starts with # lines on the run and a header row
+# (sample final_snp support snp_path); earlier versions wrote the rows only. Both are read.
+cat $OUT/calls_*/snps_summary.txt | awk -F'\t' 'BEGIN{OFS="\t"; print "genome","call"}
+  /^#/ || ($1=="sample" && $2=="final_snp") {next}
+  {print $1, ($2==""?"NA":$2)}' > $OUT/cansnper2_calls.tsv
