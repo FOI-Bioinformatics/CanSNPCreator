@@ -407,11 +407,15 @@ CanSNPer2-data's `validate.py` checks every column of the file, and `audit`
 checks every canSNP against the reference and the genomes.
 
 With `--genome-map` and `--alignment` it also writes `<organism>_genomes.txt`,
-the genomes the scheme was made from: each by its versioned assembly
-accession, the node it sits at, and its role, `representative` (its sequence
-was in the alignment), `member` (placed through a representative, as
-dereplication folds it in) or `outgroup` (aligned, at no node). A reference
-genome placed at no node is listed as an outgroup, with a warning. The GCA
+the genomes of the terminal nodes of the scheme: each by its versioned
+assembly accession, the node it sits at, and its role, `representative` (its
+sequence was in the alignment), `member` (placed through a representative, as
+dereplication folds it in) or `outgroup` (aligned, at no node). A genome that
+sits at a node above a kept node is left out, with a warning naming it and its
+node; it was used to find the canSNPs, but a row of the file means one thing,
+the genome of a terminal group, and CanSNPer2-data's `validate.py` requires
+that. A reference genome placed at no node is listed as an outgroup, with a
+warning. The GCA
 and GCF names of one assembly get one row, the representative's, and an
 accession version has one or two digits, as `validate.py` requires. A genome
 whose name holds no accession is left out with a warning. CanSNPer2 does not read
