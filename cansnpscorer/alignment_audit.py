@@ -704,7 +704,10 @@ def check_extension(
     conflicting = sum(conflicts_by_node.values())
     if conflicting:
         nodes = ", ".join(f"{node} ({count})" for node, count in conflicts_by_node.most_common(3))
-        genomes = ", ".join(f"{name} ({count})" for name, count in conflicts_by_genome.most_common(3))
+        # The genomes of a site come from a set, whose order changes between runs, so
+        # a tie in the count is broken by name rather than by the order they were met.
+        involved = sorted(conflicts_by_genome.items(), key=lambda item: (-item[1], item[0]))[:3]
+        genomes = ", ".join(f"{name} ({count})" for name, count in involved)
         contradicting = (
             f", {contradicted} of them because they group genomes against a better supported grouping"
             if contradicted
