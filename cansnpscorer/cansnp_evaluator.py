@@ -3,10 +3,13 @@
 import logging
 from bisect import bisect_right
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
 from cansnpscorer.helpers.file_utils import (
+    AliasGroup,
+    GeneModel,
     merge_intervals,
     read_contig_aliases,
     read_gff3,
@@ -18,12 +21,14 @@ from cansnpscorer.helpers.kmers import DEFAULT_K, copy_numbers
 from cansnpscorer.helpers.scoring_methods import (
     DEFAULT_PROFILE,
     PROFILES,
+    ScoredSnp,
+    SnpContext,
     contexts_for,
     score_snp,
 )
-from cansnpscorer.hierarchy import HierarchyError
+from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Contig, Reference, ReferenceError
-from cansnpscorer.typing_report import judge_by_narrowest_group, read_observed
+from cansnpscorer.typing_report import Observed, judge_by_narrowest_group, read_observed
 from cansnpscorer.validate import check_annotations, report
 
 NUCLEOTIDES = frozenset("ACGT")
@@ -286,6 +291,300 @@ def in_regions(position: int, regions: Sequence[tuple[int, int]]) -> bool:
     return index >= 0 and regions[index][0] <= position <= regions[index][1]
 
 
+@dataclass
+class _Inputs:
+    """The SNPs and the reference genome, with the annotations read beside them."""
+
+    genome: Reference
+    parsed: list[vcf.Snp]
+    aliases: list[AliasGroup] | None
+    model: GeneModel
+    gene_intervals: dict[str, list[tuple[int, int]]]
+    cds: dict
+    repeat_intervals: dict[str, list[tuple[int, int]]]
+    masked: dict[str, list[tuple[int, int]]]
+    tree: Hierarchy | None
+    behaviour: dict[tuple[str, str, int], Observed]
+
+
+def _read_inputs(
+    snps: str,
+    reference: str,
+    genes: str,
+    repeats: str,
+    masks: str | None,
+    masks_concatenated: bool,
+    contig_aliases: str | None,
+    hierarchy: str | None,
+    observed: str | None,
+) -> _Inputs:
+    """Read every input file, the annotations placed on the reference's contigs.
+
+    Raises:
+        OSError, ValueError, HierarchyError, ReferenceError: If a file cannot
+            be read or does not fit the reference.
+    """
+    genome = reference_parser(reference)
+    vcf.check_contig_names(genome)
+    parsed = vcf.read_snps(snps, genome)
+    aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
+    model = read_gff3(genes)
+    gene_intervals = annotations_by_contig(model.genes, genome, "gene", aliases, model.sequences)
+    cds = annotations_by_contig(model.cds, genome, "CDS", aliases, model.sequences) if model.cds else {}
+    repeat_intervals = annotations_by_contig(read_intervals(repeats), genome, "repeat", aliases)
+    masked = read_masks(masks, genome, masks_concatenated, aliases) if masks else {}
+    tree = read_hierarchy(hierarchy) if hierarchy else None
+    behaviour = read_observed(observed) if observed else {}
+    return _Inputs(
+        genome, parsed, aliases, model, gene_intervals, cds, repeat_intervals, masked, tree, behaviour
+    )
+
+
+def _annotation_problems(inputs: _Inputs) -> tuple[list[str], list[str]]:
+    """The problems and warnings of the gene and repeat annotations."""
+    problems, warnings = check_annotations(inputs.gene_intervals, inputs.genome, "gene")
+    found = check_annotations(inputs.repeat_intervals, inputs.genome, "repeat")
+    return problems + found[0], warnings + found[1]
+
+
+def _warn_about_inputs(parsed: Sequence[vcf.Snp], flank: int, cds: Mapping) -> None:
+    """Warn when the SNPs or the genes lack what part of the score needs."""
+    if not any(snp.nearest is not None for snp in parsed):
+        logging.warning(
+            "The SNPs carry no INFO/NEAREST, so the flanks are judged by the other SNPs of the "
+            "file alone; extract records the variation among all the scheme's genomes"
+        )
+    elif flank > vcf.NEAREST_CAP:
+        # NEAREST is a lower bound at the cap, so the neighbour term is one too.
+        logging.warning(
+            f"--flank {flank} is larger than the {vcf.NEAREST_CAP} bases up to which extract "
+            f"records the distance to the nearest variation (INFO/NEAREST), so variation "
+            f"further away is not known: a canSNP with none within {vcf.NEAREST_CAP} bases "
+            f"gets {vcf.NEAREST_CAP / flank:.2f} of the full neighbour term, and distances "
+            f"beyond {vcf.NEAREST_CAP} are not told apart"
+        )
+    if not cds:
+        logging.warning(
+            "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
+            "scores 0 for the mutation term"
+        )
+
+
+def _score_snps(
+    located: Sequence[tuple[Contig, int, str, tuple[str, str], int | None]],
+    inputs: _Inputs,
+    tandem_limit: int,
+    gene_limit: int,
+    gc_goal: float,
+    weights: dict[str, float],
+    flank: int,
+    gc_tolerance: float,
+) -> tuple[list[SnpContext], list[ScoredSnp]]:
+    """The context of every SNP, and the scores of the canSNPs among them.
+
+    Neighbouring SNPs matter whether or not they are canonical, so the
+    contexts are built from every SNP and only then narrowed to the canonical
+    ones, which are the candidate assay targets.
+    """
+    contexts = contexts_for(located, inputs.gene_intervals, inputs.repeat_intervals, inputs.cds)
+    scores = [
+        score_snp(context, tandem_limit, gene_limit, gc_goal, weights, flank, gc_tolerance)
+        for context in contexts
+        if context.node != "None"
+    ]
+    missing = {(snp.contig, snp.position): snp.missing for snp in inputs.parsed}
+    for score in scores:
+        score.missing = missing.get((score.contig, score.position), 0)
+    return contexts, scores
+
+
+def _count_copies(scores: Sequence[ScoredSnp], genome: Reference, copy_kmer: int) -> None:
+    """Give each canSNP the copy number of its context, counted with k-mers of ``copy_kmer``."""
+    copies = copy_numbers(genome, [(score.contig, score.position - 1) for score in scores], copy_kmer)
+    for score in scores:
+        score.copies = copies[(score.contig, score.position - 1)]
+    repeated = sum(1 for score in scores if score.copies > 1)
+    logging.info(
+        f"{repeated} canSNPs lie in sequence that occurs more than once in the "
+        f"reference ({copy_kmer}-mers, both strands); within a node they are "
+        f"ranked after those in unique sequence"
+    )
+
+
+def _mark_loci(
+    scores: Sequence[ScoredSnp], model: GeneModel, genome: Reference, aliases: Sequence[set[str]] | None
+) -> None:
+    """Give each canSNP the gene it lies in.
+
+    The genes are taken one by one: joined intervals would make a run of
+    abutting genes one locus.
+    """
+    contig_names = contig_of(list(model.loci), genome, aliases, model.sequences)
+    loci = {
+        contig_names[name]: wrap_origin(found, genome.contig(contig_names[name]).length)[0]
+        for name, found in model.loci.items()
+        if name in contig_names
+    }
+    lookup = {
+        contig: ([start for start, _end in found], max(end - start + 1 for start, end in found))
+        for contig, found in loci.items()
+        if found
+    }
+    for score in scores:
+        if score.contig not in lookup:
+            continue
+        starts, longest = lookup[score.contig]
+        gene = locus_at(score.position - 1, loci[score.contig], starts, longest)
+        if gene is not None:
+            score.locus = f"{gene[0] + 1}-{gene[1] + 1}"
+
+
+def _names_in_report(scores: Sequence[ScoredSnp], aliases: Sequence[set[str]] | None) -> dict[str, list[str]]:
+    """The names a typing report may give each contig of the scores, its own first.
+
+    The report names each sequence as the scheme does, which for an exported
+    scheme is its GenBank accession; the scores name it as the reference
+    does, which the alias table may relate to it.
+    """
+    named: dict[str, list[str]] = {}
+    for score in scores:
+        if score.contig not in named:
+            # A pair NCBI gives as not identical (<>) is not related.
+            named[score.contig] = [
+                score.contig,
+                *sorted(
+                    {
+                        name
+                        for group in aliases or ()
+                        if score.contig in group and not getattr(group, "differs", ())
+                        for name in group
+                    }
+                    - {score.contig}
+                ),
+            ]
+    return named
+
+
+def _attach_observed(
+    scores: Sequence[ScoredSnp],
+    behaviour: Mapping[tuple[str, str, int], Observed],
+    named: Mapping[str, Sequence[str]],
+) -> tuple[int, int]:
+    """Give each canSNP what the typing report observed of it.
+
+    Returns how many canSNPs were matched, and how many rows named the node
+    and position of a canSNP with other alleles.
+    """
+    matched = 0
+    other_alleles = 0
+    for score in scores:
+        seen = next(
+            (
+                behaviour[key]
+                for key in ((score.node, name, score.position) for name in named[score.contig])
+                if key in behaviour
+            ),
+            None,
+        )
+        if seen is not None and (seen.derived, seen.ancestral) != (
+            (score.derived or "").upper(),
+            (score.ancestral or "").upper(),
+        ):
+            # The same node and position with other alleles is another
+            # SNP: a report made against another reference genome.
+            other_alleles += 1
+            seen = None
+        if seen is not None:
+            matched += 1
+            score.discordant, score.observed_missing = seen.discordant, seen.missing
+            score.observed_genomes = seen.genomes
+    return matched, other_alleles
+
+
+def _log_observed(
+    scores: Sequence[ScoredSnp], matched: int, other_alleles: int, observed: str | None
+) -> None:
+    """Say how many canSNPs the typing report observed, and warn about those it did not."""
+    logging.info(
+        f"{matched} of {len(scores)} canSNPs were observed in the typing report, "
+        f"{sum(1 for s in scores if s.discordant)} of them disagreeing with their node in "
+        f"some genome and {sum(1 for s in scores if s.observed_missing)} lacking a base in "
+        f"some; within a node these are ranked after the others"
+    )
+    if other_alleles:
+        logging.warning(
+            f"{other_alleles} rows of {observed} name the node and position of a canSNP "
+            f"here with other alleles, and were not used; the report may have been made "
+            f"against another reference genome"
+        )
+    if 0 < matched < len(scores):
+        logging.warning(
+            f"{len(scores) - matched} canSNPs were not in the scheme the report typed "
+            f"with. Within a node they are ranked after the observed ones that held and "
+            f"before those that did not; for a ranking of every candidate, type with a "
+            f"scheme exported with --snps-per-node all"
+        )
+    if not matched:
+        logging.warning(
+            f"No canSNP of {observed} is among those scored; the table should come from "
+            f"a scheme exported from these canSNPs against the same reference"
+        )
+
+
+def _apply_observed(
+    scores: Sequence[ScoredSnp],
+    behaviour: Mapping[tuple[str, str, int], Observed],
+    aliases: Sequence[set[str]] | None,
+    observed: str | None,
+) -> None:
+    """Give each canSNP what the typing report in ``observed`` found of it."""
+    judged, regrouped = judge_by_narrowest_group(behaviour)
+    if regrouped:
+        logging.warning(
+            f"At {len(regrouped)} nodes the canSNPs are derived in groups of genomes of "
+            f"different width and no group holds more than half of them, so the genomes "
+            f"typed join these branches partway. Their canSNPs were judged against the "
+            f"narrowest group and not against the majority of the node; representatives "
+            f"of the other groups would divide these branches: {', '.join(regrouped)}"
+        )
+    matched, other_alleles = _attach_observed(scores, judged, _names_in_report(scores, aliases))
+    _log_observed(scores, matched, other_alleles, observed)
+
+
+def _mark_masked(scores: Sequence[ScoredSnp], masked: Mapping[str, Sequence[tuple[int, int]]]) -> None:
+    """Mark the canSNPs in masked regions, before the others are ranked.
+
+    A canSNP in a masked region, such as a recombinant one, is marked before
+    the others are ranked, so that it does not take a place among the best.
+    """
+    for score in scores:
+        if in_regions(score.position - 1, masked.get(score.contig, [])):
+            score.filters.append("Masked")
+    if masked:
+        logging.info(f"{sum('Masked' in s.filters for s in scores)} canSNPs lie in masked regions")
+
+
+def _log_incomplete(scores: Sequence[ScoredSnp]) -> None:
+    """Say how many canSNPs lack a base in some genomes."""
+    incomplete = sum(1 for score in scores if score.missing)
+    if incomplete:
+        logging.info(
+            f"{incomplete} canSNPs lack a base in some genomes; within a node they "
+            f"are ranked after those called in every genome"
+        )
+
+
+def _scored_line(
+    scored: int, contexts: int, passing: int, cutoff: float | None, top_n: int | None, spacing: int
+) -> str:
+    """The line that says how many canSNPs were scored and how many pass."""
+    return (
+        f"Scored {scored} canSNPs out of {contexts} SNPs; {passing} pass "
+        + (f"the cutoff of {cutoff}" if cutoff is not None else "with no cutoff")
+        + (f" and the best {top_n} per node, at least {spacing} bases apart" if top_n else "")
+    )
+
+
 def main(
     snps=None,
     reference=None,
@@ -321,192 +620,40 @@ def main(
     """
     weights = dict(PROFILES[DEFAULT_PROFILE][0]) if weights is None else weights
     try:
-        genome = reference_parser(reference)
-        vcf.check_contig_names(genome)
-        parsed = vcf.read_snps(snps, genome)
-        aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
-        model = read_gff3(genes)
-        gene_intervals = annotations_by_contig(model.genes, genome, "gene", aliases, model.sequences)
-        cds = annotations_by_contig(model.cds, genome, "CDS", aliases, model.sequences) if model.cds else {}
-        repeat_intervals = annotations_by_contig(read_intervals(repeats), genome, "repeat", aliases)
-        masked = read_masks(masks, genome, masks_concatenated, aliases) if masks else {}
-        tree = read_hierarchy(hierarchy) if hierarchy else None
-        behaviour = read_observed(observed) if observed else {}
+        inputs = _read_inputs(
+            snps, reference, genes, repeats, masks, masks_concatenated, contig_aliases, hierarchy, observed
+        )
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
+    genome = inputs.genome
 
-    problems, warnings = check_annotations(gene_intervals, genome, "gene")
-    found = check_annotations(repeat_intervals, genome, "repeat")
-    if not report(problems + found[0], warnings + found[1], "annotations"):
+    if not report(*_annotation_problems(inputs), "annotations"):
         return 2
 
     try:
-        located = locate_snps(parsed, genome)
+        located = locate_snps(inputs.parsed, genome)
     except (ValueError, ReferenceError) as error:
         logging.error(error)
         return 2
 
-    if not any(snp.nearest is not None for snp in parsed):
-        logging.warning(
-            "The SNPs carry no INFO/NEAREST, so the flanks are judged by the other SNPs of the "
-            "file alone; extract records the variation among all the scheme's genomes"
-        )
-    elif flank > vcf.NEAREST_CAP:
-        # NEAREST is a lower bound at the cap, so the neighbour term is one too.
-        logging.warning(
-            f"--flank {flank} is larger than the {vcf.NEAREST_CAP} bases up to which extract "
-            f"records the distance to the nearest variation (INFO/NEAREST), so variation "
-            f"further away is not known: a canSNP with none within {vcf.NEAREST_CAP} bases "
-            f"gets {vcf.NEAREST_CAP / flank:.2f} of the full neighbour term, and distances "
-            f"beyond {vcf.NEAREST_CAP} are not told apart"
-        )
-    if not cds:
-        logging.warning(
-            "The GFF3 file holds no CDS features, so no reading frame is known and every SNP "
-            "scores 0 for the mutation term"
-        )
-    # Neighbouring SNPs matter whether or not they are canonical, so the
-    # contexts are built from every SNP and only then narrowed to the canonical
-    # ones, which are the candidate assay targets.
-    contexts = contexts_for(located, gene_intervals, repeat_intervals, cds)
-    scores = [
-        score_snp(context, tandem_limit, gene_limit, gc_goal, weights, flank, gc_tolerance)
-        for context in contexts
-        if context.node != "None"
-    ]
-    missing = {(snp.contig, snp.position): snp.missing for snp in parsed}
-    for score in scores:
-        score.missing = missing.get((score.contig, score.position), 0)
+    _warn_about_inputs(inputs.parsed, flank, inputs.cds)
+    contexts, scores = _score_snps(
+        located, inputs, tandem_limit, gene_limit, gc_goal, weights, flank, gc_tolerance
+    )
     if copy_kmer:
-        copies = copy_numbers(genome, [(score.contig, score.position - 1) for score in scores], copy_kmer)
-        for score in scores:
-            score.copies = copies[(score.contig, score.position - 1)]
-        repeated = sum(1 for score in scores if score.copies > 1)
-        logging.info(
-            f"{repeated} canSNPs lie in sequence that occurs more than once in the "
-            f"reference ({copy_kmer}-mers, both strands); within a node they are "
-            f"ranked after those in unique sequence"
-        )
-    # The gene each canSNP lies in, from the genes one by one: joined intervals
-    # would make a run of abutting genes one locus.
-    contig_names = contig_of(list(model.loci), genome, aliases, model.sequences)
-    loci = {
-        contig_names[name]: wrap_origin(found, genome.contig(contig_names[name]).length)[0]
-        for name, found in model.loci.items()
-        if name in contig_names
-    }
-    lookup = {
-        contig: ([start for start, _end in found], max(end - start + 1 for start, end in found))
-        for contig, found in loci.items()
-        if found
-    }
-    for score in scores:
-        if score.contig not in lookup:
-            continue
-        starts, longest = lookup[score.contig]
-        gene = locus_at(score.position - 1, loci[score.contig], starts, longest)
-        if gene is not None:
-            score.locus = f"{gene[0] + 1}-{gene[1] + 1}"
-    if behaviour:
-        behaviour, regrouped = judge_by_narrowest_group(behaviour)
-        if regrouped:
-            logging.warning(
-                f"At {len(regrouped)} nodes the canSNPs are derived in groups of genomes of "
-                f"different width and no group holds more than half of them, so the genomes "
-                f"typed join these branches partway. Their canSNPs were judged against the "
-                f"narrowest group and not against the majority of the node; representatives "
-                f"of the other groups would divide these branches: {', '.join(regrouped)}"
-            )
-        matched = 0
-        other_alleles = 0
-        # The report names each sequence as the scheme does, which for an
-        # exported scheme is its GenBank accession; the scores name it as the
-        # reference does, which the alias table may relate to it.
-        named: dict[str, list[str]] = {}
-        for score in scores:
-            if score.contig not in named:
-                # A pair NCBI gives as not identical (<>) is not related.
-                named[score.contig] = [
-                    score.contig,
-                    *sorted(
-                        {
-                            name
-                            for group in aliases or ()
-                            if score.contig in group and not getattr(group, "differs", ())
-                            for name in group
-                        }
-                        - {score.contig}
-                    ),
-                ]
-        for score in scores:
-            seen = next(
-                (
-                    behaviour[key]
-                    for key in ((score.node, name, score.position) for name in named[score.contig])
-                    if key in behaviour
-                ),
-                None,
-            )
-            if seen is not None and (seen.derived, seen.ancestral) != (
-                (score.derived or "").upper(),
-                (score.ancestral or "").upper(),
-            ):
-                # The same node and position with other alleles is another
-                # SNP: a report made against another reference genome.
-                other_alleles += 1
-                seen = None
-            if seen is not None:
-                matched += 1
-                score.discordant, score.observed_missing = seen.discordant, seen.missing
-                score.observed_genomes = seen.genomes
-        logging.info(
-            f"{matched} of {len(scores)} canSNPs were observed in the typing report, "
-            f"{sum(1 for s in scores if s.discordant)} of them disagreeing with their node in "
-            f"some genome and {sum(1 for s in scores if s.observed_missing)} lacking a base in "
-            f"some; within a node these are ranked after the others"
-        )
-        if other_alleles:
-            logging.warning(
-                f"{other_alleles} rows of {observed} name the node and position of a canSNP "
-                f"here with other alleles, and were not used; the report may have been made "
-                f"against another reference genome"
-            )
-        if 0 < matched < len(scores):
-            logging.warning(
-                f"{len(scores) - matched} canSNPs were not in the scheme the report typed "
-                f"with. Within a node they are ranked after the observed ones that held and "
-                f"before those that did not; for a ranking of every candidate, type with a "
-                f"scheme exported with --snps-per-node all"
-            )
-        if not matched:
-            logging.warning(
-                f"No canSNP of {observed} is among those scored; the table should come from "
-                f"a scheme exported from these canSNPs against the same reference"
-            )
-    incomplete = sum(1 for score in scores if score.missing)
-    if incomplete:
-        logging.info(
-            f"{incomplete} canSNPs lack a base in some genomes; within a node they "
-            f"are ranked after those called in every genome"
-        )
-    # A canSNP in a masked region, such as a recombinant one, is marked before
-    # the others are ranked, so that it does not take a place among the best.
-    for score in scores:
-        if in_regions(score.position - 1, masked.get(score.contig, [])):
-            score.filters.append("Masked")
-    if masked:
-        logging.info(f"{sum('Masked' in s.filters for s in scores)} canSNPs lie in masked regions")
+        _count_copies(scores, genome, copy_kmer)
+    _mark_loci(scores, inputs.model, genome, inputs.aliases)
+    if inputs.behaviour:
+        _apply_observed(scores, inputs.behaviour, inputs.aliases, observed)
+    _log_incomplete(scores)
+    _mark_masked(scores, inputs.masked)
     apply_filters(scores, cutoff, top_n, spacing)
     passing = [score for score in scores if score.passed]
-    logging.info(
-        f"Scored {len(scores)} canSNPs out of {len(contexts)} SNPs; {len(passing)} pass "
-        + (f"the cutoff of {cutoff}" if cutoff is not None else "with no cutoff")
-        + (f" and the best {top_n} per node, at least {spacing} bases apart" if top_n else "")
-    )
+    logging.info(_scored_line(len(scores), len(contexts), len(passing), cutoff, top_n, spacing))
 
-    if tree is not None:
-        summarize_scores(tree.nodes, passing)
+    if inputs.tree is not None:
+        summarize_scores(inputs.tree.nodes, passing)
 
     written = vcf.write_scores(
         output,
@@ -517,7 +664,7 @@ def main(
         top_n,
         weights,
         copies=bool(copy_kmer),
-        observed=bool(behaviour),
+        observed=bool(inputs.behaviour),
         spacing=spacing,
     )
     logging.info(f"Wrote {written} scored canSNPs to {output}")

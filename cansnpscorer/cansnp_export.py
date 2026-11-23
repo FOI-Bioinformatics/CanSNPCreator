@@ -31,10 +31,12 @@ import logging
 import os
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import ranking, select_per_node
 from cansnpscorer.helpers.file_utils import (
+    AliasGroup,
     fasta_ids,
     read_contig_aliases,
     read_genome_map,
@@ -552,6 +554,185 @@ def write_scheme(
     return written
 
 
+def _option_problems(genome_map: str | None, alignment: str | None) -> list[str]:
+    """The option combinations the export refuses."""
+    if bool(genome_map) != bool(alignment):
+        return [
+            "the genomes file needs both --genome-map and --alignment: where each "
+            "genome sits, and which genomes were aligned"
+        ]
+    return []
+
+
+@dataclass
+class _Inputs:
+    """The files an export reads."""
+
+    clusters: dict[str, list[str]] | None
+    aligned: list[str] | None
+    tree: Hierarchy
+    sequence: Reference
+    scored: list[ScoredSnp]
+    """The canSNPs that passed evaluate's filters."""
+    aliases: list[AliasGroup] | None
+
+
+def _read_inputs(
+    scores: str,
+    hierarchy: str,
+    reference: str,
+    genome_map: str | None,
+    alignment: str | None,
+    contig_aliases: str | None,
+) -> _Inputs:
+    """Read the scores, the hierarchy and the reference, and the genome map,
+    alignment and alias table when given.
+
+    Raises:
+        OSError, ValueError, HierarchyError, ReferenceError: If a file cannot
+            be read.
+    """
+    clusters = read_genome_map(genome_map) if genome_map else None
+    aligned = fasta_ids(alignment) if alignment else None
+    tree = read_hierarchy(hierarchy)
+    sequence = reference_parser(reference)
+    scored = [score for score in vcf.read_scores(scores, sequence) if score.passed]
+    aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
+    return _Inputs(clusters, aligned, tree, sequence, scored, aliases)
+
+
+def _missing_node_problems(
+    tree: Hierarchy, without: Sequence[str], prune: bool, clusters: dict[str, list[str]] | None
+) -> tuple[list[str], list[str]]:
+    """The problems and warnings of the nodes that have no canSNP."""
+    problems: list[str] = []
+    warnings: list[str] = []
+    if not without:
+        return problems, warnings
+    if tree.root in without:
+        problems.append(
+            f"the root '{tree.root}' has no canSNP, and a scheme cannot be written "
+            f"without one. A root's canSNP needs a genome outside the root in the "
+            f"alignment, an outgroup placed at no node (collapse --outgroup); with one, "
+            f"lower the evaluate cutoff, or root the scheme elsewhere"
+        )
+    if not prune:
+        problems.append(
+            f"{len(without)} nodes have no canSNP: {', '.join(without[:5])}. Every node of a "
+            f"CanSNPer2 scheme carries exactly one, so either lower the evaluate cutoff or pass "
+            f"--prune to leave these nodes out"
+        )
+        return problems, warnings
+    message = (
+        f"{len(without)} nodes have no canSNP and were left out of the scheme, so their "
+        f"children now hang from the nearest node that has one: {', '.join(without[:5])}"
+    )
+    if clusters is not None:
+        moved = sum(len(clusters.get(node, [])) for node in without)
+        depth = max(len(tree.path(node)) for node in without)
+        message += (
+            f". {moved} genomes of the genome map sat at these nodes and now sit "
+            f"at an ancestor; the deepest pruned depth is {depth} (the root is "
+            f"depth 1)"
+        )
+    warnings.append(message)
+    return problems, warnings
+
+
+def _scheme_problems(
+    inputs: _Inputs,
+    chosen: dict[str, list[ScoredSnp]],
+    best: dict[str, ScoredSnp],
+    metadata: tuple[str, str, str, str, str, str, str],
+    prune: bool,
+    contig_aliases: str | None,
+) -> tuple[dict[str, str], list[str], list[str]]:
+    """The name of each sequence in the scheme, and the problems and warnings of the scheme.
+
+    ``metadata`` is the reference genome's row as :func:`check_metadata` takes it.
+    """
+    tree = inputs.tree
+    problems, warnings = check_scheme(tree, best, inputs.sequence)
+    problems += repeated_positions(inputs.scored)
+    # Only the sequences that carry a canSNP of the scheme are named in it.
+    used = {score.contig for picked in chosen.values() for score in picked}
+    names, naming_problems, naming_warnings = sequence_names(
+        [name for name in inputs.sequence.names if name in used], inputs.aliases, contig_aliases
+    )
+    problems += naming_problems
+    warnings += naming_warnings
+    problems += check_metadata(*metadata)
+    node_problems, node_warnings = _missing_node_problems(
+        tree, [node for node in tree.nodes if node not in best], prune, inputs.clusters
+    )
+    return names, problems + node_problems, warnings + node_warnings
+
+
+def _remove_stale(outdir: str, organism: str, genomes_written: bool) -> None:
+    """Remove the optional files of an earlier export into the same directory.
+
+    They would otherwise stay beside this scheme, and describe another one.
+    The SNP file of CanSNPer2 2.3.0 and earlier is no longer written at all.
+    """
+    for suffix, wanted in ((SNP_SUFFIX, False), (GENOMES_SUFFIX, genomes_written)):
+        stale = os.path.join(outdir, organism + suffix)
+        if not wanted and os.path.exists(stale):
+            os.remove(stale)
+            logging.warning(f"Removed {stale}, which an earlier export wrote and this one does not")
+
+
+def _log_cansnp_set(
+    paths: Sequence[Sequence[str]],
+    chosen: dict[str, list[ScoredSnp]],
+    snps_per_node: int | None,
+    spacing: int,
+) -> None:
+    """Say how many canSNPs the set holds, and warn about nodes with too few or with shared genes."""
+    counts = sorted(len(chosen[path[-1]]) for path in paths)
+    short = [
+        path[-1] for path in paths if snps_per_node is not None and len(chosen[path[-1]]) < snps_per_node
+    ]
+    logging.info(f"The canSNP set holds {sum(counts)} canSNPs, {counts[0]} to {counts[-1]} per node")
+    shared = [
+        path[-1]
+        for path in paths
+        if len({(score.contig, score.locus) for score in chosen[path[-1]] if score.locus})
+        < sum(1 for score in chosen[path[-1]] if score.locus)
+    ]
+    if shared:
+        logging.warning(
+            f"{len(shared)} nodes hold canSNPs that share a gene, which one deletion or "
+            f"recombinant segment would take together: {', '.join(shared[:5])}"
+        )
+    if short:
+        logging.warning(
+            f"{len(short)} nodes have fewer than {snps_per_node} canSNPs that passed and lie "
+            f"{spacing} bases apart: {', '.join(short[:5])}"
+        )
+
+
+def _write_genomes_file(
+    outdir: str,
+    organism: str,
+    tree: Hierarchy,
+    kept: Sequence[str],
+    clusters: dict[str, list[str]],
+    aligned: Sequence[str],
+) -> str:
+    """Write the genomes file and return its path."""
+    rows, notes = genome_rows(tree, kept, clusters, aligned)
+    for note in notes:
+        logging.warning(note)
+    path = write_genomes(outdir, organism, rows)
+    role_counts = {
+        role: sum(1 for row in rows if row[2] == role) for role in ("representative", "member", "outgroup")
+    }
+    logging.info(
+        "The genomes file lists " + ", ".join(f"{count} {role}s" for role, count in role_counts.items())
+    )
+    return path
+
+
 def main(
     scores=None,
     hierarchy=None,
@@ -579,65 +760,27 @@ def main(
     NCBI assembly report or UCSC chromAlias table that gives the GenBank
     accession of each sequence the reference names by its RefSeq accession.
     """
-    if bool(genome_map) != bool(alignment):
-        logging.error(
-            "the genomes file needs both --genome-map and --alignment: where each "
-            "genome sits, and which genomes were aligned"
-        )
+    problems = _option_problems(genome_map, alignment)
+    if problems:
+        logging.error(problems[0])
         return 1
     try:
-        clusters = read_genome_map(genome_map) if genome_map else None
-        aligned = fasta_ids(alignment) if alignment else None
-        tree = read_hierarchy(hierarchy)
-        sequence = reference_parser(reference)
-        scored = [score for score in vcf.read_scores(scores, sequence) if score.passed]
-        aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
+        inputs = _read_inputs(scores, hierarchy, reference, genome_map, alignment, contig_aliases)
     except (OSError, ValueError, HierarchyError, ReferenceError) as error:
         logging.error(error)
         return 1
+    tree, clusters = inputs.tree, inputs.clusters
 
-    chosen = select_per_node(scored, snps_per_node, spacing)
+    chosen = select_per_node(inputs.scored, snps_per_node, spacing)
     best = {node: picked[0] for node, picked in chosen.items() if picked}
-    problems, warnings = check_scheme(tree, best, sequence)
-    problems += repeated_positions(scored)
-    # Only the sequences that carry a canSNP of the scheme are named in it.
-    used = {score.contig for picked in chosen.values() for score in picked}
-    names, naming_problems, naming_warnings = sequence_names(
-        [name for name in sequence.names if name in used], aliases, contig_aliases
+    names, problems, warnings = _scheme_problems(
+        inputs,
+        chosen,
+        best,
+        (genome, strain, citation, genbank_id, refseq_id, assembly_name, organism),
+        prune,
+        contig_aliases,
     )
-    problems += naming_problems
-    warnings += naming_warnings
-    problems += check_metadata(genome, strain, citation, genbank_id, refseq_id, assembly_name, organism)
-
-    without = [node for node in tree.nodes if node not in best]
-    if without:
-        if tree.root in without:
-            problems.append(
-                f"the root '{tree.root}' has no canSNP, and a scheme cannot be written "
-                f"without one. A root's canSNP needs a genome outside the root in the "
-                f"alignment, an outgroup placed at no node (collapse --outgroup); with one, "
-                f"lower the evaluate cutoff, or root the scheme elsewhere"
-            )
-        if prune:
-            message = (
-                f"{len(without)} nodes have no canSNP and were left out of the scheme, so their "
-                f"children now hang from the nearest node that has one: {', '.join(without[:5])}"
-            )
-            if clusters is not None:
-                moved = sum(len(clusters.get(node, [])) for node in without)
-                depth = max(len(tree.path(node)) for node in without)
-                message += (
-                    f". {moved} genomes of the genome map sat at these nodes and now sit "
-                    f"at an ancestor; the deepest pruned depth is {depth} (the root is "
-                    f"depth 1)"
-                )
-            warnings.append(message)
-        else:
-            problems.append(
-                f"{len(without)} nodes have no canSNP: {', '.join(without[:5])}. Every node of a "
-                f"CanSNPer2 scheme carries exactly one, so either lower the evaluate cutoff or pass "
-                f"--prune to leave these nodes out"
-            )
 
     if not report(problems, warnings, "scheme"):
         return 2
@@ -648,50 +791,13 @@ def main(
         outdir, organism, paths, best, names, genome, strain, citation, genbank_id, refseq_id, assembly_name
     )
     written.append(write_cansnps(outdir, organism, paths, chosen, names, genome, citation))
-    # The optional files of an earlier export into the same directory would
-    # otherwise stay beside this scheme, and describe another one. The SNP file of
-    # CanSNPer2 2.3.0 and earlier is no longer written at all.
-    for suffix, wanted in ((SNP_SUFFIX, False), (GENOMES_SUFFIX, clusters is not None)):
-        stale = os.path.join(outdir, organism + suffix)
-        if not wanted and os.path.exists(stale):
-            os.remove(stale)
-            logging.warning(f"Removed {stale}, which an earlier export wrote and this one does not")
+    _remove_stale(outdir, organism, clusters is not None)
     if snps_per_node != 1:
-        counts = sorted(len(chosen[path[-1]]) for path in paths)
-        short = [
-            path[-1] for path in paths if snps_per_node is not None and len(chosen[path[-1]]) < snps_per_node
-        ]
-        logging.info(f"The canSNP set holds {sum(counts)} canSNPs, {counts[0]} to {counts[-1]} per node")
-        shared = [
-            path[-1]
-            for path in paths
-            if len({(score.contig, score.locus) for score in chosen[path[-1]] if score.locus})
-            < sum(1 for score in chosen[path[-1]] if score.locus)
-        ]
-        if shared:
-            logging.warning(
-                f"{len(shared)} nodes hold canSNPs that share a gene, which one deletion or "
-                f"recombinant segment would take together: {', '.join(shared[:5])}"
-            )
-        if short:
-            logging.warning(
-                f"{len(short)} nodes have fewer than {snps_per_node} canSNPs that passed and lie "
-                f"{spacing} bases apart: {', '.join(short[:5])}"
-            )
+        _log_cansnp_set(paths, chosen, snps_per_node, spacing)
     if clusters is not None:
         # The genome map and the alignment are given together, checked above.
-        assert aligned is not None
-        rows, notes = genome_rows(tree, kept, clusters, aligned)
-        for note in notes:
-            logging.warning(note)
-        written.append(write_genomes(outdir, organism, rows))
-        role_counts = {
-            role: sum(1 for row in rows if row[2] == role)
-            for role in ("representative", "member", "outgroup")
-        }
-        logging.info(
-            "The genomes file lists " + ", ".join(f"{count} {role}s" for role, count in role_counts.items())
-        )
+        assert inputs.aligned is not None
+        written.append(_write_genomes_file(outdir, organism, tree, kept, clusters, inputs.aligned))
 
     logging.info(f"Wrote a scheme of {len(kept)} nodes: {', '.join(written)}")
     logging.info("Check it with the CanSNPer2-data repository's validate.py before building a database")
