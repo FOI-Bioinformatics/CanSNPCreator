@@ -46,7 +46,7 @@ def parse_ngs(text: str) -> list[Repeat]:
 
 def write_bed(repeats: list[Repeat], path: str) -> None:
     """Write repeats as BED: 0-based, half open, in the order TRF met the sequences."""
-    order = {}
+    order: dict[str, int] = {}
     for sequence, *_rest in repeats:
         order.setdefault(sequence, len(order))
     with open(path, "w", newline="\n") as handle:

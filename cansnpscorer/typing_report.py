@@ -60,6 +60,7 @@ from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field, replace
 
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
+from cansnpscorer.helpers.file_utils import ColumnRow
 from cansnpscorer.helpers.names import resolve_clusters, resolve_names
 from cansnpscorer.model import AlignmentMap, Reference
 from cansnpscorer.scheme import Scheme, SchemeSnp
@@ -441,6 +442,8 @@ def scheme_columns(
 ) -> dict[str, list[tuple[SchemeSnp, int | None]]]:
     """The canSNPs of each node, best rank first, with their alignment column."""
     by_node: dict[str, list[tuple[SchemeSnp, int | None]]] = {}
+    # Both callers return before this when the scheme has no tree.
+    assert scheme.hierarchy is not None
     for snp in sorted(scheme.checked_snps, key=lambda snp: (snp.rank, snp.line)):
         if genome is not None and snp.genome != genome:
             continue
@@ -452,7 +455,7 @@ def scheme_columns(
 
 def type_alignment(
     scheme: Scheme,
-    alignment: Mapping[str, str],
+    alignment: Mapping[str, str | ColumnRow],
     reference: Reference,
     genome: str | None = None,
     clusters: Mapping[str, Sequence[str]] | None = None,
@@ -494,7 +497,10 @@ def type_alignment(
             f"so --genome must say which one the alignment is against"
         )
 
-    mapping = AlignmentMap(next(iter(alignment.values())), reference)
+    first_row = next(iter(alignment.values()))
+    # The first record is the reference, which is kept whole.
+    assert isinstance(first_row, str)
+    mapping = AlignmentMap(first_row, reference)
     hierarchy = scheme.hierarchy
     lineage = _lineages(hierarchy)
     depth = {node: len(above) for node, above in lineage.items()}
@@ -554,8 +560,8 @@ def type_alignment(
         first = {
             node: (
                 MISSING
-                if called[node] is None or called[node][1] is None
-                else cansnper2_state(sequence[called[node][1]], called[node][0])
+                if (entry := called[node]) is None or entry[1] is None
+                else cansnper2_state(sequence[entry[1]], entry[0])
             )
             for node in by_node
         }
@@ -672,7 +678,8 @@ def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[
     order = sorted(
         (index for index in range(width) if sets[index][0]), key=lambda index: (-len(sets[index][0]), index)
     )
-    covered, sparse = [], []
+    covered: list[int] = []
+    sparse: list[int] = []
     for index in order:
         missing = len(judged) - len(sets[index][0]) - len(sets[index][1])
         (covered if missing <= tolerance else sparse).append(index)
@@ -749,7 +756,7 @@ def set_apart(
             if votes[ANCESTRAL] > votes[DERIVED]
             else MISSING
         )
-    apart = []
+    apart: list[int | None] = []
     for index in range(count):
         apart.append(
             sum(
@@ -932,6 +939,8 @@ def _summary(
     def compared(result: GenomeTyping) -> str:
         """The single call beside the set call, where the set rule made one."""
         single, by_set = result.single_call, result.set_call
+        # Only genomes with a set call are compared, as below.
+        assert by_set is not None
         if single == by_set:
             return "same"
         if single is None:
@@ -1012,7 +1021,7 @@ def _summary(
         ),
         count("discordant genomes", None, sum(1 for result in typed if result.discordant)),
     ]
-    with_expected = [result for result in typed if result.expected]
+    with_expected = [(result, result.expected) for result in typed if result.expected]
     if with_expected:
         rows.append(text("genomes with an expected node", str(len(with_expected)), str(len(with_expected))))
         for kind in (SAME, ABOVE, BELOW, ELSEWHERE, NO_CALL):
@@ -1025,8 +1034,12 @@ def _summary(
                         ELSEWHERE: "call on another branch",
                         NO_CALL: "no call",
                     }[kind],
-                    sum(1 for r in with_expected if outcome(r.single_call, r.expected, lineage) == kind),
-                    sum(1 for r in with_expected if outcome(r.set_call, r.expected, lineage) == kind),
+                    sum(
+                        1
+                        for r, expected in with_expected
+                        if outcome(r.single_call, expected, lineage) == kind
+                    ),
+                    sum(1 for r, expected in with_expected if outcome(r.set_call, expected, lineage) == kind),
                     len(with_expected),
                 )
             )
@@ -1043,7 +1056,7 @@ def write_report(report: TypingReport, prefix: str, run: Sequence[tuple[str, str
     """Write the tables as PREFIX_genomes.tsv, _snps.tsv, _nodes.tsv,
     _ranks.tsv and _summary.tsv, and with ``run``, what the report was made
     from, as PREFIX_run.tsv. Returns the paths written."""
-    tables = [
+    tables: list[tuple[str, Sequence[str], Sequence[Sequence[str]]]] = [
         ("_genomes.tsv", GENOME_COLUMNS, report.genome_rows()),
         ("_snps.tsv", SNP_COLUMNS, report.snp_rows),
         ("_nodes.tsv", NODE_COLUMNS, report.node_rows),
@@ -1290,6 +1303,8 @@ def judge_by_narrowest_group(
             if not row.genomes:
                 continue
             if by_set:
+                # by_set holds only when every row with genomes has set_apart.
+                assert row.set_apart is not None
                 apart = row.set_apart
             else:
                 apart = max(0, row.derived_genomes - width, width - row.derived_genomes - row.missing)

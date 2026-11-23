@@ -370,9 +370,10 @@ def genome_rows(
     keeping = set(kept)
 
     def kept_at(node: str) -> str | None:
-        while node is not None and node not in keeping:
-            node = hierarchy.parents.get(node)
-        return node
+        current: str | None = node
+        while current is not None and current not in keeping:
+            current = hierarchy.parents.get(current)
+        return current
 
     placed = {genome: node for node, genomes in clusters.items() for genome in genomes}
     matched, _unmatched, _ambiguous = resolve_names(list(placed), aligned)
@@ -468,6 +469,14 @@ def write_genomes(outdir: str, organism: str, rows: Sequence[tuple[str, str, str
     return path
 
 
+def _alleles(score: ScoredSnp) -> tuple[str, str]:
+    """The derived and ancestral base of a canSNP read from a scores file."""
+    # read_scores refuses a canSNP whose ancestral base is neither REF nor ALT,
+    # so both bases are set here.
+    assert score.derived is not None and score.ancestral is not None
+    return score.derived, score.ancestral
+
+
 def write_cansnps(
     outdir: str,
     organism: str,
@@ -497,8 +506,7 @@ def write_cansnps(
                         genome,
                         names[score.contig],
                         str(score.position),
-                        score.derived,
-                        score.ancestral,
+                        *_alleles(score),
                         str(score.total),
                         "yes" if rank == 1 else "no",
                     ]
@@ -671,16 +679,18 @@ def main(
                 f"{spacing} bases apart: {', '.join(short[:5])}"
             )
     if clusters is not None:
+        # The genome map and the alignment are given together, checked above.
+        assert aligned is not None
         rows, notes = genome_rows(tree, kept, clusters, aligned)
         for note in notes:
             logging.warning(note)
         written.append(write_genomes(outdir, organism, rows))
-        counts = {
+        role_counts = {
             role: sum(1 for row in rows if row[2] == role)
             for role in ("representative", "member", "outgroup")
         }
         logging.info(
-            "The genomes file lists " + ", ".join(f"{count} {role}s" for role, count in counts.items())
+            "The genomes file lists " + ", ".join(f"{count} {role}s" for role, count in role_counts.items())
         )
 
     logging.info(f"Wrote a scheme of {len(kept)} nodes: {', '.join(written)}")

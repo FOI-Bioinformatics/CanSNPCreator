@@ -350,7 +350,8 @@ def read_scheme(directory: str, organism: str | None = None) -> Scheme:
 
     references: list[SchemeReference] = []
     for number, fields in _rows(references_path, REFERENCE_COLUMNS, problems):
-        references.append(SchemeReference(*[field.strip() for field in fields], line=number))
+        genome, strain, genbank_id, refseq_id, assembly_name = (field.strip() for field in fields)
+        references.append(SchemeReference(genome, strain, genbank_id, refseq_id, assembly_name, line=number))
 
     genomes: list[tuple[str, str, str]] = []
     genomes_path = os.path.join(directory, organism + GENOMES_SUFFIX)

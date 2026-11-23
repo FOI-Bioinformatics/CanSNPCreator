@@ -176,12 +176,12 @@ OBS_MISSING = Info(
 
 def count_of(record: "Record", key: str) -> int:
     value = record.info.get(key)
-    return int(value) if value not in (None, "") else 0
+    return int(value) if value is not None and value != "" else 0
 
 
 def copies_of(record: "Record") -> int:
     value = record.info.get("COPIES")
-    return int(value) if value not in (None, "") else 1
+    return int(value) if value is not None and value != "" else 1
 
 
 @dataclass
@@ -440,7 +440,7 @@ def snp_record(
     reference: Reference,
     contig: str,
     position: int,
-    alleles: tuple[str, str],
+    alleles: Sequence[str],
     node: str | None = None,
     ancestral: str | None = None,
 ) -> Record:
@@ -533,12 +533,12 @@ class Snp:
 
 def nearest_of(record: Record) -> int | None:
     value = record.info.get("NEAREST")
-    return int(value) if value not in (None, "") else None
+    return int(value) if value is not None and value != "" else None
 
 
 def missing_of(record: Record) -> int:
     value = record.info.get("MISSING")
-    return int(value) if value not in (None, "") else 0
+    return int(value) if value is not None and value != "" else 0
 
 
 def read_snps(path: str, reference: Reference) -> list[Snp]:
@@ -557,6 +557,8 @@ def read_snps(path: str, reference: Reference) -> list[Snp]:
                     f"{path}: {record.chrom}:{record.pos} gives the ancestral allele "
                     f"{record.ancestral}, which is neither REF nor ALT"
                 )
+            # AA is REF or ALT, checked above, so it is set and the derived allele is too.
+            assert record.derived is not None
             snps.append(
                 Snp(
                     record.chrom,
@@ -650,6 +652,13 @@ def write_scores(
     return write(path, header, records)
 
 
+def _whole_number(value: str | None) -> int:
+    """The integer in an INFO value; a flag without a value is not one."""
+    if value is None:
+        raise ValueError("no value")
+    return int(value)
+
+
 def read_scores(path: str, reference: Reference | None = None):
     """Read the scored canSNPs evaluate wrote."""
     from cansnpscorer.helpers.scoring_methods import INFO_KEYS, ScoredSnp
@@ -678,8 +687,8 @@ def read_scores(path: str, reference: Reference | None = None):
                     contig=record.chrom,
                     position=record.pos,
                     node=record.node,
-                    total=int(record.info["SCORE"]),
-                    terms={term: int(record.info[key]) for term, key in INFO_KEYS.items()},
+                    total=_whole_number(record.info["SCORE"]),
+                    terms={term: _whole_number(record.info[key]) for term, key in INFO_KEYS.items()},
                     derived=record.derived,
                     ancestral=record.ancestral,
                     filters=list(record.filters),

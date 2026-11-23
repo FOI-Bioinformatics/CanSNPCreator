@@ -801,6 +801,7 @@ pip install -e ".[dev]"
 python -m pytest tests --cov=cansnpscorer
 python -m ruff check cansnpscorer tests
 python -m ruff format --check cansnpscorer tests
+python -m mypy
 ```
 
 The reformat of the whole code base is listed in `.git-blame-ignore-revs`; run

@@ -11,6 +11,7 @@ then on. Node names are never cleaned: a node called A.1 stays A.1.
 
 import logging
 import re
+from collections.abc import Mapping, Sequence
 
 NOT_ALPHANUMERIC = re.compile("[^A-Za-z0-9]+")
 FASTA_SUFFIX = re.compile(r"\.(fasta|fna|fa|fas|ffn)(\.gz)?$", re.IGNORECASE)
@@ -24,7 +25,9 @@ ACCESSION = re.compile(r"(GC[AF]_\d{9})(?:\.(\d+))?")
 HELD_ACCESSION = re.compile(r"(?<![A-Za-z0-9])(GC[AF]_\d{9})(?!\d)(?:\.(\d+))?")
 
 
-def resolve_names(names, records):
+def resolve_names(
+    names: Sequence[str], records: Sequence[str]
+) -> tuple[dict[str, str], list[str], list[str]]:
     """Match genome names from one file to the record names of another.
 
     In order: a name equal to a record matches it, then one equal to it once
@@ -49,8 +52,8 @@ def resolve_names(names, records):
         A dictionary from each name that matched to its record, the names that
         matched nothing, and the names that matched more than one record.
     """
-    by_name = {}
-    by_clean = {}
+    by_name: dict[str, set[str]] = {}
+    by_clean: dict[str, set[str]] = {}
     for record in records:
         for key in {record, strip_fasta_suffix(record)}:
             by_name.setdefault(key, set()).add(record)
@@ -58,19 +61,19 @@ def resolve_names(names, records):
 
     # The accessions each record name holds, delimited as described above, so
     # that an accession is looked up rather than searched for in every record.
-    by_stem = {}
-    by_version = {}
+    by_stem: dict[str, set[str]] = {}
+    by_version: dict[tuple[str, str], set[str]] = {}
     for record in records:
-        for found in HELD_ACCESSION.finditer(record):
-            stem, version = found.groups()
+        for hit in HELD_ACCESSION.finditer(record):
+            stem, version = hit.groups()
             by_stem.setdefault(stem, set()).add(record)
             if version is not None:
                 by_version.setdefault((stem, version), set()).add(record)
 
     exact = set(records)
-    matched = {}
-    unmatched = []
-    ambiguous = []
+    matched: dict[str, str] = {}
+    unmatched: list[str] = []
+    ambiguous: list[str] = []
     for name in names:
         stripped = strip_fasta_suffix(name)
         if name in exact:
@@ -97,7 +100,9 @@ def resolve_names(names, records):
     return matched, unmatched, ambiguous
 
 
-def resolve_clusters(clusters, records):
+def resolve_clusters(
+    clusters: Mapping[str, Sequence[str]], records: Sequence[str]
+) -> tuple[dict[str, list[str]], list[str], list[str]]:
     """Rewrite the genomes of each node as the alignment records they match.
 
     Returns the clusters with record names, the genome names that matched no
@@ -117,9 +122,9 @@ def resolve_clusters(clusters, records):
         if matched[name] in split:
             ambiguous.append(name)
             del matched[name]
-    resolved = {}
+    resolved: dict[str, list[str]] = {}
     for node, genomes in clusters.items():
-        found = []
+        found: list[str] = []
         for name in genomes:
             record = matched.get(name)
             if record is not None and record not in found:
