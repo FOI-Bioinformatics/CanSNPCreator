@@ -7,6 +7,8 @@ says about it.
 """
 
 import os
+import subprocess
+import sys
 
 from conftest import (
     CLUSTERS,
@@ -101,6 +103,29 @@ def test_the_incongruent_site_is_counted_as_conflicting(written, dataset):
     conflicting = of(audit(outdir, dataset), "conflicting-sites")
     assert len(conflicting) == 1
     assert conflicting[0].detail.startswith("1 of ")
+
+
+def test_genomes_tied_in_conflicting_sites_are_listed_by_name(written, dataset):
+    # Both genomes of the incongruent site are involved once, a tie, which is
+    # broken by name so that the finding reads the same in every run.
+    outdir, _scores = written
+    detail = of(audit(outdir, dataset), "conflicting-sites")[0].detail
+    assert "most often involved are s1 (1), s3 (1)." in detail
+
+
+def test_the_conflicting_sites_finding_does_not_depend_on_the_hash_seed():
+    # Python randomises the order of a set of strings for each process, so the
+    # tie above is checked under several fixed seeds, each in its own process.
+    name = "test_alignment_audit.py::test_genomes_tied_in_conflicting_sites_are_listed_by_name"
+    for seed in ("1", "2", "3", "4"):
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", name],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, f"PYTHONHASHSEED={seed}\n{completed.stdout}"
 
 
 # -- a SNP that is not canonical ---------------------------------------------

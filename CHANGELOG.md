@@ -30,6 +30,12 @@ the reference, goes ahead as before.
 - `merge` joins schemes built in tiers into one scheme at the node they share,
   and refuses schemes that disagree about it (#41).
 
+### Fixed
+
+- The conflicting-sites finding of `audit` listed the genomes tied for most
+  often involved in an order that changed from run to run, so the same audit
+  could name different genomes; ties are now broken by name.
+
 ### Development
 
 - CI checks out CanSNPer2 and CanSNPer2-data and runs the eleven tests that
