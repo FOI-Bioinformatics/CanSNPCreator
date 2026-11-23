@@ -63,3 +63,6 @@ jobs:
 
       - name: Format
         run: python -m ruff format --check cansnpscorer tests
+
+      - name: Types
+        run: python -m mypy
