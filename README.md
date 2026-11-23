@@ -422,6 +422,46 @@ whose name holds no accession is left out with a warning. CanSNPer2 does not rea
 the file; CanSNPer2-data's `validate.py` checks it, and `audit` uses it, so
 that a published scheme carries what is needed to check it again.
 
+### Schemes built in tiers
+
+A group whose members differ too much for one alignment is built in tiers. In
+the genus *Brucella* the classical species cover nearly all of a classical
+reference genome, while the other species share only a fraction of it, so the
+deep nodes and the inner ones cannot come from one alignment. A coarse scheme
+covers the whole group, with the subgroup as one of its leaves; a finer scheme
+of the subgroup, made against the same reference, is rooted at that leaf. The
+node both hold is the seam, and `merge` joins the two there:
+
+```sh
+CanSNPCreator merge \
+    --scheme genus_scheme --scheme classical_scheme \
+    --outdir schemes/brucella_genus --organism brucella_genus
+```
+
+Give the schemes coarsest first. Each later one must share exactly one node
+with those before it, its own root, and is hung from that node. The seam keeps
+the canSNPs of the scheme before it, the only one with a genome outside the seam
+to settle their polarity; the finer scheme's canSNPs there are dropped, and the
+run says how many.
+
+Nothing is written when the schemes do not fit, and each refusal names what is
+wrong:
+
+| Refused | Why |
+| ------- | --- |
+| a site used by two nodes | CanSNPer2 needs a site of its own for every canSNP, and tiers extracted independently from one reference can pick the same one |
+| a node two schemes hold besides the seam | node names must be distinct, or two branches would merge into one |
+| a scheme that shares no node with those before it | its tree would hang from nothing, and the merged tree would have two roots |
+| references that differ | positions on two references do not agree |
+| a node without exactly one typed canSNP, or ranks that are not 1, 2, 3 in order | as CanSNPer2 and `validate.py` require |
+| a genome at two terminal nodes | a genome sits at one node |
+
+In the coarse scheme the seam is a leaf, so its genomes file lists the finer
+scheme's genomes there. Merged, the seam is an inner node, and since the genomes
+file lists terminal nodes only those rows are left out; the finer scheme places
+the genomes. A genome the finer scheme uses as its outgroup and the coarse one
+places at a node stays placed.
+
 ## Starting from a genome tree
 
 A genome tree, such as RepGenR2's `tree/tree.nwk`, has a node for every split

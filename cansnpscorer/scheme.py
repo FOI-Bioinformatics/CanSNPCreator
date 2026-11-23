@@ -398,8 +398,16 @@ def read_cansnps(path: str, problems: list[str]) -> list[SchemeSnp]:
                                  ancestral=ancestral, line=number, rank=rank_value,
                                  score=score, typed=TYPED_VALUES[typed.lower()]))
 
-    # Export numbers each node's canSNPs 1, 2, 3 ... in file order. A gap or a
-    # repeat means the file was edited or joined.
+    check_ranks(cansnps, name, problems)
+    return cansnps
+
+
+def check_ranks(cansnps: Sequence[SchemeSnp], name: str, problems: list[str]) -> None:
+    """Each node's canSNPs ranked 1, 2, 3 ... in order, with exactly one typed.
+
+    Export numbers them so in file order; a gap or a repeat means the file was
+    edited or joined, and CanSNPer2 calls one canSNP per node.
+    """
     ranks: dict[str, list[int]] = {}
     typed_count: dict[str, int] = {}
     for snp in cansnps:
@@ -417,4 +425,3 @@ def read_cansnps(path: str, problems: list[str]) -> list[SchemeSnp]:
         elif count > 1:
             problems.append(f"{name} marks {count} canSNPs of node '{node}' typed, where "
                             f"CanSNPer2 calls one canSNP per node")
-    return cansnps
