@@ -16,6 +16,7 @@ scheme that cannot be typed.
 import logging
 from collections.abc import Mapping, Sequence
 
+from cansnpscorer.helpers.names import resolve_names
 from cansnpscorer.hierarchy import Hierarchy
 from cansnpscorer.model import AlignmentMap, Reference, ReferenceError, ungap
 
@@ -55,9 +56,40 @@ def check_alignment_against_reference(alignment: Mapping[str, str],
     return problems, warnings
 
 
+def resolve_outgroups(outgroups: Sequence[str], records: Sequence[str]) -> tuple[list[str], list[str]]:
+    """The alignment records that ``--outgroup`` names, and the problems in naming them.
+
+    Names are matched as every other genome name is, by ``resolve_names``: the
+    record ID, a file name, or an accession the record name holds. A name that
+    matches nothing, or more than one record, is a problem rather than a guess.
+    """
+    if not outgroups:
+        return [], []
+    matched, unmatched, ambiguous = resolve_names(list(outgroups), list(records))
+    problems = []
+    if unmatched:
+        problems.append(
+            f"--outgroup names {len(unmatched)} genomes the alignment does not hold: "
+            f"{', '.join(unmatched[:5])}. Give the record ID, a file name, or an accession the "
+            f"record name holds")
+    if ambiguous:
+        problems.append(
+            f"--outgroup {', '.join(ambiguous[:5])} matches more than one genome of the alignment; "
+            f"give the record ID")
+    return sorted({matched[name] for name in outgroups if name in matched}), problems
+
+
 def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[str]],
-                 hierarchy: Hierarchy, reference_name: str = "") -> Report:
-    """The genome map, the hierarchy and the alignment must describe one set of genomes."""
+                 hierarchy: Hierarchy, reference_name: str = "",
+                 outgroups: Sequence[str] = (), require_outgroup: bool = False) -> Report:
+    """The genome map, the hierarchy and the alignment must describe one set of genomes.
+
+    ``outgroups`` are the alignment records declared as the outgroup; each must
+    sit at no node. With ``require_outgroup``, an alignment in which every genome
+    sits at a node is a problem, since nothing then settles which base of a SNP
+    at the root is ancestral. Without it the check is as it was, for callers
+    that have no outgroup to give.
+    """
     problems: list[str] = []
     warnings: list[str] = []
 
@@ -90,14 +122,38 @@ def check_groups(alignment: Mapping[str, str], clusters: Mapping[str, Sequence[s
     # expected to be ungrouped; anything else that is ungrouped silently
     # weakens every canSNP, because a genome outside the scheme still carries
     # bases that decide whether a SNP is canonical.
-    ungrouped = sorted(set(alignment) - set(grouped) - {reference_name})
-    if ungrouped:
+    outside = set(alignment) - set(grouped)
+    ungrouped = sorted(outside - {reference_name})
+    declared = set(outgroups)
+    if declared:
+        for name in sorted(declared & set(grouped)):
+            problems.append(
+                f"the outgroup '{name}' is placed at {' and '.join(grouped[name])} in the genome "
+                f"map; an outgroup sits at no node, outside every node, so leave it out of the "
+                f"genome map")
+        # With the outgroup declared, a genome at no node that is not one of
+        # them is most likely a mistake, and can be named as such.
+        undeclared = sorted(outside - declared - {reference_name})
+        if undeclared:
+            warnings.append(
+                f"{len(undeclared)} genomes of the alignment are placed at no node but were not "
+                f"declared with --outgroup, so they count as outside every node as well and "
+                f"weaken the canSNPs they differ at: {', '.join(undeclared[:5])}")
+    elif ungrouped:
         warnings.append(
             f"{len(ungrouped)} genomes of the alignment are placed at no node, so they count as "
             f"outside every node, as an outgroup should; any other genome among them weakens "
             f"the canSNPs it differs at: {', '.join(ungrouped[:5])}")
 
-    if reference_name in alignment and reference_name not in grouped:
+    if require_outgroup and not outside:
+        problems.append(
+            "no genome of the alignment is placed outside every node, so which base of a SNP at "
+            "the root is ancestral cannot be told. Add an outgroup genome to the alignment and "
+            "leave it out of the genome map, naming it with --outgroup, or give "
+            "--allow-no-outgroup to take the reference genome's base as ancestral")
+
+    if (reference_name in alignment and reference_name not in grouped
+            and reference_name not in declared):
         warnings.append(
             f"the reference genome '{reference_name}' is placed at no node, so it counts as "
             f"outside every node, as an outgroup does. If it belongs to the scheme, no canSNP "

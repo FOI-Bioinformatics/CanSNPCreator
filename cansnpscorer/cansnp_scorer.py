@@ -221,6 +221,13 @@ def main():
                               "genomes without a base are ignored when the node is judged, "
                               "INFO/MISSING counts them, and export prefers SNPs with fewer.")
     extract.add_argument("-o", "--output", required=True, help="The SNPs to write.")
+    add_outgroup(extract, "A genome of the alignment that is outside the scheme and placed at no "
+                          "node; it settles which base of a SNP is ancestral. Without it, a "
+                          "genome the genome map places at no node is taken as one.")
+    extract.add_argument("--allow-no-outgroup", action="store_true",
+                         help="Go ahead when no genome of the alignment is placed outside every "
+                              "node, taking the reference genome's base as ancestral where the "
+                              "data cannot tell. Without it such a run stops.")
     add_version(extract)
 
     # evaluate
@@ -477,6 +484,21 @@ def main():
                                "PREFIX_nodes.tsv.")
     add_version(collapse)
 
+    name = subparsers.add_parser(
+        "name", help="Name the nodes of a hierarchy after the labelled genomes they hold.")
+    add_hierarchy(name, purpose="As collapse writes it.")
+    add_genome_map(name, purpose="As collapse writes it.")
+    name.add_argument("--labels", required=True, metavar="TSV",
+                      help="The label of each known genome: two tab separated columns, genome "
+                           "and label, such as a reference strain and its biovar. A node takes "
+                           "a label when every labelled genome below it carries that label; "
+                           "most genomes need none.")
+    name.add_argument("--outdir", default=".", help="Where to write the files. Default: .")
+    name.add_argument("--prefix", default="named",
+                      help="Begins the names of the files written: PREFIX_hierarchy.tsv, "
+                           "PREFIX_genomes.tsv and PREFIX_names.tsv. Default: named.")
+    add_version(name)
+
     # place
     place = subparsers.add_parser(
         "place", help="Place the genomes of a tree on the nodes of an existing scheme.")
@@ -574,7 +596,8 @@ def run(args, parser, evaluate, place) -> int:
     if args.command == "extract":
         return cansnp_extractor.main(
             alignment=args.alignment, reference=args.reference, hierarchy=args.hierarchy,
-            genome_map=args.genome_map, output=args.output, min_called=args.min_called)
+            genome_map=args.genome_map, output=args.output, min_called=args.min_called,
+            outgroups=args.outgroup, allow_no_outgroup=args.allow_no_outgroup)
     if args.command == "evaluate":
         try:
             weights = score_weights(args.score_weight, args.profile)
@@ -624,6 +647,10 @@ def run(args, parser, evaluate, place) -> int:
             min_support=args.min_support, min_genomes=args.min_genomes,
             min_length=args.min_branch_length, prefix_names=args.rename, outdir=args.outdir,
             prefix=args.prefix, outgroups=args.outgroup)
+    if args.command == "name":
+        return cansnp_tree.name_main(
+            hierarchy=args.hierarchy, genome_map=args.genome_map, labels=args.labels,
+            outdir=args.outdir, prefix=args.prefix)
     if args.command == "sites":
         return sites.main(snps=args.snps, reference=args.reference, alignments=args.alignment,
                           sites=args.sites, seed=args.seed, output=args.output)

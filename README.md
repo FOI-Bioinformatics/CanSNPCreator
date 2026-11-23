@@ -13,6 +13,18 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
+## Upgrading to 0.8.0
+
+`extract` now stops when no genome of the alignment is placed outside every
+node. Such a genome, the outgroup, is what settles which base of a SNP is
+ancestral; without one, earlier versions took the reference genome's base as
+ancestral and said so only in a warning, so a run given the wrong alignment
+still finished and wrote a scheme whose root could be inverted. Name the
+outgroup with `--outgroup`, or give `--allow-no-outgroup` to keep the old
+behaviour. A run whose genome map already leaves a genome at no node, such as
+the reference, goes ahead as before. The VCF header records which genomes
+acted as the outgroup, as `##outgroup=`.
+
 ## Upgrading to 0.7.0
 
 Version 0.7.0 writes and reads the canSNP file of a scheme,
@@ -55,6 +67,7 @@ work with other tools as well as with this one.
 | alignment | FASTA | The reference genome as the first record, every record the same length. Gapped, where the reference row carries the aligner's gaps, or projected onto reference coordinates, as x2fa, snippy and RepGenR2 write it. |
 | hierarchy | `child`/`parent` table, or Newick | The scheme's tree. The table is tab separated with a header naming `child` and `parent`, as FlexTaxD's taxonomy and RepGenR2's `tree2tax.tsv`; other columns are ignored. In Newick every label is a node name. |
 | genome map | two tab separated columns, no header | Genome and the node it sits at, as FlexTaxD's `--genomeid2taxid` and RepGenR2's `genomes_map.tsv`. A genome may sit at an internal node. |
+| labels | two tab separated columns, `genome` and `label` | The label of each known genome, such as a reference strain and its biovar, read by `name`. A header naming the two columns is skipped. Most genomes have none. |
 | genes | GFF3, from Prokka, Bakta or NCBI | `gene` and `CDS` features say whether a SNP is in a gene; each CDS's phase gives the reading frame. Described below. |
 | repeats, masked regions | BED, or GFF3 | BED is 0-based and half open. Regions are named by contig ID, or, with `--masks-concatenated`, given over the whole concatenated reference, as Gubbins reports recombinant regions for an alignment in reference coordinates such as RepGenR2's `full_alignment.fasta`. |
 | SNPs and scores | VCF 4.3 | Described below. |
@@ -137,6 +150,9 @@ both as VCF 4.3:
   1000 means at least 1000.
 - `INFO/MISSING` is the number of genomes without a base at the SNP, which is
   0 unless `extract --min-called` is below 1.
+- The header line `##outgroup=` names the genomes `extract` placed at no node,
+  which are what settled polarity, or `none` when `--allow-no-outgroup` let it
+  run without one.
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
   `GENE`, `MUTATION`), and records the weights in a `##CanSNPCreatorWeights`
   line.
@@ -167,7 +183,7 @@ or by hand. Every subcommand overwrites its output files.
 CanSNPCreator extract \
     --alignment alignment.fasta --reference reference.fasta \
     --hierarchy hierarchy.tsv --genome-map genome_map.tsv \
-    -o snps.vcf
+    --outgroup Coxiella_sp_GCF_000000000.1 -o snps.vcf
 
 # Tandem repeats of the reference, as BED
 CanSNPCreator trf --reference reference.fasta -o repeats.bed
@@ -487,10 +503,11 @@ A node holding exactly its parent's genomes is joined into the parent too.
 `--outgroup` names a leaf, by its name or by an assembly accession the name
 holds, placed at no node, so that it stays in the alignment
 as a genome outside every node: that is what lets `extract` find the root's
-canSNP and tell which side of each split is derived. Without one, `extract`
-warns that the two sides of the root cannot be told apart, and takes the
-base of the reference genome as ancestral, so that such a SNP marks the side
-without the reference. `--members` reads
+canSNP and tell which side of each split is derived. Pass the same name to
+`extract --outgroup`. Without any genome at no node, `extract` stops, since
+the two sides of the root cannot then be told apart; `--allow-no-outgroup`
+lets it go ahead, taking the base of the reference genome as ancestral, so
+that such a SNP marks the side without the reference. `--members` reads
 RepGenR2's `genomes_map.tsv`, so that genomes dereplication folded into a
 representative count towards its node and are placed with it. `--rename Cb`
 names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first and, among
@@ -506,6 +523,42 @@ a leaf in both unless `tree2tax --remove-outgroup` was given, and names it in
 It writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv`, the `--hierarchy`
 and `--genome-map` of `extract`, and `PREFIX_nodes.tsv`, with each node's
 genome count, support, branch length and name in the tree.
+
+### Naming nodes after what they hold
+
+The names `--rename` gives say where a node is, not what it is. `name` gives a
+node the label of the genomes it holds, from a table of known genomes, such as
+the reference strain of each biovar:
+
+```sh
+CanSNPCreator name \
+    --hierarchy draft/suis_hierarchy.tsv --genome-map draft/suis_genomes.tsv \
+    --labels biovars.tsv --outdir named --prefix suis
+```
+
+A node takes a label when every labelled genome at or below it carries that
+label, and of the nodes that do, the shallowest takes it, so the name covers as
+much of the clade as the labels allow. It is named `<root>.<label>`, and a node
+whose name extends its own, as `--rename` writes them, follows it: with
+`Bsu.1.1.2` named `Bsu.bv2`, `Bsu.1.1.2.1` becomes `Bsu.bv2.1`. The root keeps
+its name, and so does a node whose name is its own rather than an extension of
+its parent's.
+
+Two outcomes are findings about the labels rather than errors, and are reported
+as warnings. A label whose genomes share every node with a genome of another
+label names nothing, since no node of the scheme tells them apart. A label whose
+genomes do not form one clade names each of them; the one with more genomes
+takes the plain name and the others a numbered one, such as `Bsu.bv1-2`.
+
+The rule names the largest clade the labels allow, so with few labels a node can
+take a label from one genome among many. `PREFIX_names.tsv` says how much stands
+behind each name: one row per node, with its old and new name, whether it was
+named after a label, the label, the genomes below it and how many of those are
+labelled. A label covering fifteen genomes of which one is labelled is worth
+checking before it is published. Labelled genomes are matched to the genome map
+as every other genome name is, so an accession finds a record that holds it. It
+also writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv` under the new names,
+for `extract`.
 
 ## Checking an existing scheme
 

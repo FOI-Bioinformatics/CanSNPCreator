@@ -21,6 +21,7 @@ from cansnpscorer.model import Reference
 from cansnpscorer.scheme import Scheme, SchemeSnp, hierarchy_from_paths, read_scheme
 from cansnpscorer.tree_tools import (
     collapse,
+    name_from_labels,
     place,
     place_by_clade,
     read_genome_tree,
@@ -541,3 +542,107 @@ def test_place_by_clade_refuses_a_min_match(tmp_path):
         cli_run("place", "--rule", "clade", "--scheme-dir", clade_scheme(tmp_path),
                 "--tree", str(tree_file), "--genome-map", str(tree_file), "--outgroup", "out",
                 "--min-match", "0.8", "-o", str(tmp_path / "out.tsv"))
+
+
+# -- naming nodes after labelled genomes ----------------------------------------
+# Bsu is the root. Bsu.1 holds two clades; Bsu.1.1 holds a and b, Bsu.1.2 holds c.
+# Bsu.2 holds d. Labels are given for reference strains only; most genomes have none.
+
+NAMED_TREE = Hierarchy.from_child_parent([
+    ("Bsu", None), ("Bsu.1", "Bsu"), ("Bsu.2", "Bsu"),
+    ("Bsu.1.1", "Bsu.1"), ("Bsu.1.2", "Bsu.1"),
+    ("Bsu.1.1.1", "Bsu.1.1"), ("Bsu.1.1.2", "Bsu.1.1"),
+])
+NAMED_GENOMES = {"Bsu.1.1.1": ["a"], "Bsu.1.1.2": ["b"], "Bsu.1.2": ["c"], "Bsu.2": ["d"]}
+
+
+def test_a_label_names_the_shallowest_node_that_holds_only_it():
+    # a and b are both bv2; the clade holding both, Bsu.1.1, is named, not a's leaf.
+    named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv2", "b": "bv2", "c": "bv1"})
+    assert named.names["Bsu.1.1"] == "Bsu.bv2"
+    assert named.names["Bsu.1.2"] == "Bsu.bv1"
+    assert named.named_by["Bsu.1.1"] == "label"
+
+
+def test_the_nodes_below_a_named_node_extend_its_name():
+    named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv2", "b": "bv2", "c": "bv1"})
+    assert named.names["Bsu.1.1.1"] == "Bsu.bv2.1"
+    assert named.names["Bsu.1.1.2"] == "Bsu.bv2.2"
+    assert named.genomes["a"] == "Bsu.bv2.1", "the genome map follows the new names"
+
+
+def test_the_root_and_unlabelled_nodes_keep_their_names():
+    named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv2", "b": "bv2", "c": "bv1"})
+    assert named.names["Bsu"] == "Bsu"
+    assert named.names["Bsu.1"] == "Bsu.1", "it holds bv1 and bv2, so it takes neither"
+    assert named.names["Bsu.2"] == "Bsu.2"
+    assert named.named_by["Bsu"] == "root"
+    assert named.named_by["Bsu.2"] == "position"
+
+
+def test_two_labels_that_share_every_node_name_neither():
+    # a and b are told apart by no node of the scheme: the result, not an error.
+    tree = Hierarchy.from_child_parent([("R", None), ("R.1", "R"), ("R.2", "R")])
+    named = name_from_labels(tree, {"R.1": ["a", "b"], "R.2": ["c"]}, {"a": "bv1", "b": "bv2"})
+    assert named.names["R.1"] == "R.1"
+    assert set(named.unplaced) == {"bv1", "bv2"}
+
+
+def test_a_label_in_two_separate_clades_names_both_and_says_so():
+    # Two bv1 strains that do not form a clade: the label is split, and the second
+    # name is made distinct rather than overwriting the first.
+    named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv1", "c": "bv1", "b": "bv2"})
+    assert named.names["Bsu.1.1.1"] == "Bsu.bv1"
+    assert named.names["Bsu.1.2"] == "Bsu.bv1-2"
+    assert sorted(named.split["bv1"]) == ["Bsu.1.1.1", "Bsu.1.2"]
+
+
+def test_a_labelled_genome_the_genome_map_lacks_is_reported():
+    named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv2", "z": "bv9"})
+    assert named.missing == ["z"]
+
+
+@pytest.mark.parametrize("label", ["bv;2", "bv\t2", ""])
+def test_a_label_a_scheme_cannot_hold_is_refused(label):
+    with pytest.raises(ValueError, match="label"):
+        name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": label})
+
+
+def test_name_writes_files_that_extract_reads(tmp_path):
+    hierarchy = tmp_path / "h.tsv"
+    hierarchy.write_text("child\tparent\n" + "".join(
+        f"{child}\t{parent or ''}\n" for child, parent in NAMED_TREE.parents.items()))
+    genome_map = tmp_path / "g.tsv"
+    genome_map.write_text("".join(f"{g}\t{node}\n" for node, gs in NAMED_GENOMES.items() for g in gs))
+    labels = tmp_path / "labels.tsv"
+    labels.write_text("genome\tlabel\na\tbv2\nb\tbv2\nc\tbv1\n")
+    assert cli_run("name", "--hierarchy", str(hierarchy), "--genome-map", str(genome_map),
+                   "--labels", str(labels), "--outdir", str(tmp_path), "--prefix", "n") == 0
+    renamed = read_hierarchy(str(tmp_path / "n_hierarchy.tsv"))
+    assert "Bsu.bv2.1" in renamed and renamed.parents["Bsu.bv2.1"] == "Bsu.bv2"
+    assert read_genome_map(str(tmp_path / "n_genomes.tsv"))["Bsu.bv1"] == ["c"]
+    report = (tmp_path / "n_names.tsv").read_text().splitlines()
+    assert report[0] == "old_name\tnew_name\tnamed_by\tlabel\tgenomes\tlabelled"
+    assert "Bsu.1.1\tBsu.bv2\tlabel\tbv2\t2\t2" in report
+
+
+def test_a_name_that_does_not_extend_its_parents_is_kept():
+    # Hand-made names such as brucella_2017's are not paths: S.5 under B.2 is
+    # not B.2 plus a segment, so it keeps its name even below a renamed node.
+    tree = Hierarchy.from_child_parent([
+        ("B.1", None), ("B.2", "B.1"), ("S.5", "B.2"), ("S.5.1", "S.5"), ("A.6", "B.1")])
+    genomes = {"S.5.1": ["s"], "A.6": ["a"]}
+    named = name_from_labels(tree, genomes, {"s": "suis"})
+    assert named.names["B.2"] == "B.1.suis"
+    assert named.names["S.5"] == "S.5", "its own name, not B.1.suis.5"
+    assert named.names["S.5.1"] == "S.5.1"
+    assert named.names["A.6"] == "A.6"
+
+
+def test_the_report_counts_the_labelled_genomes_behind_a_name():
+    # A clade named from one labelled genome among many is thinly supported, and
+    # the reader should be able to see it.
+    named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv2"})
+    assert named.names["Bsu.1"] == "Bsu.bv2", "the only label below Bsu.1"
+    assert (named.below["Bsu.1"], named.labelled["Bsu.1"]) == (3, 1)
+
