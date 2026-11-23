@@ -293,7 +293,9 @@ def score_snp(
 
 
 def contexts_for(
-    snps: Sequence[tuple[Contig, int, str, Sequence[str]] | tuple[Contig, int, str, Sequence[str], int | None]],
+    snps: Sequence[
+        tuple[Contig, int, str, Sequence[str]] | tuple[Contig, int, str, Sequence[str], int | None]
+    ],
     genes: Mapping[str, Sequence[tuple[int, int]]],
     repeats: Mapping[str, Sequence[tuple[int, int]]],
     cds: Mapping[str, Sequence[tuple[int, int, str, int]]] | None = None,

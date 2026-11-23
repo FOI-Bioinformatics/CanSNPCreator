@@ -31,6 +31,7 @@ from collections.abc import Mapping, Sequence
 
 from cansnpscorer.findings import CHECK, EXTEND, MODIFY, Finding, problem, recommendation
 from cansnpscorer.helpers.data_utils import snp_extractor
+from cansnpscorer.helpers.file_utils import ColumnRow
 from cansnpscorer.helpers.names import resolve_clusters
 from cansnpscorer.model import AlignmentMap, Reference, ReferenceError
 from cansnpscorer.scheme import Scheme
@@ -127,7 +128,9 @@ class Placement:
         return True
 
 
-def _bases_at(alignment: Mapping[str, str], column: int, genomes: Sequence[str]) -> dict[str, list[str]]:
+def _bases_at(
+    alignment: Mapping[str, str | ColumnRow], column: int, genomes: Sequence[str]
+) -> dict[str, list[str]]:
     by_base: dict[str, list[str]] = {}
     for genome in genomes:
         base = alignment[genome][column].upper()
@@ -137,7 +140,7 @@ def _bases_at(alignment: Mapping[str, str], column: int, genomes: Sequence[str])
 
 def check_scheme_snps(
     scheme: Scheme,
-    alignment: Mapping[str, str],
+    alignment: Mapping[str, str | ColumnRow],
     mapping: AlignmentMap,
     placement: Placement,
     genome: str | None,
@@ -358,7 +361,7 @@ def _lineage(hierarchy, node: str) -> list[str]:
 
 def check_genome_paths(
     scheme: Scheme,
-    alignment: Mapping[str, str],
+    alignment: Mapping[str, str | ColumnRow],
     mapping: AlignmentMap,
     placement: Placement,
     genome: str | None,
@@ -480,7 +483,7 @@ def check_genome_paths(
 
 
 def scan_alignment(
-    alignment: Mapping[str, str], mapping: AlignmentMap, placement: Placement
+    alignment: Mapping[str, str | ColumnRow], mapping: AlignmentMap, placement: Placement
 ) -> tuple[
     dict[str, list[tuple[int, str, str]]],
     dict[tuple[str, frozenset[str]], list[tuple[int, str, str]]],
@@ -508,7 +511,12 @@ def scan_alignment(
     conflicts_by_genome: Counter = Counter()
     grouped = frozenset(placement.node_of)
 
-    ordered = {name: alignment[name] for name in placement.genomes}
+    ordered: dict[str, str] = {}
+    for name in placement.genomes:
+        row = alignment[name]
+        # Only a read of every column asks for new clades, so no row is a ColumnRow.
+        assert isinstance(row, str)
+        ordered[name] = row
     sites = snp_extractor(ordered)
 
     for site in sites:
@@ -719,7 +727,7 @@ def check_extension(
 
 def check_against_alignment(
     scheme: Scheme,
-    alignment: Mapping[str, str],
+    alignment: Mapping[str, str | ColumnRow],
     reference: Reference,
     clusters: Mapping[str, Sequence[str]],
     genome: str | None = None,
@@ -772,8 +780,11 @@ def check_against_alignment(
                 )
             ]
 
+    first_row = next(iter(alignment.values()))
+    # The first record is the reference, which is kept whole.
+    assert isinstance(first_row, str)
     try:
-        mapping = AlignmentMap(next(iter(alignment.values())), reference)
+        mapping = AlignmentMap(first_row, reference)
     except ReferenceError as error:
         return [
             problem(

@@ -48,6 +48,7 @@ from cansnpscorer.findings import (
 )
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
 from cansnpscorer.helpers.file_utils import (
+    ColumnRow,
     read_alignment,
     read_alignment_columns,
     read_contig_aliases,
@@ -725,7 +726,7 @@ def audit_scheme(
     genome: str | None = None,
     min_required_hits: int = MINIMUM_SNPS_PER_NODE,
     proximity: int = 50,
-    alignment: Mapping[str, str] | None = None,
+    alignment: Mapping[str, str | ColumnRow] | None = None,
     clusters: Mapping[str, Sequence[str]] | None = None,
     min_clade_size: int = 2,
     min_clade_snps: int = 1,
@@ -965,21 +966,29 @@ def main(
         sequence = reference_parser(reference) if reference else None
         scored = vcf.read_scores(scores, sequence) if scores else None
         aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
-        masked = read_masks(masks, sequence, masks_concatenated, aliases) if masks else None
+        masked = (
+            read_masks(masks, sequence, masks_concatenated, aliases)
+            if masks and sequence is not None
+            else None
+        )
         if sequence is not None:
             scheme = resolve_sequences(scheme, sequence, aliases)
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1
 
-    aligned = clusters = None
+    aligned: Mapping[str, str | ColumnRow] | None = None
+    whole: dict[str, str] | None = None
+    clusters: dict[str, list[str]] | None = None
     placement_findings: list[Finding] = []
     if alignment:
+        # --alignment needs --reference, which is checked above.
+        assert sequence is not None
         try:
             placed = bool(by_clade or genome_map or tree or scheme.genomes)
             if (placed and not no_new_clades) or (tree and not by_clade):
                 logging.info("Reading every column of the alignment")
-                aligned = read_alignment(alignment)
+                whole = aligned = read_alignment(alignment)
             else:
                 logging.info("Reading only the scheme's columns of the alignment")
                 aligned = read_alignment_columns(
@@ -1012,7 +1021,7 @@ def main(
                 # where it does not: they were never aligned.
                 from cansnpscorer.helpers.names import resolve_names
 
-                clusters = {} if scheme.genomes else None
+                grouped: dict[str, list[str]] = {}
                 listed = [entry for entry in scheme.genomes if entry[2] != "outgroup"]
                 matched, _unmatched, _ambiguous = resolve_names(
                     [accession for accession, _node, _role in listed], list(aligned)
@@ -1023,7 +1032,8 @@ def main(
                     if role == "member" and accession not in matched:
                         skipped += 1
                         continue
-                    clusters.setdefault(node, []).append(accession)
+                    grouped.setdefault(node, []).append(accession)
+                clusters = grouped if scheme.genomes else None
                 if clusters is not None:
                     logging.info(
                         f"Placed {sum(len(found) for found in clusters.values())} genomes as "
@@ -1033,7 +1043,9 @@ def main(
             else:
                 genome_tree = read_genome_tree(tree)
                 folded = read_members(members, genome_tree) if members else None
-                placement = place(scheme, genome_tree, aligned, sequence, genome, members=folded)
+                # A tree placement without the clade rule reads every column.
+                assert whole is not None
+                placement = place(scheme, genome_tree, whole, sequence, genome, members=folded)
                 clusters = placement.clusters
                 placement_findings = placement.findings
         except (OSError, ValueError, HierarchyError, ReferenceError, SchemeError) as error:
@@ -1109,6 +1121,9 @@ def main(
     typing = None
     if typing_report or (report and aligned is not None):
         try:
+            # --typing-report needs --alignment, and --alignment needs --reference; a
+            # report is typed only when an alignment was read.
+            assert aligned is not None and sequence is not None
             typing = type_alignment(
                 scheme,
                 aligned,

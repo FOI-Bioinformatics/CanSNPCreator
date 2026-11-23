@@ -60,6 +60,7 @@ from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field, replace
 
 from cansnpscorer.helpers.data_utils import MINIMUM_SNPS_PER_NODE
+from cansnpscorer.helpers.file_utils import ColumnRow
 from cansnpscorer.helpers.names import resolve_clusters, resolve_names
 from cansnpscorer.model import AlignmentMap, Reference
 from cansnpscorer.scheme import Scheme, SchemeSnp
@@ -454,7 +455,7 @@ def scheme_columns(
 
 def type_alignment(
     scheme: Scheme,
-    alignment: Mapping[str, str],
+    alignment: Mapping[str, str | ColumnRow],
     reference: Reference,
     genome: str | None = None,
     clusters: Mapping[str, Sequence[str]] | None = None,
@@ -496,7 +497,10 @@ def type_alignment(
             f"so --genome must say which one the alignment is against"
         )
 
-    mapping = AlignmentMap(next(iter(alignment.values())), reference)
+    first_row = next(iter(alignment.values()))
+    # The first record is the reference, which is kept whole.
+    assert isinstance(first_row, str)
+    mapping = AlignmentMap(first_row, reference)
     hierarchy = scheme.hierarchy
     lineage = _lineages(hierarchy)
     depth = {node: len(above) for node, above in lineage.items()}
@@ -1030,7 +1034,11 @@ def _summary(
                         ELSEWHERE: "call on another branch",
                         NO_CALL: "no call",
                     }[kind],
-                    sum(1 for r, expected in with_expected if outcome(r.single_call, expected, lineage) == kind),
+                    sum(
+                        1
+                        for r, expected in with_expected
+                        if outcome(r.single_call, expected, lineage) == kind
+                    ),
                     sum(1 for r, expected in with_expected if outcome(r.set_call, expected, lineage) == kind),
                     len(with_expected),
                 )

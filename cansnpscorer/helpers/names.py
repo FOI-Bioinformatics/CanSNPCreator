@@ -25,7 +25,9 @@ ACCESSION = re.compile(r"(GC[AF]_\d{9})(?:\.(\d+))?")
 HELD_ACCESSION = re.compile(r"(?<![A-Za-z0-9])(GC[AF]_\d{9})(?!\d)(?:\.(\d+))?")
 
 
-def resolve_names(names: Sequence[str], records: Sequence[str]) -> tuple[dict[str, str], list[str], list[str]]:
+def resolve_names(
+    names: Sequence[str], records: Sequence[str]
+) -> tuple[dict[str, str], list[str], list[str]]:
     """Match genome names from one file to the record names of another.
 
     In order: a name equal to a record matches it, then one equal to it once

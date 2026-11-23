@@ -3,7 +3,6 @@
 import logging
 from bisect import bisect_right
 from collections.abc import Mapping, Sequence
-from typing import TypeVar
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
@@ -114,10 +113,7 @@ def wrap_origin(intervals: Sequence, length: int, cds: bool = False) -> tuple[li
     return kept, split
 
 
-Annotation = TypeVar("Annotation")
-
-
-def annotations_by_contig(
+def annotations_by_contig[Annotation](
     annotations: Mapping[str, Sequence[Annotation]],
     reference: Reference,
     description: str,
