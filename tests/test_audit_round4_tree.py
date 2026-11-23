@@ -8,14 +8,10 @@ import pytest
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 from cansnpscorer.scheme import Scheme, SchemeSnp, hierarchy_from_paths
-from cansnpscorer.tree_tools import (
-    collapse,
-    place,
-    read_genome_tree,
-    read_members,
-    rename,
-    reroot,
-)
+from cansnpscorer.trees.collapsing import collapse, rename
+from cansnpscorer.trees.placing import place
+from cansnpscorer.trees.reading import read_genome_tree, read_members
+from cansnpscorer.trees.rooting import reroot
 
 
 def newick(text: str) -> Hierarchy:

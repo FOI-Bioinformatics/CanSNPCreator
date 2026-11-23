@@ -35,7 +35,7 @@ Issues = "https://github.com/FOI-Bioinformatics/CanSNPCreator/issues"
 CanSNPCreator = "cansnpscorer.cansnp_scorer:main"
 
 [tool.setuptools]
-packages = ["cansnpscorer", "cansnpscorer.helpers"]
+packages = ["cansnpscorer", "cansnpscorer.helpers", "cansnpscorer.trees"]
 
 [tool.setuptools.dynamic]
 version = { attr = "cansnpscorer.__version__" }
