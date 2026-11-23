@@ -19,7 +19,7 @@ def run(monkeypatch, *arguments):
     return main()
 
 
-def extract(monkeypatch, dataset, output, hierarchy=None, groups=None):
+def extract(monkeypatch, dataset, output, hierarchy=None, groups=None, *extra):
     return run(
         monkeypatch, "extract",
         "--genome-map", groups or dataset.genome_map,
@@ -27,7 +27,17 @@ def extract(monkeypatch, dataset, output, hierarchy=None, groups=None):
         "--alignment", dataset.alignment,
         "--reference", dataset.reference,
         "-o", output,
+        *extra,
     )
+
+
+def placed_everywhere(dataset, tmp_path):
+    """The planted genome map with the reference placed at A.1 too, so that no
+    genome of the alignment sits outside every node."""
+    path = tmp_path / "all_placed.tsv"
+    lines = Path(dataset.genome_map).read_text().splitlines()
+    path.write_text("\n".join([*lines, "ref\tA.1"]) + "\n")
+    return str(path)
 
 
 def evaluate(monkeypatch, dataset, snp_file, output, *extra):
@@ -257,3 +267,44 @@ def test_genomes_the_alignment_lacks_are_left_out_with_a_warning(monkeypatch, da
     snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file, groups=str(genome_map)) == 0
     assert "1 genomes that the alignment does not hold" in caplog.text
+
+
+# -- the outgroup of extract -----------------------------------------------------
+
+
+def test_a_declared_outgroup_is_recorded_in_the_vcf(monkeypatch, dataset, tmp_path):
+    output = str(tmp_path / "snps.vcf")
+    assert extract(monkeypatch, dataset, output, None, None, "--outgroup", "ref") == 0
+    header, _records = vcf_lines(output)
+    assert "##outgroup=ref" in header
+
+
+def test_the_inferred_outgroup_is_recorded_too(monkeypatch, dataset, tmp_path):
+    output = str(tmp_path / "snps.vcf")
+    assert extract(monkeypatch, dataset, output) == 0
+    assert "##outgroup=ref" in vcf_lines(output)[0]
+
+
+def test_no_outgroup_at_all_stops_extract(monkeypatch, dataset, tmp_path, caplog):
+    output = tmp_path / "snps.vcf"
+    status = extract(monkeypatch, dataset, str(output), None, placed_everywhere(dataset, tmp_path))
+    assert status == 2
+    assert not output.exists(), "nothing is written"
+    assert "--allow-no-outgroup" in caplog.text
+
+
+def test_allow_no_outgroup_takes_the_reference_base_and_says_so(monkeypatch, dataset, tmp_path):
+    output = str(tmp_path / "snps.vcf")
+    status = extract(monkeypatch, dataset, output, None, placed_everywhere(dataset, tmp_path),
+                     "--allow-no-outgroup")
+    assert status == 0
+    assert "##outgroup=none" in vcf_lines(output)[0]
+
+
+def test_an_outgroup_the_alignment_lacks_stops_extract(monkeypatch, dataset, tmp_path, caplog):
+    output = tmp_path / "snps.vcf"
+    status = extract(monkeypatch, dataset, str(output), None, None, "--outgroup", "GCF_000000001.1")
+    assert status == 2
+    assert not output.exists()
+    assert "GCF_000000001.1" in caplog.text
+
