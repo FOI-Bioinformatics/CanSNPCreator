@@ -38,8 +38,17 @@ COLUMNS = ("#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO")
 BASES = frozenset("ACGT")
 
 #: The characters VCF 4.3 asks to be percent-encoded in INFO values.
-RESERVED = {":": "%3A", ";": "%3B", "=": "%3D", "%": "%25", ",": "%2C",
-            "\r": "%0D", "\n": "%0A", "\t": "%09", " ": "%20"}
+RESERVED = {
+    ":": "%3A",
+    ";": "%3B",
+    "=": "%3D",
+    "%": "%25",
+    ",": "%2C",
+    "\r": "%0D",
+    "\n": "%0A",
+    "\t": "%09",
+    " ": "%20",
+}
 
 #: A contig ID as VCF 4.3 allows it (section 1.4.7).
 CONTIG_ID = re.compile(r"^[0-9A-Za-z!#$%&+./:;?@^_|~-][0-9A-Za-z!#$%&*+./:;=?@^_|~-]*$")
@@ -55,10 +64,9 @@ def decode(value: str) -> str:
     out = []
     index = 0
     while index < len(value):
-        digits = value[index + 1:index + 3]
-        if value[index] == "%" and len(digits) == 2 and \
-                all(c in "0123456789ABCDEFabcdef" for c in digits):
-            out.append(chr(int(value[index + 1:index + 3], 16)))
+        digits = value[index + 1 : index + 3]
+        if value[index] == "%" and len(digits) == 2 and all(c in "0123456789ABCDEFabcdef" for c in digits):
+            out.append(chr(int(value[index + 1 : index + 3], 16)))
             index += 3
         else:
             out.append(value[index])
@@ -81,8 +89,7 @@ class Info:
 
     def header(self) -> str:
         description = self.description.replace("\\", "\\\\").replace('"', '\\"')
-        return (f'##INFO=<ID={self.id},Number={self.number},Type={self.type},'
-                f'Description="{description}">')
+        return f'##INFO=<ID={self.id},Number={self.number},Type={self.type},Description="{description}">'
 
 
 @dataclass(frozen=True)
@@ -96,46 +103,75 @@ class Filter:
 
 
 ANCESTRAL = Info("AA", "1", "String", "Ancestral allele")
-NODE = Info("NODE", "1", "String",
-            "Node of the scheme whose genomes all carry the derived allele, the allele that is "
-            "not AA, and that no other genome carries")
+NODE = Info(
+    "NODE",
+    "1",
+    "String",
+    "Node of the scheme whose genomes all carry the derived allele, the allele that is "
+    "not AA, and that no other genome carries",
+)
 
 
 #: Distances are reported up to this many bases; what lies further is not known.
 NEAREST_CAP = 1000
-NEAREST = Info("NEAREST", "1", "Integer",
-               f"Distance in bases to the nearest other variation among the genomes placed in "
-               f"the scheme: a column where two of them carry different bases, a third allele "
-               f"or a partly missing column included, or either end of an insertion or deletion "
-               f"among them. A column where the reference has a gap counts at the reference "
-               f"bases on either side of it. Up to {NEAREST_CAP}, which means at least "
-               f"{NEAREST_CAP}")
+NEAREST = Info(
+    "NEAREST",
+    "1",
+    "Integer",
+    f"Distance in bases to the nearest other variation among the genomes placed in "
+    f"the scheme: a column where two of them carry different bases, a third allele "
+    f"or a partly missing column included, or either end of an insertion or deletion "
+    f"among them. A column where the reference has a gap counts at the reference "
+    f"bases on either side of it. Up to {NEAREST_CAP}, which means at least "
+    f"{NEAREST_CAP}",
+)
 
-MISSING = Info("MISSING", "1", "Integer",
-               "Number of genomes of the alignment without a base (gap or N) at the SNP; "
-               "0 unless extract was run with --min-called below 1")
+MISSING = Info(
+    "MISSING",
+    "1",
+    "Integer",
+    "Number of genomes of the alignment without a base (gap or N) at the SNP; "
+    "0 unless extract was run with --min-called below 1",
+)
 
-COPIES = Info("COPIES", "1", "Integer",
-              "Highest number of times a k-mer holding the SNP occurs in the reference, both "
-              "strands counted; above 1 the SNP lies in repeated sequence and is ranked after "
-              "those in unique sequence. 0 when no k-mer of A, C, G and T holds it")
+COPIES = Info(
+    "COPIES",
+    "1",
+    "Integer",
+    "Highest number of times a k-mer holding the SNP occurs in the reference, both "
+    "strands counted; above 1 the SNP lies in repeated sequence and is ranked after "
+    "those in unique sequence. 0 when no k-mer of A, C, G and T holds it",
+)
 
 
-LOCUS = Info("LOCUS", "1", "String",
-             "First and last base on the contig of the gene the SNP lies in; canSNPs of a "
-             "node are chosen from different genes where they can be")
+LOCUS = Info(
+    "LOCUS",
+    "1",
+    "String",
+    "First and last base on the contig of the gene the SNP lies in; canSNPs of a "
+    "node are chosen from different genes where they can be",
+)
 
-OBS_DISCORDANT = Info("OBS_DISCORDANT", "1", "Integer",
-                      "Number of genomes of a typing report in which the SNP disagreed with "
-                      "the other canSNPs of its node or with the genome's path. At a node "
-                      "whose canSNPs are derived in groups of genomes of different width, none "
-                      "of them holding more than half of the canSNPs: the number of genomes by "
-                      "which the SNP differs from the narrowest group")
-OBS_GENOMES = Info("OBS_GENOMES", "1", "Integer",
-                   "Number of genomes of the typing report the SNP was observed in; 0 when "
-                   "the scheme the report typed with did not hold it")
-OBS_MISSING = Info("OBS_MISSING", "1", "Integer",
-                   "Number of genomes of a typing report without a base at the SNP")
+OBS_DISCORDANT = Info(
+    "OBS_DISCORDANT",
+    "1",
+    "Integer",
+    "Number of genomes of a typing report in which the SNP disagreed with "
+    "the other canSNPs of its node or with the genome's path. At a node "
+    "whose canSNPs are derived in groups of genomes of different width, none "
+    "of them holding more than half of the canSNPs: the number of genomes by "
+    "which the SNP differs from the narrowest group",
+)
+OBS_GENOMES = Info(
+    "OBS_GENOMES",
+    "1",
+    "Integer",
+    "Number of genomes of the typing report the SNP was observed in; 0 when "
+    "the scheme the report typed with did not hold it",
+)
+OBS_MISSING = Info(
+    "OBS_MISSING", "1", "Integer", "Number of genomes of a typing report without a base at the SNP"
+)
 
 
 def count_of(record: "Record", key: str) -> int:
@@ -183,11 +219,18 @@ class Record:
         fields = []
         for key, value in self.info.items():
             fields.append(key if value is None else f"{key}={encode(str(value))}")
-        return "\t".join([
-            self.chrom, str(self.pos), ".", self.ref, self.alt, ".",
-            ";".join(self.filters) if self.filters else "PASS",
-            ";".join(fields) if fields else ".",
-        ])
+        return "\t".join(
+            [
+                self.chrom,
+                str(self.pos),
+                ".",
+                self.ref,
+                self.alt,
+                ".",
+                ";".join(self.filters) if self.filters else "PASS",
+                ";".join(fields) if fields else ".",
+            ]
+        )
 
 
 def check_contig_names(reference: Reference) -> None:
@@ -203,12 +246,18 @@ def check_contig_names(reference: Reference) -> None:
         raise VcfError(
             f"the reference names {len(illegal)} contigs VCF 4.3 does not allow as IDs: "
             f"{', '.join(repr(name) for name in illegal[:3])}. Rename them in the reference "
-            f"FASTA, which the alignment and annotations must then follow")
+            f"FASTA, which the alignment and annotations must then follow"
+        )
 
 
-def header_lines(reference: Reference, reference_path: str, command: str,
-                 infos: Sequence[Info], filters: Sequence[Filter] = (),
-                 extra: Sequence[str] = ()) -> list[str]:
+def header_lines(
+    reference: Reference,
+    reference_path: str,
+    command: str,
+    infos: Sequence[Info],
+    filters: Sequence[Filter] = (),
+    extra: Sequence[str] = (),
+) -> list[str]:
     lines = [
         f"##fileformat={VERSION}",
         f"##fileDate={date.today().strftime('%Y%m%d')}",
@@ -245,8 +294,9 @@ class Vcf:
     def check_against(self, reference: Reference, path: str) -> None:
         """The file's contigs must be the reference's, by ID and length."""
         if not self.contigs:
-            raise VcfError(f"{path}: declares no ##contig lines, so it cannot be checked "
-                           f"against the reference")
+            raise VcfError(
+                f"{path}: declares no ##contig lines, so it cannot be checked against the reference"
+            )
         expected = {contig.name: contig.length for contig in reference}
         if self.contigs != expected:
             differ = [
@@ -257,7 +307,8 @@ class Vcf:
             ]
             raise VcfError(
                 f"{path}: was written against another reference; contig lengths differ for "
-                + "; ".join(differ[:3]))
+                + "; ".join(differ[:3])
+            )
         wrong = []
         for record in self.records:
             if record.chrom not in expected:
@@ -267,12 +318,13 @@ class Vcf:
             else:
                 base = reference.contig(record.chrom).base(record.pos - 1).upper()
                 if base != record.ref:
-                    wrong.append(f"{record.chrom}:{record.pos} has REF {record.ref} where the "
-                                 f"reference has {base}")
+                    wrong.append(
+                        f"{record.chrom}:{record.pos} has REF {record.ref} where the reference has {base}"
+                    )
         if wrong:
             raise VcfError(
-                f"{path}: {len(wrong)} records do not match the reference: "
-                + "; ".join(wrong[:3]))
+                f"{path}: {len(wrong)} records do not match the reference: " + "; ".join(wrong[:3])
+            )
 
 
 def _attributes(text: str) -> dict[str, str]:
@@ -328,14 +380,17 @@ def read(path: str) -> Vcf:
                 meta.append(line)
                 try:
                     if line.startswith("##contig=<") and line.endswith(">"):
-                        attributes = _attributes(line[len("##contig=<"):-1])
+                        attributes = _attributes(line[len("##contig=<") : -1])
                         if "ID" in attributes and "length" in attributes:
                             contigs[attributes["ID"]] = int(attributes["length"])
                     elif line.startswith("##INFO=<") and line.endswith(">"):
-                        attributes = _attributes(line[len("##INFO=<"):-1])
+                        attributes = _attributes(line[len("##INFO=<") : -1])
                         infos[attributes["ID"]] = Info(
-                            attributes["ID"], attributes.get("Number", "."),
-                            attributes.get("Type", "String"), attributes.get("Description", ""))
+                            attributes["ID"],
+                            attributes.get("Number", "."),
+                            attributes.get("Type", "String"),
+                            attributes.get("Description", ""),
+                        )
                 except (KeyError, IndexError, ValueError):
                     raise VcfError(f"{path}: line {number} is a malformed header line") from None
                 continue
@@ -357,15 +412,16 @@ def read(path: str) -> Vcf:
             if ref not in BASES or alt not in BASES or ref == alt:
                 raise VcfError(
                     f"{path}: line {number} is not a biallelic SNP ({ref} to {alt}); "
-                    f"only SNPs as extract writes them are read")
+                    f"only SNPs as extract writes them are read"
+                )
             values: dict[str, str | None] = {}
             if info != ".":
                 for item in info.split(";"):
                     key, has_value, value = item.partition("=")
                     if key not in infos:
                         raise VcfError(
-                            f"{path}: line {number} uses INFO/{key}, which the header does not "
-                            f"declare")
+                            f"{path}: line {number} uses INFO/{key}, which the header does not declare"
+                        )
                     values[key] = decode(value) if has_value else None
             try:
                 position = int(pos)
@@ -380,8 +436,14 @@ def read(path: str) -> Vcf:
     return Vcf(meta, contigs, infos, records)
 
 
-def snp_record(reference: Reference, contig: str, position: int, alleles: tuple[str, str],
-               node: str | None = None, ancestral: str | None = None) -> Record:
+def snp_record(
+    reference: Reference,
+    contig: str,
+    position: int,
+    alleles: tuple[str, str],
+    node: str | None = None,
+    ancestral: str | None = None,
+) -> Record:
     """A record for a SNP at a 1-based position, REF taken from the reference.
 
     Raises:
@@ -391,7 +453,8 @@ def snp_record(reference: Reference, contig: str, position: int, alleles: tuple[
     if ref not in alleles:
         raise VcfError(
             f"{contig}:{position} is {ref} in the reference, which is neither allele "
-            f"{alleles[0]} nor {alleles[1]}")
+            f"{alleles[0]} nor {alleles[1]}"
+        )
     alt = alleles[1] if alleles[0] == ref else alleles[0]
     info: dict[str, str | None] = {}
     if node is not None:
@@ -402,9 +465,13 @@ def snp_record(reference: Reference, contig: str, position: int, alleles: tuple[
 
 # -- the files of extract and evaluate ---------------------------------------
 
-SCORE = Info("SCORE", "1", "Integer",
-             "Weighted sum of the five score terms, weighted as ##CanSNPCreatorWeights gives; "
-             "higher is a better context for calling the SNP")
+SCORE = Info(
+    "SCORE",
+    "1",
+    "Integer",
+    "Weighted sum of the five score terms, weighted as ##CanSNPCreatorWeights gives; "
+    "higher is a better context for calling the SNP",
+)
 
 
 def term_infos() -> list[Info]:
@@ -416,27 +483,36 @@ def term_infos() -> list[Info]:
         "tandem_score": "distance to the closest tandem repeat",
         "gene_score": "whether the SNP lies in a gene or CDS",
         "mutation_score": "100 if synonymous in its CDS, 50 if it changes the amino acid, 0 if "
-                          "it gains or loses a stop codon or lies outside every CDS",
+        "it gains or loses a stop codon or lies outside every CDS",
     }
-    return [Info(key, "1", "Integer", f"Score term, 0 to 100 times its weight: "
-                                      f"{descriptions[term]}")
-            for term, key in INFO_KEYS.items()]
+    return [
+        Info(key, "1", "Integer", f"Score term, 0 to 100 times its weight: {descriptions[term]}")
+        for term, key in INFO_KEYS.items()
+    ]
 
 
 def score_filters(cutoff: int | None, top: int | None, spacing: int = 0) -> list[Filter]:
-    filters = [Filter("LowScore", f"SCORE is not above the cutoff of {cutoff}"
-                                  if cutoff is not None else "Not applied: no cutoff was set")]
+    filters = [
+        Filter(
+            "LowScore",
+            f"SCORE is not above the cutoff of {cutoff}"
+            if cutoff is not None
+            else "Not applied: no cutoff was set",
+        )
+    ]
     if top is not None:
-        apart = (f", and none within {spacing} bases of one already chosen"
-                 if spacing > 0 else "")
-        filters.append(Filter(
-            "NotTop", f"Neither LowScore nor Masked, but not among the {top} canSNPs chosen for "
-                      f"its node. These are taken by reliability first (copy number in the "
-                      f"reference, disagreement in a typing report, whether a typing report "
-                      f"observed it, missing bases), then by SCORE, from different genes where "
-                      f"they can be{apart}"))
-    filters.append(Filter("Masked", "Lies in a region given as masked, such as a recombinant "
-                                    "region"))
+        apart = f", and none within {spacing} bases of one already chosen" if spacing > 0 else ""
+        filters.append(
+            Filter(
+                "NotTop",
+                f"Neither LowScore nor Masked, but not among the {top} canSNPs chosen for "
+                f"its node. These are taken by reliability first (copy number in the "
+                f"reference, disagreement in a typing report, whether a typing report "
+                f"observed it, missing bases), then by SCORE, from different genes where "
+                f"they can be{apart}",
+            )
+        )
+    filters.append(Filter("Masked", "Lies in a region given as masked, such as a recombinant region"))
     return filters
 
 
@@ -479,20 +555,48 @@ def read_snps(path: str, reference: Reference) -> list[Snp]:
             if record.ancestral not in (record.ref, record.alt):
                 raise VcfError(
                     f"{path}: {record.chrom}:{record.pos} gives the ancestral allele "
-                    f"{record.ancestral}, which is neither REF nor ALT")
-            snps.append(Snp(record.chrom, record.pos, record.node, record.derived,
-                            record.ancestral, nearest_of(record), missing_of(record)))
+                    f"{record.ancestral}, which is neither REF nor ALT"
+                )
+            snps.append(
+                Snp(
+                    record.chrom,
+                    record.pos,
+                    record.node,
+                    record.derived,
+                    record.ancestral,
+                    nearest_of(record),
+                    missing_of(record),
+                )
+            )
         else:
-            snps.append(Snp(record.chrom, record.pos, None, record.alt, record.ref,
-                            nearest_of(record), missing_of(record)))
+            snps.append(
+                Snp(
+                    record.chrom,
+                    record.pos,
+                    None,
+                    record.alt,
+                    record.ref,
+                    nearest_of(record),
+                    missing_of(record),
+                )
+            )
     if not snps:
         raise VcfError(f"{path}: holds no SNPs")
     return snps
 
 
-def write_scores(path: str, scores, reference: Reference, reference_path: str,
-                 cutoff: int | None, top: int | None, weights: dict[str, float],
-                 copies: bool = False, observed: bool = False, spacing: int = 0) -> int:
+def write_scores(
+    path: str,
+    scores,
+    reference: Reference,
+    reference_path: str,
+    cutoff: int | None,
+    top: int | None,
+    weights: dict[str, float],
+    copies: bool = False,
+    observed: bool = False,
+    spacing: int = 0,
+) -> int:
     """Write scored canSNPs, each with its terms and the filters it failed;
     with ``copies``, with the copy number of their context as well, and with
     ``observed``, with how they behaved in a typing report. ``spacing`` is
@@ -502,8 +606,14 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str,
 
     records = []
     for score in sorted(scores, key=lambda s: (reference.contig(s.contig).start, s.position)):
-        record = snp_record(reference, score.contig, score.position,
-                            (score.derived, score.ancestral), score.node, score.ancestral)
+        record = snp_record(
+            reference,
+            score.contig,
+            score.position,
+            (score.derived, score.ancestral),
+            score.node,
+            score.ancestral,
+        )
         record.info["SCORE"] = str(score.total)
         for term in TERMS:
             record.info[INFO_KEYS[term]] = str(score.terms[term])
@@ -520,12 +630,23 @@ def write_scores(path: str, scores, reference: Reference, reference_path: str,
         records.append(record)
 
     weighting = ",".join(f"{term}={weights.get(term, 1.0):g}" for term in TERMS)
-    header = header_lines(reference, reference_path, "evaluate",
-                          [NODE, ANCESTRAL, SCORE, *term_infos(), MISSING,
-                           *([COPIES] if copies else []), LOCUS,
-                           *([OBS_GENOMES, OBS_DISCORDANT, OBS_MISSING] if observed else [])],
-                          score_filters(cutoff, top, spacing),
-                          [f"##CanSNPCreatorWeights={weighting}"])
+    header = header_lines(
+        reference,
+        reference_path,
+        "evaluate",
+        [
+            NODE,
+            ANCESTRAL,
+            SCORE,
+            *term_infos(),
+            MISSING,
+            *([COPIES] if copies else []),
+            LOCUS,
+            *([OBS_GENOMES, OBS_DISCORDANT, OBS_MISSING] if observed else []),
+        ],
+        score_filters(cutoff, top, spacing),
+        [f"##CanSNPCreatorWeights={weighting}"],
+    )
     return write(path, header, records)
 
 
@@ -536,12 +657,12 @@ def read_scores(path: str, reference: Reference | None = None):
     parsed = read(path)
     if reference is not None:
         parsed.check_against(reference, path)
-    missing = [key for key in ("NODE", "AA", "SCORE", *INFO_KEYS.values())
-               if key not in parsed.infos]
+    missing = [key for key in ("NODE", "AA", "SCORE", *INFO_KEYS.values()) if key not in parsed.infos]
     if missing:
         raise VcfError(
             f"{path}: declares no INFO/{', INFO/'.join(missing)}; it should be the output of "
-            f"the evaluate subcommand")
+            f"the evaluate subcommand"
+        )
     scores = []
     for record in parsed.records:
         if record.node is None:
@@ -549,23 +670,30 @@ def read_scores(path: str, reference: Reference | None = None):
         if record.ancestral not in (record.ref, record.alt):
             raise VcfError(
                 f"{path}: {record.chrom}:{record.pos} gives the ancestral allele "
-                f"{record.ancestral}, which is neither REF nor ALT")
+                f"{record.ancestral}, which is neither REF nor ALT"
+            )
         try:
-            scores.append(ScoredSnp(
-                contig=record.chrom, position=record.pos, node=record.node,
-                total=int(record.info["SCORE"]),
-                terms={term: int(record.info[key]) for term, key in INFO_KEYS.items()},
-                derived=record.derived, ancestral=record.ancestral,
-                filters=list(record.filters), missing=missing_of(record),
-                copies=copies_of(record), locus=record.info.get("LOCUS") or "",
-                discordant=count_of(record, "OBS_DISCORDANT"),
-                observed_genomes=count_of(record, "OBS_GENOMES"),
-                observed_missing=count_of(record, "OBS_MISSING")))
+            scores.append(
+                ScoredSnp(
+                    contig=record.chrom,
+                    position=record.pos,
+                    node=record.node,
+                    total=int(record.info["SCORE"]),
+                    terms={term: int(record.info[key]) for term, key in INFO_KEYS.items()},
+                    derived=record.derived,
+                    ancestral=record.ancestral,
+                    filters=list(record.filters),
+                    missing=missing_of(record),
+                    copies=copies_of(record),
+                    locus=record.info.get("LOCUS") or "",
+                    discordant=count_of(record, "OBS_DISCORDANT"),
+                    observed_genomes=count_of(record, "OBS_GENOMES"),
+                    observed_missing=count_of(record, "OBS_MISSING"),
+                )
+            )
         except (KeyError, TypeError, ValueError):
-            raise VcfError(
-                f"{path}: {record.chrom}:{record.pos} lacks a whole number score") from None
+            raise VcfError(f"{path}: {record.chrom}:{record.pos} lacks a whole number score") from None
     if not scores:
         raise VcfError(f"{path}: holds no scored canSNPs")
-    logging.info(f"Read {len(scores)} scored canSNPs, {sum(s.passed for s in scores)} passing, "
-                 f"from {path}")
+    logging.info(f"Read {len(scores)} scored canSNPs, {sum(s.passed for s in scores)} passing, from {path}")
     return scores

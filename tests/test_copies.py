@@ -76,8 +76,9 @@ def test_size_and_step_must_be_positive():
 
 
 def scored(node, total, copies=1, position=100, missing=0):
-    return ScoredSnp(contig="c1", position=position, node=node, total=total, terms={},
-                     copies=copies, missing=missing)
+    return ScoredSnp(
+        contig="c1", position=position, node=node, total=total, terms={}, copies=copies, missing=missing
+    )
 
 
 def test_a_snp_in_repeated_sequence_is_ranked_after_one_in_unique_sequence():

@@ -35,8 +35,10 @@ def cell(text: object) -> str:
 
 
 def table(header: Sequence[str], rows: Sequence[Sequence[object]]) -> list[str]:
-    lines = ["| " + " | ".join(cell(name) for name in header) + " |",
-             "|" + "|".join(" --- " for _name in header) + "|"]
+    lines = [
+        "| " + " | ".join(cell(name) for name in header) + " |",
+        "|" + "|".join(" --- " for _name in header) + "|",
+    ]
     lines += ["| " + " | ".join(cell(value) for value in row) + " |" for row in rows]
     return [*lines, ""]
 
@@ -68,8 +70,7 @@ def _finding_lines(findings: Sequence[Finding]) -> list[str]:
         counts[key] = counts.get(key, 0) + 1
     order = {PROBLEM: 0, RECOMMENDATION: 1}
     ranked = sorted(counts.items(), key=lambda item: (order[item[0][0]], -item[1], item[0][1]))
-    lines += table(("severity", "category", "action", "findings"),
-                   [(*key, found) for key, found in ranked])
+    lines += table(("severity", "category", "action", "findings"), [(*key, found) for key, found in ranked])
     for severity, title in ((PROBLEM, "Problems"), (RECOMMENDATION, "Recommendations")):
         chosen = [finding for finding in findings if finding.severity == severity]
         if not chosen:
@@ -90,87 +91,141 @@ def _finding_lines(findings: Sequence[Finding]) -> list[str]:
 
 def _typing_lines(typing: TypingReport) -> list[str]:
     lines = [
-        "## Typing of the genomes", "",
+        "## Typing of the genomes",
+        "",
         "Every genome of the alignment was typed with the scheme under two rules. The "
         "`single` rule is that of CanSNPer2 2.3.0: one canSNP per node, and the deepest "
         "derived node whose chain from the root holds no ancestral node or third base, "
         "enough derived nodes, and a derived parent. The `set` rule takes the majority of "
         "each node's canSNPs and may pass a node without a decision. The reference genome "
-        "and the outgroups are not counted. Percentages are of the genomes counted.", "",
+        "and the outgroups are not counted. Percentages are of the genomes counted.",
+        "",
         *table(SUMMARY_COLUMNS, typing.summary),
     ]
 
     if typing.stops:
-        lines += ["### Where the single rule stopped", "",
-                  "The node at which the chain of the single rule broke, or whose missing "
-                  "base kept the node below it from being called, for genomes the set rule "
-                  "placed deeper.", "",
-                  *table(("node", "reason", "genomes"), typing.stops[:WORST])]
+        lines += [
+            "### Where the single rule stopped",
+            "",
+            "The node at which the chain of the single rule broke, or whose missing "
+            "base kept the node below it from being called, for genomes the set rule "
+            "placed deeper.",
+            "",
+            *table(("node", "reason", "genomes"), typing.stops[:WORST]),
+        ]
         if len(typing.stops) > WORST:
             lines += [f"{len(typing.stops) - WORST} further rows are in the genome table.", ""]
 
     if len(typing.rank_rows) > 1:
-        lines += ["### The canSNPs by rank", "",
-                  "Counts summed over the canSNPs of each rank and over all genomes; "
-                  "`snps_disagreeing` are canSNPs that disagreed with their set or with the "
-                  "path of a genome at least once.", "",
-                  *table(RANK_COLUMNS, typing.rank_rows)]
+        lines += [
+            "### The canSNPs by rank",
+            "",
+            "Counts summed over the canSNPs of each rank and over all genomes; "
+            "`snps_disagreeing` are canSNPs that disagreed with their set or with the "
+            "path of a genome at least once.",
+            "",
+            *table(RANK_COLUMNS, typing.rank_rows),
+        ]
 
     at = {column: SNP_COLUMNS.index(column) for column in SNP_COLUMNS}
 
     def disagreement(row: Sequence[str]) -> int:
-        return max(int(row[at["discordant_in_set"]]),
-                   int(row[at["ancestral_on_path"]]) + int(row[at["derived_off_path"]]))
+        return max(
+            int(row[at["discordant_in_set"]]),
+            int(row[at["ancestral_on_path"]]) + int(row[at["derived_off_path"]]),
+        )
 
-    shown = ("node", "rank", "sequence", "position", "genomes", "missing",
-             "discordant_in_set", "ancestral_on_path", "derived_off_path")
-    disagreeing = sorted((row for row in typing.snp_rows if disagreement(row)),
-                         key=lambda row: (-disagreement(row), row[at["node"]],
-                                          int(row[at["rank"]])))
+    shown = (
+        "node",
+        "rank",
+        "sequence",
+        "position",
+        "genomes",
+        "missing",
+        "discordant_in_set",
+        "ancestral_on_path",
+        "derived_off_path",
+    )
+    disagreeing = sorted(
+        (row for row in typing.snp_rows if disagreement(row)),
+        key=lambda row: (-disagreement(row), row[at["node"]], int(row[at["rank"]])),
+    )
     if disagreeing:
-        lines += ["### canSNPs that disagreed most", "",
-                  f"{len(disagreeing)} of {len(typing.snp_rows)} canSNPs disagreed with the "
-                  f"other canSNPs of their node or with the path of a genome at least once.", "",
-                  *table(shown, [[row[at[column]] for column in shown]
-                                 for row in disagreeing[:WORST]])]
-    lacking = sorted((row for row in typing.snp_rows if int(row[at["missing"]])),
-                     key=lambda row: (-int(row[at["missing"]]), row[at["node"]],
-                                      int(row[at["rank"]])))
+        lines += [
+            "### canSNPs that disagreed most",
+            "",
+            f"{len(disagreeing)} of {len(typing.snp_rows)} canSNPs disagreed with the "
+            f"other canSNPs of their node or with the path of a genome at least once.",
+            "",
+            *table(shown, [[row[at[column]] for column in shown] for row in disagreeing[:WORST]]),
+        ]
+    lacking = sorted(
+        (row for row in typing.snp_rows if int(row[at["missing"]])),
+        key=lambda row: (-int(row[at["missing"]]), row[at["node"]], int(row[at["rank"]])),
+    )
     if lacking:
-        lines += ["### canSNPs most often without a base", "",
-                  f"{len(lacking)} of {len(typing.snp_rows)} canSNPs had no base in at least "
-                  f"one genome.", "",
-                  *table(shown[:6], [[row[at[column]] for column in shown[:6]]
-                                     for row in lacking[:WORST]])]
+        lines += [
+            "### canSNPs most often without a base",
+            "",
+            f"{len(lacking)} of {len(typing.snp_rows)} canSNPs had no base in at least one genome.",
+            "",
+            *table(shown[:6], [[row[at[column]] for column in shown[:6]] for row in lacking[:WORST]]),
+        ]
 
     if typing.unreached:
-        lines += ["### Nodes these genomes do not test", "",
-                  f"{len(typing.unreached)} nodes with canSNPs lie on the path of no genome: "
-                  + ", ".join(f"`{node}`" for node in typing.unreached[:WORST * 2])
-                  + (" and others" if len(typing.unreached) > WORST * 2 else "") + ".", ""]
+        lines += [
+            "### Nodes these genomes do not test",
+            "",
+            f"{len(typing.unreached)} nodes with canSNPs lie on the path of no genome: "
+            + ", ".join(f"`{node}`" for node in typing.unreached[: WORST * 2])
+            + (" and others" if len(typing.unreached) > WORST * 2 else "")
+            + ".",
+            "",
+        ]
 
     column = {name: GENOME_COLUMNS.index(name) for name in GENOME_COLUMNS}
-    kept = ("genome", "single_call", "single_stop_node", "single_stop_reason", "set_call",
-            "derived_off_path", "discordant")
-    notable = [row for row, typed in zip(typing.genome_rows(), typing.genomes, strict=True)
-               if typed.role == ISOLATE and (typed.set_call is None or typed.discordant
-                                             or typed.single_call != typed.set_call)]
+    kept = (
+        "genome",
+        "single_call",
+        "single_stop_node",
+        "single_stop_reason",
+        "set_call",
+        "derived_off_path",
+        "discordant",
+    )
+    notable = [
+        row
+        for row, typed in zip(typing.genome_rows(), typing.genomes, strict=True)
+        if typed.role == ISOLATE
+        and (typed.set_call is None or typed.discordant or typed.single_call != typed.set_call)
+    ]
     if notable:
-        notable.sort(key=lambda row: (row[column["set_call"]] != NA,
-                                      row[column["discordant"]] != "yes",
-                                      row[column["genome"]]))
-        lines += ["### Genomes the two rules type differently, or not at all", "",
-                  f"{len(notable)} genomes have no set call, are discordant, or get another "
-                  f"call under the single rule than under the set rule.", "",
-                  *table(kept, [[row[column[name]] for name in kept]
-                                for row in notable[:WORST]])]
+        notable.sort(
+            key=lambda row: (
+                row[column["set_call"]] != NA,
+                row[column["discordant"]] != "yes",
+                row[column["genome"]],
+            )
+        )
+        lines += [
+            "### Genomes the two rules type differently, or not at all",
+            "",
+            f"{len(notable)} genomes have no set call, are discordant, or get another "
+            f"call under the single rule than under the set rule.",
+            "",
+            *table(kept, [[row[column[name]] for name in kept] for row in notable[:WORST]]),
+        ]
         if len(notable) > WORST:
             lines += [f"{len(notable) - WORST} further genomes are in the genome table.", ""]
     return lines
 
 
-def markdown(scheme: Scheme, findings: Sequence[Finding], typing: TypingReport | None = None,
-             run: Sequence[tuple[str, str]] = ()) -> str:
+def markdown(
+    scheme: Scheme,
+    findings: Sequence[Finding],
+    typing: TypingReport | None = None,
+    run: Sequence[tuple[str, str]] = (),
+) -> str:
     """The report as Markdown text.
 
     Args:
@@ -189,8 +244,12 @@ def markdown(scheme: Scheme, findings: Sequence[Finding], typing: TypingReport |
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def write_markdown(path: str, scheme: Scheme, findings: Sequence[Finding],
-                   typing: TypingReport | None = None,
-                   run: Sequence[tuple[str, str]] = ()) -> None:
+def write_markdown(
+    path: str,
+    scheme: Scheme,
+    findings: Sequence[Finding],
+    typing: TypingReport | None = None,
+    run: Sequence[tuple[str, str]] = (),
+) -> None:
     with open(path, "w", newline="\n") as handle:
         handle.write(markdown(scheme, findings, typing, run))

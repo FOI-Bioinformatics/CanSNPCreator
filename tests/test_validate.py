@@ -46,8 +46,7 @@ def test_a_reference_of_another_length_is_a_problem(pieces, tmp_path):
     alignment, reference, _hierarchy, _clusters = pieces
     shortened = tmp_path / "short.fasta"
     shortened.write_text(">c1\n" + reference.contigs[0].sequence[:100] + "\n")
-    problems, _warnings = check_alignment_against_reference(
-        alignment, reference_parser(str(shortened)))
+    problems, _warnings = check_alignment_against_reference(alignment, reference_parser(str(shortened)))
     assert any("must be the reference genome" in problem for problem in problems)
 
 
@@ -55,8 +54,7 @@ def test_a_reference_of_the_same_length_but_other_sequence_is_a_problem(pieces, 
     alignment, reference, _hierarchy, _clusters = pieces
     other = tmp_path / "other.fasta"
     other.write_text(">c1\n" + "A" * reference.length + "\n")
-    problems, _warnings = check_alignment_against_reference(
-        alignment, reference_parser(str(other)))
+    problems, _warnings = check_alignment_against_reference(alignment, reference_parser(str(other)))
     assert any("differs from the reference genome" in problem for problem in problems)
 
 
@@ -155,10 +153,13 @@ def test_undeclared_genomes_at_no_node_are_named_when_an_outgroup_is_declared(pi
     assert len(undeclared) == 1 and "s4" in undeclared[0] and "ref" not in undeclared[0].split(":")[-1]
 
 
-@pytest.mark.parametrize("name, expected", [
-    ("ref", ["ref"]),
-    ("ref.fasta", ["ref"]),
-])
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("ref", ["ref"]),
+        ("ref.fasta", ["ref"]),
+    ],
+)
 def test_outgroups_resolve_to_alignment_records(pieces, name, expected):
     alignment = pieces[0]
     resolved, problems = resolve_outgroups([name], list(alignment))
@@ -223,10 +224,12 @@ def fake_trf(monkeypatch, tmp_path, output=NGS, status=0):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     script = bin_dir / "trf"
-    script.write_text(f"#!{sys.executable}\nimport sys\n"
-                      f"sys.stdout.write({output!r})\n"
-                      f"sys.stderr.write('trf: cannot read the input' if {status} else '')\n"
-                      f"sys.exit({status})\n")
+    script.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        f"sys.stdout.write({output!r})\n"
+        f"sys.stderr.write('trf: cannot read the input' if {status} else '')\n"
+        f"sys.exit({status})\n"
+    )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bin_dir}:" + __import__("os").environ["PATH"])
 
@@ -273,8 +276,10 @@ def test_bed_and_gff3_regions_are_read_alike(tmp_path):
     bed = tmp_path / "r.bed"
     bed.write_text("track name=repeats\n# comment\nc1\t9\t20\tx\nc1\t15\t30\ty\nc2\t0\t5\n")
     gff = tmp_path / "r.gff"
-    gff.write_text("##gff-version 3\nc1\tGubbins\tCDS\t10\t20\t.\t+\t0\tID=a\n"
-                   "c1\tGubbins\tCDS\t16\t30\t.\t+\t0\tID=b\nc2\tGubbins\tx\t1\t5\t.\t.\t.\t.\n")
+    gff.write_text(
+        "##gff-version 3\nc1\tGubbins\tCDS\t10\t20\t.\t+\t0\tID=a\n"
+        "c1\tGubbins\tCDS\t16\t30\t.\t+\t0\tID=b\nc2\tGubbins\tx\t1\t5\t.\t.\t.\t.\n"
+    )
     # Overlapping regions are joined, so a position is in a region or not.
     expected = {"c1": [(9, 29)], "c2": [(0, 4)]}
     assert read_intervals(str(bed)) == expected

@@ -21,8 +21,9 @@ def test_snps_are_read_by_sequence_and_position(written, dataset):
     scheme = read_scheme(outdir)
     assert not scheme.problems
     found = {snp.node: (snp.sequence, snp.position) for snp in scheme.snps}
-    assert found == {node: dataset.contig_of(column)
-                     for node, (column, _ancestral, _derived) in PLANTED.items()}
+    assert found == {
+        node: dataset.contig_of(column) for node, (column, _ancestral, _derived) in PLANTED.items()
+    }
     assert found["B.2"] == ("c2", 1), "the first base of the second sequence"
 
 
@@ -37,8 +38,11 @@ def test_columns_are_read_by_name(written):
         handle.writelines("\t".join(row[index] for index in order) + "\n" for row in rows)
     scheme = read_scheme(outdir)
     assert not scheme.problems
-    assert {snp.node: (snp.sequence, snp.position, snp.derived) for snp in scheme.snps}["A"] \
-        == ("c1", 201, "C")
+    assert {snp.node: (snp.sequence, snp.position, snp.derived) for snp in scheme.snps}["A"] == (
+        "c1",
+        201,
+        "C",
+    )
 
 
 def old_snp_file(outdir, header):
@@ -52,8 +56,7 @@ def old_snp_file(outdir, header):
 
 def test_old_header_names_the_conversion_command(written):
     outdir, _scores = written
-    path = old_snp_file(
-        outdir, "snp_id\tstrain\treference\tgenome\tposition\tderived_base\tancestral_base")
+    path = old_snp_file(outdir, "snp_id\tstrain\treference\tgenome\tposition\tderived_base\tancestral_base")
     with open(path, "a") as handle:
         handle.write("A\ttestus\tx\tTEST1\t201\tC\tG\n")
     with pytest.raises(SchemeError, match=r"CanSNPer2-database --convert") as raised:
@@ -65,8 +68,9 @@ def test_old_header_names_the_conversion_command(written):
 def test_old_snp_set_header_names_the_conversion_command(written):
     outdir, _scores = written
     with open(os.path.join(outdir, SNPS), "w") as handle:
-        handle.write("node\trank\tgenome\tposition\tderived_base\tancestral_base\tscore\n"
-                     "A\t1\tTEST1\t201\tC\tG\t500\n")
+        handle.write(
+            "node\trank\tgenome\tposition\tderived_base\tancestral_base\tscore\nA\t1\tTEST1\t201\tC\tG\t500\n"
+        )
     with pytest.raises(SchemeError, match=r"CanSNPer2-database --convert") as raised:
         read_scheme(outdir)
     assert SNPS in str(raised.value)
@@ -75,8 +79,8 @@ def test_old_snp_set_header_names_the_conversion_command(written):
 def test_a_snp_file_of_an_earlier_export_is_read_as_rank_one_and_typed(written):
     outdir, _scores = written
     path = old_snp_file(
-        outdir, "snp_id\tstrain\treference\tgenome\tsequence\tsequence_position\t"
-                "derived_base\tancestral_base")
+        outdir, "snp_id\tstrain\treference\tgenome\tsequence\tsequence_position\tderived_base\tancestral_base"
+    )
     with open(path, "a") as handle:
         handle.write("A\ttestus\tSjodin2026\tTEST1\tc1\t201\tC\tG\n")
     scheme = read_scheme(outdir)
@@ -129,19 +133,27 @@ def test_a_node_with_two_typed_cansnps_is_a_problem(written):
 @pytest.mark.parametrize("value", ["maybe", "1", ""])
 def test_a_typed_value_that_is_not_yes_or_no_is_a_problem(written, value):
     outdir, _scores = written
-    edit(outdir, SNPS, "A.1\t1\tSjodin2026\tTEST1\tc1\t401\tG\tC\t350\tyes",
-         f"A.1\t1\tSjodin2026\tTEST1\tc1\t401\tG\tC\t350\t{value}")
+    edit(
+        outdir,
+        SNPS,
+        "A.1\t1\tSjodin2026\tTEST1\tc1\t401\tG\tC\t350\tyes",
+        f"A.1\t1\tSjodin2026\tTEST1\tc1\t401\tG\tC\t350\t{value}",
+    )
     scheme = read_scheme(outdir)
-    assert any("line 4" in problem and "where yes or no is expected" in problem
-               for problem in scheme.problems)
+    assert any(
+        "line 4" in problem and "where yes or no is expected" in problem for problem in scheme.problems
+    )
     assert "A.1" not in {snp.node for snp in scheme.snp_set}
 
 
 def test_the_typed_cansnp_need_not_be_rank_one(written):
     outdir, _scores = written
-    edit(outdir, SNPS, "A\t1\tSjodin2026\tTEST1\tc1\t201\tC\tG\t350\tyes",
-         "A\t1\tSjodin2026\tTEST1\tc1\t201\tC\tG\t350\tno\n"
-         "A\t2\tSjodin2026\tTEST1\tc1\t211\tC\tG\t100\tyes")
+    edit(
+        outdir,
+        SNPS,
+        "A\t1\tSjodin2026\tTEST1\tc1\t201\tC\tG\t350\tyes",
+        "A\t1\tSjodin2026\tTEST1\tc1\t201\tC\tG\t350\tno\nA\t2\tSjodin2026\tTEST1\tc1\t211\tC\tG\t100\tyes",
+    )
     scheme = read_scheme(outdir)
     assert not scheme.problems
     assert [(snp.rank, snp.position) for snp in scheme.snps if snp.node == "A"] == [(2, 211)]

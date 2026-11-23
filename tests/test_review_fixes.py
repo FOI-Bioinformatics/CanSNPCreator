@@ -23,9 +23,19 @@ from cansnpscorer.scheme import Scheme, SchemeSnp, hierarchy_from_paths, schemes
 
 def scheme_of(paths, snps):
     hierarchy, _conflicts, _problems = hierarchy_from_paths(paths)
-    rows = [SchemeSnp(node=node, strain="s", reference="r", genome=genome, sequence="c1", position=position,
-                      derived=derived, ancestral=ancestral)
-            for node, genome, position, derived, ancestral in snps]
+    rows = [
+        SchemeSnp(
+            node=node,
+            strain="s",
+            reference="r",
+            genome=genome,
+            sequence="c1",
+            position=position,
+            derived=derived,
+            ancestral=ancestral,
+        )
+        for node, genome, position, derived, ancestral in snps
+    ]
     return Scheme(organism="t", paths=paths, snps=rows, hierarchy=hierarchy)
 
 
@@ -50,12 +60,10 @@ def test_a_parent_holding_its_childs_genomes_is_offered_the_childs_site():
     # well as C, so P is offered a replacement, not called "not a clade".
     from cansnpscorer.alignment_audit import check_against_alignment
 
-    scheme = scheme_of([["R"], ["R", "P"], ["R", "P", "C"], ["R", "X"]],
-                       [("P", "G", 2, "T", "C")])
+    scheme = scheme_of([["R"], ["R", "P"], ["R", "P", "C"], ["R", "X"]], [("P", "G", 2, "T", "C")])
     reference = Reference.from_records([("c1", "ACGTACGT")])
     alignment = {"r": "ACGTACGT", "a": "ATGTACGA", "b": "ACGTACGA", "x": "ACGTACGT"}
-    findings = check_against_alignment(scheme, alignment, reference, {"C": ["a", "b"],
-                                                                      "X": ["x"]})
+    findings = check_against_alignment(scheme, alignment, reference, {"C": ["a", "b"], "X": ["x"]})
     categories = {finding.category for finding in findings}
     assert "unsupported-node" not in categories
     assert "replacement" in categories
@@ -72,22 +80,24 @@ def test_audit_from_the_genomes_file_keeps_the_genome_option(tmp_path, caplog):
     (directory / "t_snp.txt").write_text(
         "snp_id\tstrain\treference\tgenome\tsequence\tsequence_position\tderived_base\t"
         "ancestral_base\n"
-        "R\ts\tr\tREF\tc1\t1\tA\tG\nN\ts\tr\tREF\tc1\t3\tT\tG\n")
+        "R\ts\tr\tREF\tc1\t1\tA\tG\nN\ts\tr\tREF\tc1\t3\tT\tG\n"
+    )
     (directory / "t_references.txt").write_text(
         "genome\tstrain\tgenbank_id\trefseq_id\tassembly_name\n"
-        "REF\ts\tGCA_000000001.1\tGCF_000000001.1\tASM1v1\n")
+        "REF\ts\tGCA_000000001.1\tGCF_000000001.1\tASM1v1\n"
+    )
     (directory / "t_genomes.txt").write_text(
-        "genome\tnode\trole\nGCA_000000002.1\tN\trepresentative\n"
-        "GCA_000000003.1\tN\trepresentative\n")
+        "genome\tnode\trole\nGCA_000000002.1\tN\trepresentative\nGCA_000000003.1\tN\trepresentative\n"
+    )
     reference = tmp_path / "ref.fasta"
     reference.write_text(">c1\nACGTACGT\n")
     alignment = tmp_path / "aln.fasta"
     # GCA_000000003.1 lacks N's derived base T.
-    alignment.write_text(">x_GCA_000000001.1\nACGTACGT\n>a_GCA_000000002.1\nACTTACGT\n"
-                         ">b_GCA_000000003.1\nACGTACGT\n")
+    alignment.write_text(
+        ">x_GCA_000000001.1\nACGTACGT\n>a_GCA_000000002.1\nACTTACGT\n>b_GCA_000000003.1\nACGTACGT\n"
+    )
     report = tmp_path / "findings.tsv"
-    audit_main(str(directory), reference=str(reference), alignment=str(alignment),
-               output=str(report))
+    audit_main(str(directory), reference=str(reference), alignment=str(alignment), output=str(report))
     assert "not-canonical" in report.read_text()
 
 
@@ -106,12 +116,10 @@ def test_place_leaves_single_leaves_out_as_clades():
 
     scheme = scheme_of([["R"], ["R", "N1"]], [("N1", "G", 3, "T", "G")])
     reference = Reference.from_records([("c1", "ACGTACGT")])
-    alignment = {"r": "ACGTACGT", "a": "ACTTACGT", "b": "ACTTACGT", "c": "ACGTACGT",
-                 "d": "ACGTACGT"}
+    alignment = {"r": "ACGTACGT", "a": "ACTTACGT", "b": "ACTTACGT", "c": "ACGTACGT", "d": "ACGTACGT"}
     # The tree holds the four genomes but not the reference, as the reviewer's
     # star of four did: outside c is then {a, b, d}, which matched N1 at 0.67.
-    placement = place(scheme, Hierarchy.from_newick("(a,b,c,d);", support_labels=True),
-                      alignment, reference)
+    placement = place(scheme, Hierarchy.from_newick("(a,b,c,d);", support_labels=True), alignment, reference)
     assert "d" not in placement.clusters.get("N1", [])
 
 
@@ -121,8 +129,10 @@ def test_node_table_supports_in_percent_are_read_as_fractions(tmp_path):
     edges = tmp_path / "tree2tax.tsv"
     edges.write_text("child\tparent\nn1\troot\nn2\troot\na\tn1\nb\tn1\nc\tn2\nd\tn2\n")
     nodes = tmp_path / "nodes.tsv"
-    nodes.write_text("node\tparent\tn_leaves\tdepth\tbranch_length\tsupport\tred\tlineage\n"
-                     "n1\troot\t2\t1\t1\t95\tNA\t\nn2\troot\t2\t1\t1\t30\tNA\t\n")
+    nodes.write_text(
+        "node\tparent\tn_leaves\tdepth\tbranch_length\tsupport\tred\tlineage\n"
+        "n1\troot\t2\t1\t1\t95\tNA\t\nn2\troot\t2\t1\t1\t30\tNA\t\n"
+    )
     tree = read_genome_tree(str(edges), str(nodes))
     assert tree.support == {"n1": 0.95, "n2": 0.30}
     assert set(collapse(tree, min_support=0.9).removed) == {"n2"}
@@ -144,9 +154,22 @@ def test_place_reports_an_empty_genome_map(written, dataset, tmp_path):
     outdir, _scores = written
     tree = tmp_path / "tree.nwk"
     tree.write_text("((x1,x2),(x3,x4));")
-    assert cli_run("place", "--scheme-dir", outdir, "--tree", str(tree),
-                   "--alignment", dataset.alignment, "--reference", dataset.reference,
-                   "-o", str(tmp_path / "placed.tsv")) == 2
+    assert (
+        cli_run(
+            "place",
+            "--scheme-dir",
+            outdir,
+            "--tree",
+            str(tree),
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "-o",
+            str(tmp_path / "placed.tsv"),
+        )
+        == 2
+    )
 
 
 # -- trees ---------------------------------------------------------------------
@@ -182,8 +205,9 @@ def test_search_finds_the_nearest_interval():
 def test_masks_from_several_names_are_joined_on_their_contig():
     from cansnpscorer.cansnp_evaluator import in_regions, regions_over_contigs
 
-    placed = regions_over_contigs({"x": [(0, 100)], "y": [(10, 20)]},
-                                  Reference.from_records([("c1", "A" * 200)]))
+    placed = regions_over_contigs(
+        {"x": [(0, 100)], "y": [(10, 20)]}, Reference.from_records([("c1", "A" * 200)])
+    )
     assert placed == {"c1": [(0, 100)]}
     assert in_regions(50, placed["c1"])
 
@@ -198,14 +222,12 @@ def test_codon_complement_reads_n():
 def test_bed_contigs_named_like_track_lines_are_kept(tmp_path):
     bed = tmp_path / "r.bed"
     bed.write_text("track name=x\ntrackA\t1\t5\nbrowserX\t2\t4\nchr1 0 3\n")
-    assert read_intervals(str(bed)) == {"trackA": [(1, 4)], "browserX": [(2, 3)],
-                                        "chr1": [(0, 2)]}
+    assert read_intervals(str(bed)) == {"trackA": [(1, 4)], "browserX": [(2, 3)], "chr1": [(0, 2)]}
 
 
 def test_gff3_after_a_comment_or_byte_order_mark_is_read_as_gff3(tmp_path):
     gff = tmp_path / "r.gff"
-    gff.write_bytes(b"\xef\xbb\xbf# made by hand\n##gff-version 3\n"
-                    b"c1\tx\tregion\t10\t20\t.\t+\t.\tID=a\n")
+    gff.write_bytes(b"\xef\xbb\xbf# made by hand\n##gff-version 3\nc1\tx\tregion\t10\t20\t.\t+\t.\tID=a\n")
     assert read_intervals(str(gff)) == {"c1": [(9, 19)]}
 
 
@@ -213,8 +235,11 @@ def test_fasta_comments_spaces_and_bad_characters(tmp_path):
     good = tmp_path / "a.fasta"
     good.write_text(">a description\nAC GT\n;a comment\nNN\n")
     assert read_fasta(str(good)) == [("a", "ACGTNN")]
-    for text, message in [(">a\nAC1T\n", "not IUPAC"), (">a\n>b\nAC\n", "hold no sequence"),
-                          ("> a\nAC\n", "header without an ID")]:
+    for text, message in [
+        (">a\nAC1T\n", "not IUPAC"),
+        (">a\n>b\nAC\n", "hold no sequence"),
+        ("> a\nAC\n", "header without an ID"),
+    ]:
         bad = tmp_path / "b.fasta"
         bad.write_text(text)
         with pytest.raises(ValueError, match=message):
@@ -228,9 +253,19 @@ def test_a_truncated_gzip_file_is_an_error_not_a_traceback(dataset, tmp_path, ca
     with caplog.at_level(logging.ERROR):
         status = cli_run("trf", "--reference", str(truncated), "-o", str(tmp_path / "r.bed"))
     assert status == 1
-    status = cli_run("extract", "--alignment", dataset.alignment,
-                     "--reference", str(truncated), "--hierarchy", dataset.hierarchy,
-                     "--genome-map", dataset.genome_map, "-o", str(tmp_path / "s.vcf"))
+    status = cli_run(
+        "extract",
+        "--alignment",
+        dataset.alignment,
+        "--reference",
+        str(truncated),
+        "--hierarchy",
+        dataset.hierarchy,
+        "--genome-map",
+        dataset.genome_map,
+        "-o",
+        str(tmp_path / "s.vcf"),
+    )
     assert status == 1
 
 
@@ -251,8 +286,9 @@ def test_vcf_contig_ids_and_spaces_follow_vcf_4_3(tmp_path):
 
     with pytest.raises(vcf.VcfError, match="does not allow as IDs"):
         vcf.header_lines(Reference.from_records([("c,1", "ACGT")]), "r.fasta", "t", [])
-    record = vcf.snp_record(Reference.from_records([("c1", "ACGT")]), "c1", 1, ("A", "G"),
-                            node="Clade 1", ancestral="A")
+    record = vcf.snp_record(
+        Reference.from_records([("c1", "ACGT")]), "c1", 1, ("A", "G"), node="Clade 1", ancestral="A"
+    )
     assert "NODE=Clade%201" in record.line()
 
 
@@ -263,16 +299,26 @@ def test_a_scheme_directory_with_glob_characters_is_found(tmp_path):
     assert schemes_in(str(directory)) == ["x"]
 
 
-@pytest.mark.parametrize("field,value,message", [
-    ("genbank_id", "GCA_000007125.1\n", "well formed GenBank"),
-    ("strain", "a\tb", "tab or a line break"),
-    ("organism", "a/b", "names the files"),
-])
+@pytest.mark.parametrize(
+    "field,value,message",
+    [
+        ("genbank_id", "GCA_000007125.1\n", "well formed GenBank"),
+        ("strain", "a\tb", "tab or a line break"),
+        ("organism", "a/b", "names the files"),
+    ],
+)
 def test_export_metadata_that_would_corrupt_the_files_is_refused(field, value, message):
     from cansnpscorer.cansnp_export import check_metadata
 
-    values = {"genome": "G", "strain": "s", "reference": "r", "genbank_id": "GCA_000007125.1",
-                  "refseq_id": "GCF_000007125.1", "assembly_name": "A", "organism": "t"}
+    values = {
+        "genome": "G",
+        "strain": "s",
+        "reference": "r",
+        "genbank_id": "GCA_000007125.1",
+        "refseq_id": "GCF_000007125.1",
+        "assembly_name": "A",
+        "organism": "t",
+    }
     values[field] = value
     assert any(message in problem for problem in check_metadata(**values))
 
@@ -280,19 +326,47 @@ def test_export_metadata_that_would_corrupt_the_files_is_refused(field, value, m
 # -- the command line ----------------------------------------------------------
 
 
-@pytest.mark.parametrize("arguments", [
-    ["--gc-goal", "7"], ["--top-n", "0"], ["--tandem-limit", "-1"],
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--gc-goal", "7"],
+        ["--top-n", "0"],
+        ["--tandem-limit", "-1"],
+    ],
+)
 def test_out_of_range_options_are_refused_by_the_parser(dataset, tmp_path, arguments):
     with pytest.raises(SystemExit) as stopped:
-        cli_run("evaluate", "--snps", "x.vcf", "--reference", dataset.reference,
-                "--genes", dataset.gff, "--repeats", dataset.repeats,
-                "-o", str(tmp_path / "s.vcf"), *arguments)
+        cli_run(
+            "evaluate",
+            "--snps",
+            "x.vcf",
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            str(tmp_path / "s.vcf"),
+            *arguments,
+        )
     assert stopped.value.code == 2
 
 
 def test_an_unwritable_output_is_an_error_not_a_traceback(dataset, tmp_path):
-    assert cli_run("extract", "--alignment", dataset.alignment,
-                   "--reference", dataset.reference, "--hierarchy", dataset.hierarchy,
-                   "--genome-map", dataset.genome_map,
-                   "-o", str(tmp_path / "no" / "such" / "dir" / "s.vcf")) == 1
+    assert (
+        cli_run(
+            "extract",
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--genome-map",
+            dataset.genome_map,
+            "-o",
+            str(tmp_path / "no" / "such" / "dir" / "s.vcf"),
+        )
+        == 1
+    )

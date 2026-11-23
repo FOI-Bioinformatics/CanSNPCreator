@@ -30,17 +30,25 @@ from cansnpscorer.validate import (
 )
 
 
-def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output=None,
-         min_called=1.0, outgroups=(), allow_no_outgroup=False) -> int:
+def main(
+    alignment=None,
+    reference=None,
+    hierarchy=None,
+    genome_map=None,
+    output=None,
+    min_called=1.0,
+    outgroups=(),
+    allow_no_outgroup=False,
+) -> int:
     """Extract canSNPs from an alignment. Returns a process exit status."""
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(
         f"Parameters: alignment={alignment}, reference={reference}, hierarchy={hierarchy}, "
         f"genome_map={genome_map}, output={output}, min_called={min_called}, "
-        f"outgroups={list(outgroups)}, allow_no_outgroup={allow_no_outgroup}")
+        f"outgroups={list(outgroups)}, allow_no_outgroup={allow_no_outgroup}"
+    )
 
-    missing = [path for path in (alignment, reference, hierarchy, genome_map)
-               if not os.path.isfile(path)]
+    missing = [path for path in (alignment, reference, hierarchy, genome_map) if not os.path.isfile(path)]
     if missing:
         logging.error(f"These input files do not exist: {', '.join(missing)}")
         return 1
@@ -65,8 +73,14 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     problems, warnings = problems + found[0], warnings + found[1]
     declared, found_problems = resolve_outgroups(outgroups, list(aligned))
     problems += found_problems
-    found = check_groups(aligned, clusters, tree, next(iter(aligned)), outgroups=declared,
-                         require_outgroup=not allow_no_outgroup)
+    found = check_groups(
+        aligned,
+        clusters,
+        tree,
+        next(iter(aligned)),
+        outgroups=declared,
+        require_outgroup=not allow_no_outgroup,
+    )
     problems, warnings = problems + found[0], warnings + found[1]
     if not report(problems, warnings):
         return 2
@@ -98,16 +112,22 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
             continue
         contig, position = placed
         if cansnp.is_canonical:
-            records.append(vcf.snp_record(genome, contig.name, position,
-                                          (cansnp.derived, cansnp.ancestral),
-                                          cansnp.node, cansnp.ancestral))
+            records.append(
+                vcf.snp_record(
+                    genome,
+                    contig.name,
+                    position,
+                    (cansnp.derived, cansnp.ancestral),
+                    cansnp.node,
+                    cansnp.ancestral,
+                )
+            )
         else:
             records.append(vcf.snp_record(genome, contig.name, position, cansnp.bases))
         records[-1].info["MISSING"] = str(cansnp.missing)
 
     if gapped:
-        logging.warning(
-            f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
+        logging.warning(f"{gapped} SNPs sit in columns where the reference is gapped and were left out")
 
     # A variable column where the reference has a gap, such as an insertion
     # among the scheme's genomes, counts at the reference bases on either side.
@@ -120,39 +140,51 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     for position in reference_anchors(flank_columns, position_of, mapping.columns):
         contig, local_position = genome.locate(position)
         variable.setdefault(contig.name, []).append(local_position)
-    distances = nearest_distances([(record.chrom, record.pos - 1) for record in records],
-                                  variable)
+    distances = nearest_distances([(record.chrom, record.pos - 1) for record in records], variable)
     for record, distance in zip(records, distances, strict=True):
-        record.info["NEAREST"] = str(min(distance, vcf.NEAREST_CAP)) if distance is not None \
-            else str(vcf.NEAREST_CAP)
-    logging.info(f"{len(flank_columns)} columns differ among the {len(scheme_genomes)} genomes of the "
-                 f"scheme, which gives each SNP the distance to its nearest variation")
+        record.info["NEAREST"] = (
+            str(min(distance, vcf.NEAREST_CAP)) if distance is not None else str(vcf.NEAREST_CAP)
+        )
+    logging.info(
+        f"{len(flank_columns)} columns differ among the {len(scheme_genomes)} genomes of the "
+        f"scheme, which gives each SNP the distance to its nearest variation"
+    )
 
     # The genomes at no node are what settled polarity; recording them puts
     # that choice in the file rather than only on the command line.
     placed = {name for names in clusters.values() for name in names}
     outside = sorted(set(aligned) - placed)
-    header = vcf.header_lines(genome, reference, "extract",
-                              [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST, vcf.MISSING],
-                              extra=[f"##outgroup={','.join(outside) if outside else 'none'}"])
+    header = vcf.header_lines(
+        genome,
+        reference,
+        "extract",
+        [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST, vcf.MISSING],
+        extra=[f"##outgroup={','.join(outside) if outside else 'none'}"],
+    )
     written = vcf.write(output, header, records)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
     # A node whose SNPs were all reported against a node with the same
     # isolates has them as well.
     marked = {cansnp.node for cansnp in cansnps if cansnp.node}
-    marked |= {name for cansnp in cansnps if cansnp.node for name in cansnp.also_matched
-               if set(isolates[name]) == set(isolates[cansnp.node])}
+    marked |= {
+        name
+        for cansnp in cansnps
+        if cansnp.node
+        for name in cansnp.also_matched
+        if set(isolates[name]) == set(isolates[cansnp.node])
+    }
     without = sorted(set(tree.nodes) - marked)
     if without:
-        logging.warning(
-            f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")
+        logging.warning(f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")
     logging.info(f"Wrote {written} SNPs to {output}, of which {found} are canonical")
     if min_called < 1.0:
         partial = sum(1 for cansnp in cansnps if cansnp.is_canonical and cansnp.missing)
-        logging.info(f"{partial} of the canonical SNPs lie in columns where some genomes have "
-                     f"no base (at least {min_called:g} of the genomes called); INFO/MISSING "
-                     f"gives the number")
+        logging.info(
+            f"{partial} of the canonical SNPs lie in columns where some genomes have "
+            f"no base (at least {min_called:g} of the genomes called); INFO/MISSING "
+            f"gives the number"
+        )
 
     logging.info(f"Finished analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     return 0

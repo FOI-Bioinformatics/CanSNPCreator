@@ -24,8 +24,7 @@ def findings_of(directory, dataset=None, **arguments):
 
 
 def categories(findings, severity=None):
-    return {finding.category for finding in findings
-            if severity is None or finding.severity == severity}
+    return {finding.category for finding in findings if severity is None or finding.severity == severity}
 
 
 # -- reading a scheme back in ------------------------------------------------
@@ -127,28 +126,33 @@ def test_a_node_under_two_parents_is_reported(written, dataset):
     assert "two-parents" in categories(findings, PROBLEM)
 
 
-@pytest.mark.parametrize("replace,with_text,category", [
-    # The three published Yersinia canSNPs carry a slash where the derived base
-    # belongs, and can never be called derived.
-    ("\tG\tC\t350\t", "\t/\tC\t350\t", "allele"),
-    ("\tG\tC\t350\t", "\tC\tC\t350\t", "allele"),
-    ("\t201\t", "\t401\t", "shared-position"),
-    ("\t201\t", "\t0\t", "position"),
-    ("\t201\t", "\t99999\t", "position"),
-])
+@pytest.mark.parametrize(
+    "replace,with_text,category",
+    [
+        # The three published Yersinia canSNPs carry a slash where the derived base
+        # belongs, and can never be called derived.
+        ("\tG\tC\t350\t", "\t/\tC\t350\t", "allele"),
+        ("\tG\tC\t350\t", "\tC\tC\t350\t", "allele"),
+        ("\t201\t", "\t401\t", "shared-position"),
+        ("\t201\t", "\t0\t", "position"),
+        ("\t201\t", "\t99999\t", "position"),
+    ],
+)
 def test_an_unusable_snp_is_reported(written, dataset, replace, with_text, category):
     outdir, _scores = written
     edit(outdir, SNPS, replace, with_text)
     assert category in categories(findings_of(outdir, dataset), PROBLEM)
 
 
-@pytest.mark.parametrize("replace,with_text,category", [
-    ("GCA_000007125.1", "GCA_7125.1", "accession"),
-    ("GCF_000007125.1", "GCF_7125.1", "accession"),
-    ("TEST1\ttestus", "TES_T1\ttestus", "genome-name"),
-])
-def test_a_reference_row_that_breaks_the_rules_is_reported(written, dataset, replace, with_text,
-                                                           category):
+@pytest.mark.parametrize(
+    "replace,with_text,category",
+    [
+        ("GCA_000007125.1", "GCA_7125.1", "accession"),
+        ("GCF_000007125.1", "GCF_7125.1", "accession"),
+        ("TEST1\ttestus", "TES_T1\ttestus", "genome-name"),
+    ],
+)
+def test_a_reference_row_that_breaks_the_rules_is_reported(written, dataset, replace, with_text, category):
     outdir, _scores = written
     edit(outdir, REFERENCES, replace, with_text)
     assert category in categories(findings_of(outdir, dataset), PROBLEM)
@@ -211,12 +215,14 @@ def test_a_better_scoring_candidate_is_offered(written, dataset, tmp_path):
     # A second candidate for A.1, elsewhere on the contig and scoring higher
     # than the one the scheme carries. REF must be the reference's base.
     header, records = vcf_lines(scores)
-    current = next(line.split("\t") for line in records if info_of(line.split("\t"))
-                   .get("NODE") == "A.1")
+    current = next(line.split("\t") for line in records if info_of(line.split("\t")).get("NODE") == "A.1")
     ref = dataset.sequences["ref"][449]
     alt = next(base for base in "ACGT" if base != ref)
-    info = ";".join(f"{key}=600" if key == "SCORE" else f"{key}={value}"
-                    for key, value in info_of(current).items() if key != "AA")
+    info = ";".join(
+        f"{key}=600" if key == "SCORE" else f"{key}={value}"
+        for key, value in info_of(current).items()
+        if key != "AA"
+    )
     added = ["c1", "450", ".", ref, alt, ".", "PASS", f"{info};AA={ref}"]
     better = tmp_path / "better.vcf"
     better.write_text("\n".join(header + records + ["\t".join(added)]) + "\n")
@@ -230,8 +236,9 @@ def test_a_better_scoring_candidate_is_offered(written, dataset, tmp_path):
 
 def test_a_node_the_score_file_does_not_hold_is_reported(written, dataset, tmp_path):
     outdir, scores = written
-    without = vcf_rewrite(scores, tmp_path / "without.vcf",
-                          keep=lambda fields: info_of(fields).get("NODE") != "A.1")
+    without = vcf_rewrite(
+        scores, tmp_path / "without.vcf", keep=lambda fields: info_of(fields).get("NODE") != "A.1"
+    )
     findings = findings_of(outdir, dataset, scores=vcf.read_scores(without))
     assert [finding.node for finding in findings if finding.category == "not-scored"] == ["A.1"]
 
@@ -252,24 +259,35 @@ def test_a_score_file_without_a_reference_is_refused(written, dataset):
 def test_the_audit_runs_from_the_command_line(written, dataset, tmp_path):
     outdir, _scores = written
     report = tmp_path / "findings.tsv"
-    assert cli_run("audit", "--scheme-dir", outdir, "--organism", "testus_organismus",
-                   "--reference", dataset.reference, "-o", str(report)) == 0
+    assert (
+        cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--organism",
+            "testus_organismus",
+            "--reference",
+            dataset.reference,
+            "-o",
+            str(report),
+        )
+        == 0
+    )
     assert "min-required-hits" in report.read_text()
 
 
 def test_a_broken_scheme_exits_two_from_the_command_line(written, dataset):
     outdir, _scores = written
     edit(outdir, SNPS, "\tG\tC\t350\t", "\t/\tC\t350\t")
-    assert cli_run("audit", "--scheme-dir", outdir,
-                   "--reference", dataset.reference) == 2
+    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference) == 2
 
 
 # -- against a published scheme ----------------------------------------------
 
 
 DATA = os.environ.get("CANSNPER2_DATA") or os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-data-canSNPs")
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "CanSNPer2-data-canSNPs"
+)
 PUBLISHED = os.path.join(DATA, "schemes")
 
 
@@ -282,8 +300,7 @@ def published(organism):
         pytest.skip(f"{folder} does not exist; set CANSNPER2_DATA to a CanSNPer2-data checkout")
     with open(snps) as handle:
         if "typed" not in handle.readline().split():
-            pytest.skip(f"{snps} has no typed column; set CANSNPER2_DATA to a checkout "
-                        f"with the canSNP file")
+            pytest.skip(f"{snps} has no typed column; set CANSNPER2_DATA to a checkout with the canSNP file")
     return folder
 
 
@@ -293,16 +310,26 @@ def test_the_published_yersinia_scheme_has_no_allele_problem():
     # from the scheme on 2026-11-20, so the audit must find no such base and
     # the scheme must not hold them.
     scheme = read_scheme(published("yersinia_pestis"), "yersinia_pestis")
-    alleles = [finding for finding in audit_scheme(scheme)
-               if finding.category == "allele" and finding.severity == PROBLEM]
+    alleles = [
+        finding
+        for finding in audit_scheme(scheme)
+        if finding.category == "allele" and finding.severity == PROBLEM
+    ]
     assert alleles == []
     assert not {"1.ANT2.b", "1.ORI2.c", "1.ORI3.b"} & set(scheme.snps_by_node)
     assert all("/" not in snp.derived + snp.ancestral for snp in scheme.snp_set)
 
 
-@pytest.mark.parametrize("organism", ["bacillus_anthracis", "brucella_classical",
-                                      "coxiella_burnetii", "francisella_tularensis",
-                                      "yersinia_pestis"])
+@pytest.mark.parametrize(
+    "organism",
+    [
+        "bacillus_anthracis",
+        "brucella_classical",
+        "coxiella_burnetii",
+        "francisella_tularensis",
+        "yersinia_pestis",
+    ],
+)
 def test_a_published_scheme_reads_without_a_problem(organism):
     scheme = read_scheme(published(organism), organism)
     assert scheme.problems == []
@@ -318,8 +345,7 @@ def test_a_scheme_snp_in_a_masked_region_is_reported(written, dataset, tmp_path)
     masks = tmp_path / "masks.bed"
     masks.write_text("c1\t395\t405\n")  # holds A.1's SNP at c1:401
     report = tmp_path / "findings.tsv"
-    assert audit_main(outdir, reference=dataset.reference, masks=str(masks),
-                      output=str(report)) == 0
+    assert audit_main(outdir, reference=dataset.reference, masks=str(masks), output=str(report)) == 0
     masked = [line for line in report.read_text().splitlines() if "\tmasked\t" in line]
     assert len(masked) == 1 and "\tA.1\t" in masked[0]
     assert audit_main(outdir, masks=str(masks)) == 1, "masks need the reference"

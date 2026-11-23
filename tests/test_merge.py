@@ -39,9 +39,9 @@ def split_at(outdir, seam, tmp_path):
     """Split a written scheme at ``seam`` into a coarse scheme, where the seam is
     a leaf, and a fine scheme rooted at it. Both keep the seam's canSNPs."""
     tree = [line.split("\t") for line in lines(os.path.join(outdir, ORGANISM + TREE_SUFFIX))]
-    below = {node for path in tree if seam in path for node in path[path.index(seam) + 1:]}
+    below = {node for path in tree if seam in path for node in path[path.index(seam) + 1 :]}
     coarse_paths = [path for path in tree if not below & set(path)]
-    fine_paths = [path[path.index(seam):] for path in tree if seam in path]
+    fine_paths = [path[path.index(seam) :] for path in tree if seam in path]
     coarse_nodes = {node for path in coarse_paths for node in path}
     fine_nodes = {node for path in fine_paths for node in path}
 
@@ -50,13 +50,14 @@ def split_at(outdir, seam, tmp_path):
     references = lines(os.path.join(outdir, ORGANISM + REFERENCES_SUFFIX))
 
     parts = {}
-    for name, paths, nodes in (("coarse", coarse_paths, coarse_nodes),
-                               ("fine", fine_paths, fine_nodes)):
+    for name, paths, nodes in (("coarse", coarse_paths, coarse_nodes), ("fine", fine_paths, fine_nodes)):
         directory = tmp_path / name
         directory.mkdir()
         write(directory / (ORGANISM + TREE_SUFFIX), ["\t".join(path) for path in paths])
-        write(directory / (ORGANISM + CANSNP_SUFFIX),
-              [header, *[row for row in rows if row.split("\t")[0] in nodes]])
+        write(
+            directory / (ORGANISM + CANSNP_SUFFIX),
+            [header, *[row for row in rows if row.split("\t")[0] in nodes]],
+        )
         write(directory / (ORGANISM + REFERENCES_SUFFIX), references)
         parts[name] = str(directory)
     return parts["coarse"], parts["fine"]
@@ -72,8 +73,10 @@ def merge(tmp_path, *schemes, outdir=None):
 
 def cansnp_rows(directory):
     """The canSNPs of a scheme, without the file's own line numbers."""
-    return sorted((s.node, s.rank, s.sequence, s.position, s.derived, s.ancestral, s.typed)
-                  for s in read_scheme(directory).snp_set)
+    return sorted(
+        (s.node, s.rank, s.sequence, s.position, s.derived, s.ancestral, s.typed)
+        for s in read_scheme(directory).snp_set
+    )
 
 
 def edit(path, replace, with_text):
@@ -106,16 +109,18 @@ def test_a_scheme_split_at_a_node_merges_back_to_itself(written, tmp_path):
     result = read_scheme(merged)
     assert result.problems == []
     assert set(result.nodes) == set(original.nodes)
-    assert {node: result.hierarchy.parents[node] for node in result.nodes} == \
-        {node: original.hierarchy.parents[node] for node in original.nodes}
+    assert {node: result.hierarchy.parents[node] for node in result.nodes} == {
+        node: original.hierarchy.parents[node] for node in original.nodes
+    }
 
 
 def test_the_references_are_written_once(written, tmp_path):
     outdir, _scores = written
     coarse, fine = split_at(outdir, "A", tmp_path)
     _status, merged = merge(tmp_path, coarse, fine)
-    assert lines(os.path.join(merged, ORGANISM + REFERENCES_SUFFIX)) == \
-        lines(os.path.join(outdir, ORGANISM + REFERENCES_SUFFIX))
+    assert lines(os.path.join(merged, ORGANISM + REFERENCES_SUFFIX)) == lines(
+        os.path.join(outdir, ORGANISM + REFERENCES_SUFFIX)
+    )
 
 
 def test_the_seam_keeps_the_canSNPs_of_the_first_scheme(written, tmp_path, caplog):
@@ -126,8 +131,11 @@ def test_the_seam_keeps_the_canSNPs_of_the_first_scheme(written, tmp_path, caplo
     coarse, fine = split_at(outdir, "A", tmp_path)
     seam = cansnp_line(fine, "A")
     position = int(seam["sequence_position"])
-    edit(os.path.join(fine, ORGANISM + CANSNP_SUFFIX),
-         f"\t{seam['sequence']}\t{position}\t", f"\t{seam['sequence']}\t{position + 3}\t")
+    edit(
+        os.path.join(fine, ORGANISM + CANSNP_SUFFIX),
+        f"\t{seam['sequence']}\t{position}\t",
+        f"\t{seam['sequence']}\t{position + 3}\t",
+    )
     status, merged = merge(tmp_path, coarse, fine)
     assert status == 0
     assert cansnp_line(merged, "A")["sequence_position"] == str(position)
@@ -138,11 +146,14 @@ def test_the_seam_keeps_the_canSNPs_of_the_first_scheme(written, tmp_path, caplo
 def test_the_merged_scheme_passes_the_cansnper2_data_validator(written, tmp_path):
     outdir, _scores = written
     coarse, fine = split_at(outdir, "A", tmp_path)
-    write(os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
-          ["genome\tnode\trole", "GCF_000000001.1\tA\trepresentative",
-           "GCF_000000009.1\tB.1\trepresentative"])
-    write(os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
-          ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative"])
+    write(
+        os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tA\trepresentative", "GCF_000000009.1\tB.1\trepresentative"],
+    )
+    write(
+        os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative"],
+    )
     status, merged = merge(tmp_path, coarse, fine)
     assert status == 0
     completed = run_validator(scheme_checkout(merged, tmp_path))
@@ -159,9 +170,11 @@ def test_a_site_used_by_two_nodes_is_refused(written, tmp_path, caplog):
     coarse, fine = split_at(outdir, "A", tmp_path)
     taken = cansnp_line(coarse, "B")
     mine = cansnp_line(fine, "A.1")
-    edit(os.path.join(fine, ORGANISM + CANSNP_SUFFIX),
-         f"\t{mine['sequence']}\t{mine['sequence_position']}\t",
-         f"\t{taken['sequence']}\t{taken['sequence_position']}\t")
+    edit(
+        os.path.join(fine, ORGANISM + CANSNP_SUFFIX),
+        f"\t{mine['sequence']}\t{mine['sequence_position']}\t",
+        f"\t{taken['sequence']}\t{taken['sequence_position']}\t",
+    )
     status, merged = merge(tmp_path, coarse, fine)
     assert status == 2
     assert not os.path.exists(merged), "nothing is written"
@@ -184,8 +197,7 @@ def test_a_scheme_that_shares_no_node_is_refused(written, tmp_path, caplog):
     coarse, fine = split_at(outdir, "A", tmp_path)
     for suffix in (TREE_SUFFIX, CANSNP_SUFFIX):
         path = os.path.join(fine, ORGANISM + suffix)
-        write(path, [line.replace("A", "Z", 1) if line.startswith("A") else line
-                     for line in lines(path)])
+        write(path, [line.replace("A", "Z", 1) if line.startswith("A") else line for line in lines(path)])
     status, _merged = merge(tmp_path, coarse, fine)
     assert status == 2
     assert "shares no node" in caplog.text
@@ -219,12 +231,19 @@ def test_genomes_at_the_seam_give_way_to_the_finer_scheme(written, tmp_path):
     # genomes file lists terminal nodes only.
     outdir, _scores = written
     coarse, fine = split_at(outdir, "A", tmp_path)
-    write(os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
-          ["genome\tnode\trole", "GCF_000000001.1\tA\trepresentative",
-           "GCF_000000009.1\tB.1\trepresentative", "GCF_000000099.1\t\toutgroup"])
-    write(os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
-          ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative",
-           "GCF_000000009.1\t\toutgroup"])
+    write(
+        os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
+        [
+            "genome\tnode\trole",
+            "GCF_000000001.1\tA\trepresentative",
+            "GCF_000000009.1\tB.1\trepresentative",
+            "GCF_000000099.1\t\toutgroup",
+        ],
+    )
+    write(
+        os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative", "GCF_000000009.1\t\toutgroup"],
+    )
     status, merged = merge(tmp_path, coarse, fine)
     assert status == 0
     genomes = sorted(read_scheme(merged).genomes)
@@ -238,10 +257,14 @@ def test_genomes_at_the_seam_give_way_to_the_finer_scheme(written, tmp_path):
 def test_a_genome_at_two_terminal_nodes_is_refused(written, tmp_path, caplog):
     outdir, _scores = written
     coarse, fine = split_at(outdir, "A", tmp_path)
-    write(os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
-          ["genome\tnode\trole", "GCF_000000001.1\tB.1\trepresentative"])
-    write(os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
-          ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative"])
+    write(
+        os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tB.1\trepresentative"],
+    )
+    write(
+        os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative"],
+    )
     status, _merged = merge(tmp_path, coarse, fine)
     assert status == 2
     assert "GCF_000000001.1" in caplog.text

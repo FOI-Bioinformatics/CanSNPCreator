@@ -51,12 +51,14 @@ def write_bed(repeats: list[Repeat], path: str) -> None:
         order.setdefault(sequence, len(order))
     with open(path, "w", newline="\n") as handle:
         for sequence, start, end, period, copies in sorted(
-                repeats, key=lambda repeat: (order[repeat[0]], repeat[1], repeat[2])):
+            repeats, key=lambda repeat: (order[repeat[0]], repeat[1], repeat[2])
+        ):
             handle.write(f"{sequence}\t{start - 1}\t{end}\tperiod={period},copies={copies}\n")
 
 
-def run_trf(reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi=10,
-            minscore=10, max_period=2000) -> int:
+def run_trf(
+    reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi=10, minscore=10, max_period=2000
+) -> int:
     """
     Run Tandem Repeats Finder over a reference and write its repeats as BED.
 
@@ -77,14 +79,22 @@ def run_trf(reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi
     if shutil.which(TRF_EXECUTABLE) is None:
         logging.error(
             f"'{TRF_EXECUTABLE}' is not on the PATH. Install Tandem Repeats Finder, for "
-            "example with 'conda install -c bioconda trf'.")
+            "example with 'conda install -c bioconda trf'."
+        )
         return 1
 
     command = [
-        TRF_EXECUTABLE, reference,
-        str(match), str(mismatch), str(delta),
-        str(pm), str(pi), str(minscore), str(max_period),
-        "-h", "-ngs",
+        TRF_EXECUTABLE,
+        reference,
+        str(match),
+        str(mismatch),
+        str(delta),
+        str(pm),
+        str(pi),
+        str(minscore),
+        str(max_period),
+        "-h",
+        "-ngs",
     ]
     logging.info(f"Running {' '.join(command)}")
 
@@ -97,7 +107,8 @@ def run_trf(reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi
     if completed.returncode != 0:
         logging.error(
             f"Tandem Repeats Finder exited with status {completed.returncode}, so nothing was "
-            f"written. {completed.stderr.strip()}")
+            f"written. {completed.stderr.strip()}"
+        )
         return 1
 
     try:
@@ -108,7 +119,8 @@ def run_trf(reference: str, output: str, match=2, mismatch=7, delta=7, pm=80, pi
     if not repeats:
         logging.warning(
             "Tandem Repeats Finder reported no repeat at all, which is unusual for a bacterial "
-            "genome; check its parameters before relying on the empty file")
+            "genome; check its parameters before relying on the empty file"
+        )
     write_bed(repeats, output)
     logging.info(f"Wrote {len(repeats)} tandem repeats to {output}")
     return 0

@@ -27,17 +27,22 @@ def changed(sequence, *positions):
     return "".join(bases)
 
 
-def extract(tmp_path, reference, alignment, genome_map, hierarchy=TWO_SIDES,
-            allow_no_outgroup=False):
+def extract(tmp_path, reference, alignment, genome_map, hierarchy=TWO_SIDES, allow_no_outgroup=False):
     """Run extract on these records; the output path and its records."""
     for name, records in (("ref.fa", reference), ("aln.fa", alignment)):
         (tmp_path / name).write_text("".join(f">{n}\n{s}\n" for n, s in records))
     (tmp_path / "h.tsv").write_text(hierarchy)
     (tmp_path / "g.tsv").write_text(genome_map)
     output = tmp_path / "out.vcf"
-    status = cansnp_extractor.main(str(tmp_path / "aln.fa"), str(tmp_path / "ref.fa"),
-                                   str(tmp_path / "h.tsv"), str(tmp_path / "g.tsv"),
-                                   str(output), 1.0, allow_no_outgroup=allow_no_outgroup)
+    status = cansnp_extractor.main(
+        str(tmp_path / "aln.fa"),
+        str(tmp_path / "ref.fa"),
+        str(tmp_path / "h.tsv"),
+        str(tmp_path / "g.tsv"),
+        str(output),
+        1.0,
+        allow_no_outgroup=allow_no_outgroup,
+    )
     return status, output
 
 
@@ -54,13 +59,25 @@ def test_a_snp_beside_a_variable_indel_is_not_taken_as_isolated(tmp_path, layout
         # fill, and with different bases: a gapped layout.
         def insert(row, text):
             return row[:12] + text + row[12:]
-        alignment = [("REF", insert(sequence, "---")), ("og", insert(sequence, "---")),
-                     ("a1", insert(derived, "ACG")), ("a2", insert(derived, "ATG")),
-                     ("b1", insert(sequence, "ACG")), ("b2", insert(sequence, "AGG"))]
+
+        alignment = [
+            ("REF", insert(sequence, "---")),
+            ("og", insert(sequence, "---")),
+            ("a1", insert(derived, "ACG")),
+            ("a2", insert(derived, "ATG")),
+            ("b1", insert(sequence, "ACG")),
+            ("b2", insert(sequence, "AGG")),
+        ]
     else:
         # Three bases deleted in one genome of B, right beside the canSNP.
-        alignment = [("REF", sequence), ("og", sequence), ("a1", derived), ("a2", derived),
-                     ("b1", sequence), ("b2", sequence[:11] + "---" + sequence[14:])]
+        alignment = [
+            ("REF", sequence),
+            ("og", sequence),
+            ("a1", derived),
+            ("a2", derived),
+            ("b1", sequence),
+            ("b2", sequence[:11] + "---" + sequence[14:]),
+        ]
     status, output = extract(tmp_path, [("c", sequence)], alignment, genome_map)
     assert status == 0
     (record,) = [r for r in vcf_records(output) if r.node == "A"]
@@ -81,8 +98,7 @@ def test_an_illegal_contig_name_is_refused_before_any_work(tmp_path, caplog):
     sequence = random_sequence(60)
     alignment = [("REF", sequence), ("a", changed(sequence, 5)), ("b", sequence)]
     with caplog.at_level(logging.INFO):
-        status, output = extract(tmp_path, [("contig(1)", sequence)], alignment,
-                                 "a\tA\nb\tB\n")
+        status, output = extract(tmp_path, [("contig(1)", sequence)], alignment, "a\tA\nb\tB\n")
     assert status == 1 and not output.exists()
     assert any("does not allow" in m and "contig(1)" in m for m in caplog.messages)
     assert not any("SNP extraction" in m for m in caplog.messages), "refused before the work"
@@ -107,9 +123,14 @@ def test_root_polarity_does_not_follow_the_order_of_rows(tmp_path):
     for number, hierarchy in enumerate((TWO_SIDES, "child\tparent\nB\troot\nA\troot\n")):
         directory = tmp_path / str(number)
         directory.mkdir()
-        status, output = extract(directory, [("c", sequence)], alignment,
-                                 "REF\tA\na1\tA\nb1\tB\nb2\tB\n", hierarchy,
-                                 allow_no_outgroup=True)
+        status, output = extract(
+            directory,
+            [("c", sequence)],
+            alignment,
+            "REF\tA\na1\tA\nb1\tB\nb2\tB\n",
+            hierarchy,
+            allow_no_outgroup=True,
+        )
         assert status == 0
         found.append([(r.pos, r.node, r.ancestral) for r in vcf_records(output) if r.node])
     assert found[0] == found[1] == [(11, "B", sequence[10])]
@@ -120,13 +141,40 @@ def test_root_polarity_does_not_follow_the_order_of_rows(tmp_path):
 
 def evaluate(dataset, tmp_path, *extra):
     snps = str(tmp_path / "snps.vcf")
-    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy",
-                   dataset.hierarchy, "--alignment", dataset.alignment, "--reference",
-                   dataset.reference, "-o", snps) == 0
+    assert (
+        cli_run(
+            "extract",
+            "--genome-map",
+            dataset.genome_map,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "-o",
+            snps,
+        )
+        == 0
+    )
     scores = str(tmp_path / "scores.vcf")
-    assert cli_run("evaluate", "--snps", snps, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores,
-                   *extra) == 0
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snps,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+            *extra,
+        )
+        == 0
+    )
     return scores
 
 

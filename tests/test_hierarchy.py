@@ -26,16 +26,24 @@ def shape(hierarchy):
 # -- the two formats agree ---------------------------------------------------
 
 
-@pytest.mark.parametrize("built", [
-    pytest.param(Hierarchy.from_child_parent(TABLE), id="child_parent"),
-    pytest.param(Hierarchy.from_newick(NEWICK), id="newick"),
-])
+@pytest.mark.parametrize(
+    "built",
+    [
+        pytest.param(Hierarchy.from_child_parent(TABLE), id="child_parent"),
+        pytest.param(Hierarchy.from_newick(NEWICK), id="newick"),
+    ],
+)
 def test_both_formats_give_the_same_tree(built):
     assert built.root == "root"
     assert sorted(built.nodes) == sorted(NODES)
     assert shape(built) == {
-        "root": ["A", "B"], "A": ["A.1", "A.2"], "B": ["B.1", "B.2"],
-        "A.1": [], "A.2": [], "B.1": [], "B.2": [],
+        "root": ["A", "B"],
+        "A": ["A.1", "A.2"],
+        "B": ["B.1", "B.2"],
+        "A.1": [],
+        "A.2": [],
+        "B.1": [],
+        "B.2": [],
     }
     assert built.leaves == ["A.1", "A.2", "B.1", "B.2"]
     assert built.path("B.2") == ["root", "B", "B.2"]
@@ -44,8 +52,7 @@ def test_both_formats_give_the_same_tree(built):
 def test_the_dataset_files_describe_the_same_tree(dataset):
     assert hierarchy_format(dataset.hierarchy) == "table"
     assert hierarchy_format(dataset.hierarchy_newick) == "newick"
-    assert shape(read_hierarchy(dataset.hierarchy)) == shape(
-        read_hierarchy(dataset.hierarchy_newick))
+    assert shape(read_hierarchy(dataset.hierarchy)) == shape(read_hierarchy(dataset.hierarchy_newick))
 
 
 def test_an_internal_node_holds_the_isolates_below_it():
@@ -112,8 +119,7 @@ def test_a_root_row_with_an_empty_parent_is_read(tmp_path):
 
 def test_tree2tax_columns_in_any_order_and_extra_columns_are_read(tmp_path):
     # RepGenR2 adds a rank column with --ranks.
-    path = write(tmp_path, "tree2tax.tsv",
-                 "parent\tchild\trank\nroot\tA\tno rank\nA\tg1\tstrain\n")
+    path = write(tmp_path, "tree2tax.tsv", "parent\tchild\trank\nroot\tA\tno rank\nA\tg1\tstrain\n")
     assert read_hierarchy(path).path("g1") == ["root", "A", "g1"]
 
 
@@ -122,13 +128,16 @@ def test_windows_line_endings_are_read(tmp_path):
     assert read_hierarchy(path).nodes == ["root", "A"]
 
 
-@pytest.mark.parametrize("text,message", [
-    ("", "is empty"),
-    ("- root:\n  - A\n", "neither a Newick tree nor"),
-    ('{"root": ["A"]}\n', "neither a Newick tree nor"),
-    ("child\tparent\n", "holds no rows"),
-    ("child\tparent\n\troot\n", "names no child"),
-])
+@pytest.mark.parametrize(
+    "text,message",
+    [
+        ("", "is empty"),
+        ("- root:\n  - A\n", "neither a Newick tree nor"),
+        ('{"root": ["A"]}\n', "neither a Newick tree nor"),
+        ("child\tparent\n", "holds no rows"),
+        ("child\tparent\n\troot\n", "names no child"),
+    ],
+)
 def test_anything_else_is_refused(tmp_path, text, message):
     with pytest.raises(HierarchyError, match=message):
         read_hierarchy(write(tmp_path, "h.txt", text))
@@ -155,12 +164,15 @@ def test_genome_names_keep_their_punctuation_and_lose_a_fasta_suffix(tmp_path):
     assert read_genome_map(path) == {"A.1": ["GCF_000001.1"], "A": ["strain-7"]}
 
 
-@pytest.mark.parametrize("text,message", [
-    ("Strain,Group\ns1,A.1\n", "a genome and a node"),
-    ("s1\tA.1\textra\n", "a genome and a node"),
-    ("s1\tA.1\ns1\tB\n", "already placed at A.1"),
-    ("# only a comment\n", "places no genome"),
-])
+@pytest.mark.parametrize(
+    "text,message",
+    [
+        ("Strain,Group\ns1,A.1\n", "a genome and a node"),
+        ("s1\tA.1\textra\n", "a genome and a node"),
+        ("s1\tA.1\ns1\tB\n", "already placed at A.1"),
+        ("# only a comment\n", "places no genome"),
+    ],
+)
 def test_a_malformed_genome_map_is_refused(tmp_path, text, message):
     with pytest.raises(ValueError, match=message):
         read_genome_map(write(tmp_path, "map.tsv", text))

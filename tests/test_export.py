@@ -33,8 +33,15 @@ METADATA = {
 
 
 def score(node, contig="c1", position=100, total=500, derived="G", ancestral="C"):
-    return ScoredSnp(contig=contig, position=position, node=node, total=total,
-                     terms=dict.fromkeys(TERMS, 100), derived=derived, ancestral=ancestral)
+    return ScoredSnp(
+        contig=contig,
+        position=position,
+        node=node,
+        total=total,
+        terms=dict.fromkeys(TERMS, 100),
+        derived=derived,
+        ancestral=ancestral,
+    )
 
 
 @pytest.fixture
@@ -42,13 +49,42 @@ def scheme(dataset, tmp_path):
     """Run extract and evaluate, then return where a scheme can be written."""
     snp_file = str(tmp_path / "snps.vcf")
     scores = str(tmp_path / "scores.vcf")
-    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
-                   "--alignment", dataset.alignment, "--reference", dataset.reference,
-                   "-o", snp_file) == 0
-    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats,
-                   "--hierarchy", dataset.hierarchy, "-o", scores,
-                   "--cutoff", "0") == 0
+    assert (
+        cli_run(
+            "extract",
+            "--genome-map",
+            dataset.genome_map,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "-o",
+            snp_file,
+        )
+        == 0
+    )
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snp_file,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "--hierarchy",
+            dataset.hierarchy,
+            "-o",
+            scores,
+            "--cutoff",
+            "0",
+        )
+        == 0
+    )
     return scores, str(tmp_path / "scheme")
 
 
@@ -70,15 +106,17 @@ def read(path):
 
 
 def test_the_highest_scoring_snp_of_each_node_is_chosen():
-    scores = [score("A", position=10, total=300), score("A", position=20, total=500),
-              score("B", position=30, total=400)]
+    scores = [
+        score("A", position=10, total=300),
+        score("A", position=20, total=500),
+        score("B", position=30, total=400),
+    ]
     best = best_per_node(scores)
     assert (best["A"].position, best["B"].position) == (20, 30)
 
 
 def test_a_tie_is_broken_by_contig_and_position():
-    scores = [score("A", contig="c2", position=5, total=500),
-              score("A", contig="c1", position=50, total=500)]
+    scores = [score("A", contig="c2", position=5, total=500), score("A", contig="c1", position=50, total=500)]
     assert best_per_node(scores)["A"].contig == "c1"
 
 
@@ -102,8 +140,9 @@ def test_the_scheme_is_written_and_is_complete(dataset, scheme):
     assert len(rows) == len(tree.splitlines())
     assert [row[1] for row in rows] == ["1"] * len(rows), "rank 1 alone at one SNP per node"
     assert [row[9] for row in rows] == ["yes"] * len(rows)
-    assert not os.path.exists(os.path.join(outdir, "testus_organismus_snp.txt")), \
+    assert not os.path.exists(os.path.join(outdir, "testus_organismus_snp.txt")), (
         "the canSNP file is the only one"
+    )
 
     assert references.splitlines()[1].split("\t")[0] == "TEST1"
     for text in (tree, snp, references):
@@ -134,8 +173,9 @@ def test_the_polarity_survives_the_round_trip(dataset, scheme):
     scores, outdir = scheme
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
     for line in read(os.path.join(outdir, "testus_organismus_canSNPs.txt")).splitlines()[1:]:
-        node, _rank, _reference, _genome, _sequence, _position, derived, ancestral, _score, \
-            _typed = line.split("\t")
+        node, _rank, _reference, _genome, _sequence, _position, derived, ancestral, _score, _typed = (
+            line.split("\t")
+        )
         planted_ancestral, planted_derived = PLANTED[node][1], PLANTED[node][2]
         assert (derived, ancestral) == (planted_derived, planted_ancestral), node
 
@@ -147,8 +187,7 @@ def test_a_node_without_a_cansnp_refuses_the_scheme(dataset, scheme, tmp_path, c
     # Every node of a CanSNPer2 scheme carries exactly one SNP, so an
     # incomplete scheme is refused rather than written.
     scores, outdir = scheme
-    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
-                          keep=lambda fields: fields[:2] != ["c1", "601"])
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf", keep=lambda fields: fields[:2] != ["c1", "601"])
 
     assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 2
     assert "nodes have no canSNP" in caplog.text
@@ -157,11 +196,9 @@ def test_a_node_without_a_cansnp_refuses_the_scheme(dataset, scheme, tmp_path, c
 
 def test_pruning_leaves_those_nodes_out(dataset, scheme, tmp_path):
     scores, outdir = scheme
-    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
-                          keep=lambda fields: fields[:2] != ["c1", "201"])
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf", keep=lambda fields: fields[:2] != ["c1", "201"])
 
-    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir,
-                       prune=True, **METADATA) == 0
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, prune=True, **METADATA) == 0
     tree = read(os.path.join(outdir, "testus_organismus_tree.txt"))
     assert "\tA\t" not in tree, "the node without a canSNP is gone"
     assert "root\tA.1" in tree, "its children hang from the nearest node that has one"
@@ -169,47 +206,54 @@ def test_pruning_leaves_those_nodes_out(dataset, scheme, tmp_path):
 
 def test_prune_reports_genomes_moved(dataset, scheme, tmp_path, caplog):
     scores, outdir = scheme
-    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
-                          keep=lambda fields: fields[:2] != ["c1", "201"])
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf", keep=lambda fields: fields[:2] != ["c1", "201"])
     genome_map = tmp_path / "pruned_map.tsv"
     genome_map.write_text("ref\tA\ns1\tA\ns3\tB.1\n")
 
-    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, prune=True,
-                       genome_map=str(genome_map), alignment=dataset.alignment, **METADATA) == 0
-    assert "2 genomes of the genome map sat at these nodes and now sit at an ancestor" \
-        in caplog.text
+    assert (
+        export_main(
+            trimmed,
+            dataset.hierarchy,
+            dataset.reference,
+            outdir,
+            prune=True,
+            genome_map=str(genome_map),
+            alignment=dataset.alignment,
+            **METADATA,
+        )
+        == 0
+    )
+    assert "2 genomes of the genome map sat at these nodes and now sit at an ancestor" in caplog.text
     assert "deepest pruned depth is 2" in caplog.text
 
 
 def test_prune_without_a_genome_map_keeps_its_warning(dataset, scheme, tmp_path, caplog):
     scores, outdir = scheme
-    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
-                          keep=lambda fields: fields[:2] != ["c1", "201"])
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf", keep=lambda fields: fields[:2] != ["c1", "201"])
 
-    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir,
-                       prune=True, **METADATA) == 0
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, prune=True, **METADATA) == 0
     assert "genome map sat" not in caplog.text
 
 
 def test_a_root_without_a_cansnp_cannot_be_pruned(dataset, scheme, tmp_path, caplog):
     scores, outdir = scheme
-    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf",
-                          keep=lambda fields: fields[:2] != ["c1", "101"])
+    trimmed = vcf_rewrite(scores, tmp_path / "fewer.vcf", keep=lambda fields: fields[:2] != ["c1", "101"])
 
-    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir,
-                       prune=True, **METADATA) == 2
+    assert export_main(trimmed, dataset.hierarchy, dataset.reference, outdir, prune=True, **METADATA) == 2
     assert "has no canSNP, and a scheme cannot be written" in caplog.text
 
 
-@pytest.mark.parametrize("field,value,expected", [
-    ("genome", "TEST_1", "underscore"),
-    ("genbank_id", "GCA_7125.1", "well formed GenBank"),
-    ("refseq_id", "GCA_000007125.1", "well formed RefSeq"),
-    ("assembly_name", "", "assembly name is empty"),
-    ("strain", "tes;tus", "semicolon"),
-])
-def test_metadata_that_breaks_the_rules_is_refused(dataset, scheme, field, value, expected,
-                                                   caplog):
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [
+        ("genome", "TEST_1", "underscore"),
+        ("genbank_id", "GCA_7125.1", "well formed GenBank"),
+        ("refseq_id", "GCA_000007125.1", "well formed RefSeq"),
+        ("assembly_name", "", "assembly name is empty"),
+        ("strain", "tes;tus", "semicolon"),
+    ],
+)
+def test_metadata_that_breaks_the_rules_is_refused(dataset, scheme, field, value, expected, caplog):
     scores, outdir = scheme
     metadata = {**METADATA, field: value}
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **metadata) == 2
@@ -227,10 +271,13 @@ def test_only_canSNPs_that_passed_are_exported(dataset, scheme, tmp_path, caplog
     # A canSNP evaluate marked as failing is kept in its output but is not a
     # candidate for the scheme, so its node is left without one.
     scores, outdir = scheme
-    failing = vcf_rewrite(scores, tmp_path / "failing.vcf",
-                          change=lambda fields: fields[:6] + (
-                              ["LowScore"] if fields[:2] == ["c1", "601"] else [fields[6]])
-                          + fields[7:])
+    failing = vcf_rewrite(
+        scores,
+        tmp_path / "failing.vcf",
+        change=lambda fields: (
+            fields[:6] + (["LowScore"] if fields[:2] == ["c1", "601"] else [fields[6]]) + fields[7:]
+        ),
+    )
     assert export_main(failing, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 2
     assert "1 nodes have no canSNP: B.1" in caplog.text
 
@@ -244,8 +291,8 @@ def test_only_canSNPs_that_passed_are_exported(dataset, scheme, tmp_path, caplog
 
 
 CANSNPER2_DATA = os.environ.get("CANSNPER2_DATA") or os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2-data")
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "CanSNPer2-data"
+)
 VALIDATOR = os.path.join(CANSNPER2_DATA, "validate.py")
 
 
@@ -253,13 +300,16 @@ def validator_skip_reason():
     if not os.path.exists(VALIDATOR):
         return f"no CanSNPer2-data checkout at {CANSNPER2_DATA}; set CANSNPER2_DATA"
     if "CANSNP_HEADER" not in read(VALIDATOR):
-        return (f"the validate.py of {CANSNPER2_DATA} does not read the canSNP file; set "
-                f"CANSNPER2_DATA to a checkout that does")
+        return (
+            f"the validate.py of {CANSNPER2_DATA} does not read the canSNP file; set "
+            f"CANSNPER2_DATA to a checkout that does"
+        )
     return None
 
 
-needs_validator = pytest.mark.skipif(validator_skip_reason() is not None,
-                                     reason=validator_skip_reason() or "")
+needs_validator = pytest.mark.skipif(
+    validator_skip_reason() is not None, reason=validator_skip_reason() or ""
+)
 
 
 def scheme_checkout(outdir, tmp_path, organism="testus_organismus"):
@@ -278,22 +328,27 @@ def scheme_checkout(outdir, tmp_path, organism="testus_organismus"):
     ranks = [int(line.split("\t")[1]) for line in read(cansnp_path).splitlines()[1:]]
     if max(ranks) > 1:
         per_node = f"up to {max(ranks)}"
-    facts = [("Scheme", f"`{organism}`"), ("Status", "draft"), ("Organisms", "Testus"),
-             ("Reference genome", METADATA["genbank_id"]), ("Nodes", str(nodes)),
-             ("canSNPs per node", per_node), ("Origin", "CanSNPCreator test"),
-             ("Last changed", "2026-11-21")]
-    sections = ["Description", "Origin", "Validation", "Known issues", "References",
-                "Changes"]
+    facts = [
+        ("Scheme", f"`{organism}`"),
+        ("Status", "draft"),
+        ("Organisms", "Testus"),
+        ("Reference genome", METADATA["genbank_id"]),
+        ("Nodes", str(nodes)),
+        ("canSNPs per node", per_node),
+        ("Origin", "CanSNPCreator test"),
+        ("Last changed", "2026-11-21"),
+    ]
+    sections = ["Description", "Origin", "Validation", "Known issues", "References", "Changes"]
     (folder / "README.md").write_text(
         f"# {organism}\n\n| | |\n|---|---|\n"
         + "".join(f"| {key} | {value} |\n" for key, value in facts)
-        + "".join(f"\n## {section}\n\nNone.\n" for section in sections))
+        + "".join(f"\n## {section}\n\nNone.\n" for section in sections)
+    )
     return checkout
 
 
 def run_validator(checkout):
-    return subprocess.run([sys.executable, "validate.py"], cwd=str(checkout),
-                          capture_output=True, text=True)
+    return subprocess.run([sys.executable, "validate.py"], cwd=str(checkout), capture_output=True, text=True)
 
 
 @needs_validator
@@ -330,12 +385,12 @@ def refseq(dataset, scheme, tmp_path):
 
     scores, outdir = scheme
     reference = reference_parser(dataset.reference)
-    renamed = Reference.from_records(
-        (REFSEQ_NAMES[contig.name], contig.sequence) for contig in reference)
+    renamed = Reference.from_records((REFSEQ_NAMES[contig.name], contig.sequence) for contig in reference)
     fasta = str(tmp_path / "refseq.fasta")
     write_fasta(fasta, [(contig.name, contig.sequence) for contig in renamed])
-    planted = [replace(score, contig=REFSEQ_NAMES[score.contig])
-               for score in vcf.read_scores(scores, reference)]
+    planted = [
+        replace(score, contig=REFSEQ_NAMES[score.contig]) for score in vcf.read_scores(scores, reference)
+    ]
     path = str(tmp_path / "refseq.vcf")
     vcf.write_scores(path, planted, renamed, fasta, 0, None, DEFAULT_WEIGHTS)
 
@@ -345,25 +400,47 @@ def refseq(dataset, scheme, tmp_path):
         "# Sequence-Name\tSequence-Role\tAssigned-Molecule\tAssigned-Molecule-Location/Type"
         "\tGenBank-Accn\tRelationship\tRefSeq-Accn\tAssembly-Unit\tSequence-Length"
         "\tUCSC-style-name\n"
-        + "".join(f"chr{index}\tassembled-molecule\t{index}\tChromosome\t"
-                  f"{GENBANK_NAMES[name]}\t=\t{REFSEQ_NAMES[name]}\tPrimary Assembly\t"
-                  f"{reference.contig(name).length}\tna\n"
-                  for index, name in enumerate(("c1", "c2"), 1)))
+        + "".join(
+            f"chr{index}\tassembled-molecule\t{index}\tChromosome\t"
+            f"{GENBANK_NAMES[name]}\t=\t{REFSEQ_NAMES[name]}\tPrimary Assembly\t"
+            f"{reference.contig(name).length}\tna\n"
+            for index, name in enumerate(("c1", "c2"), 1)
+        )
+    )
     return path, fasta, str(report), outdir
 
 
 def sequences_of(outdir):
     lines = read(os.path.join(outdir, "testus_organismus_canSNPs.txt")).splitlines()[1:]
-    return {fields[0]: (fields[4], int(fields[5]))
-            for fields in (line.split("\t") for line in lines) if fields[9] == "yes"}
+    return {
+        fields[0]: (fields[4], int(fields[5]))
+        for fields in (line.split("\t") for line in lines)
+        if fields[9] == "yes"
+    }
 
 
 def test_refseq_contigs_are_written_with_genbank_names(dataset, refseq):
     scores, fasta, report, outdir = refseq
     metadata = [f"--{key.replace('_', '-')}={value}" for key, value in METADATA.items()]
-    assert cli_run("export", "--scores", scores, "--hierarchy", dataset.hierarchy,
-                   "--reference", fasta, "--outdir", outdir, *metadata,
-                   "--contig-aliases", report, "--snps-per-node", "2") == 0
+    assert (
+        cli_run(
+            "export",
+            "--scores",
+            scores,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--reference",
+            fasta,
+            "--outdir",
+            outdir,
+            *metadata,
+            "--contig-aliases",
+            report,
+            "--snps-per-node",
+            "2",
+        )
+        == 0
+    )
 
     found = sequences_of(outdir)
     for node, (column, _ancestral, _derived) in PLANTED.items():
@@ -371,8 +448,7 @@ def test_refseq_contigs_are_written_with_genbank_names(dataset, refseq):
         assert found[node] == (GENBANK_NAMES[contig], position), node
     snp_set = read(os.path.join(outdir, "testus_organismus_canSNPs.txt"))
     assert "NC_" not in snp_set
-    assert {line.split("\t")[4] for line in snp_set.splitlines()[1:]} \
-        == set(GENBANK_NAMES.values())
+    assert {line.split("\t")[4] for line in snp_set.splitlines()[1:]} == set(GENBANK_NAMES.values())
 
 
 def test_refseq_contigs_without_aliases_are_refused(dataset, refseq, caplog):
@@ -387,18 +463,17 @@ def test_refseq_contigs_with_no_genbank_alias_are_refused(dataset, refseq, tmp_p
     scores, fasta, _report, outdir = refseq
     aliases = tmp_path / "chromAlias.txt"
     aliases.write_text("NC_000001.1\tchr1\nNC_000002.1\tchr2\n")
-    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(aliases),
-                       **METADATA) == 2
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(aliases), **METADATA) == 2
     assert "NC_000002.1" in caplog.text
     # The file was given; asking for --contig-aliases again would not help.
-    refusals = [record.getMessage() for record in caplog.records
-                if "NC_000002.1" in record.getMessage()]
+    refusals = [record.getMessage() for record in caplog.records if "NC_000002.1" in record.getMessage()]
     assert any(f"{aliases} gives no GenBank accession" in message for message in refusals)
     assert not any("give it with --contig-aliases" in message for message in refusals)
 
 
 def test_a_scheme_with_genbank_names_is_audited_against_its_refseq_reference(
-        dataset, scheme, refseq, tmp_path):
+    dataset, scheme, refseq, tmp_path
+):
     # The scheme names its sequences by GenBank accession; the reference, the
     # scores and the alignment it was made from name them by RefSeq
     # accession. With the alias table the audit finds what it finds for the
@@ -409,20 +484,23 @@ def test_a_scheme_with_genbank_names_is_audited_against_its_refseq_reference(
     plain_outdir = str(tmp_path / "plain")
     scores, fasta, report, outdir = refseq
     metadata = {**METADATA}
-    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=report,
-                       **metadata) == 0
-    assert set(GENBANK_NAMES.values()) == {sequence for sequence, _ in
-                                          sequences_of(outdir).values()}
-    assert export_main(plain_scores, dataset.hierarchy, dataset.reference, plain_outdir,
-                       **metadata) == 0
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=report, **metadata) == 0
+    assert set(GENBANK_NAMES.values()) == {sequence for sequence, _ in sequences_of(outdir).values()}
+    assert export_main(plain_scores, dataset.hierarchy, dataset.reference, plain_outdir, **metadata) == 0
 
     def audited(directory, reference, scored, name, *aliases):
         findings = tmp_path / f"{name}_findings.tsv"
         prefix = str(tmp_path / name)
-        status = audit_main(directory, reference=reference, scores=scored,
-                            alignment=dataset.alignment, genome_map=dataset.genome_map,
-                            output=str(findings), typing_report=prefix,
-                            contig_aliases=aliases[0] if aliases else None)
+        status = audit_main(
+            directory,
+            reference=reference,
+            scores=scored,
+            alignment=dataset.alignment,
+            genome_map=dataset.genome_map,
+            output=str(findings),
+            typing_report=prefix,
+            contig_aliases=aliases[0] if aliases else None,
+        )
         rows = [line.split("\t") for line in findings.read_text().splitlines()[1:]]
         with open(prefix + "_snps.tsv") as handle:
             header, *lines = handle.read().splitlines()
@@ -431,8 +509,7 @@ def test_a_scheme_with_genbank_names_is_audited_against_its_refseq_reference(
         return status, sorted((row[0], row[2], row[3]) for row in rows), missing
 
     status, found, missing = audited(outdir, fasta, scores, "genbank", report)
-    plain_status, expected, plain_missing = audited(plain_outdir, dataset.reference,
-                                                    plain_scores, "plain")
+    plain_status, expected, plain_missing = audited(plain_outdir, dataset.reference, plain_scores, "plain")
     assert not [row for row in found if row[1] == "sequence"]
     assert (status, found, missing) == (plain_status, expected, plain_missing)
     assert any(row[1] == "single-site" for row in found), "the genome checks ran"
@@ -444,8 +521,7 @@ def test_a_scheme_with_genbank_names_is_audited_against_its_refseq_reference(
     assert text.count("\tsequence\t") == 2 and "--contig-aliases" in text
 
 
-def test_a_refseq_sequence_not_identical_to_its_genbank_one_is_refused(dataset, refseq,
-                                                                       caplog):
+def test_a_refseq_sequence_not_identical_to_its_genbank_one_is_refused(dataset, refseq, caplog):
     # NCBI gives the Relationship <> when the RefSeq sequence is not identical
     # to the GenBank one, so a position on one need not hold on the other.
     scores, fasta, report, outdir = refseq
@@ -453,10 +529,8 @@ def test_a_refseq_sequence_not_identical_to_its_genbank_one_is_refused(dataset, 
         text = handle.read()
     with open(report, "w") as handle:
         handle.write(text.replace("CP000002.1\t=\t", "CP000002.1\t<>\t"))
-    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=report,
-                       **METADATA) == 2
-    refusals = [record.getMessage() for record in caplog.records
-                if "not identical" in record.getMessage()]
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=report, **METADATA) == 2
+    refusals = [record.getMessage() for record in caplog.records if "not identical" in record.getMessage()]
     assert len(refusals) == 1
     assert "NC_000002.1" in refusals[0] and "CP000002.1" in refusals[0]
     assert "NC_000001.1" not in refusals[0]
@@ -474,7 +548,8 @@ def test_the_alias_reader_keeps_which_sequences_are_not_identical(tmp_path):
         "chr1\tassembled-molecule\t1\tChromosome\tCP000001.1\t=\tNC_000001.1\tPrimary"
         "\t10\tna\n"
         "pX\tassembled-molecule\tpX\tPlasmid\tCP000002.1\t<>\tNC_000002.1\tPrimary"
-        "\t10\tna\n")
+        "\t10\tna\n"
+    )
     same, different = read_contig_aliases(str(report))
     assert same == {"chr1", "CP000001.1", "NC_000001.1"} and not same.differs
     assert different == {"pX", "CP000002.1", "NC_000002.1"}
@@ -496,8 +571,11 @@ def test_a_refseq_contig_or_scaffold_name_is_not_called_neither_kind(name):
 def test_a_local_sequence_name_is_written_with_one_warning(dataset, scheme, caplog):
     scores, outdir = scheme
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
-    warnings = [record.getMessage() for record in caplog.records
-                if record.levelname == "WARNING" and "CanSNPer2-download" in record.getMessage()]
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING" and "CanSNPer2-download" in record.getMessage()
+    ]
     assert len(warnings) == 1
     assert "c1" in warnings[0] and "c2" in warnings[0]
     assert sequences_of(outdir)["B.2"] == ("c2", 1)
@@ -507,8 +585,7 @@ def test_an_unreadable_alias_file_is_refused(dataset, refseq, tmp_path, caplog):
     scores, fasta, _report, outdir = refseq
     empty = tmp_path / "empty.txt"
     empty.write_text("")
-    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(empty),
-                       **METADATA) == 1
+    assert export_main(scores, dataset.hierarchy, fasta, outdir, contig_aliases=str(empty), **METADATA) == 1
     assert "empty.txt" in caplog.text
 
 
@@ -519,8 +596,8 @@ CANSNPER2_PYTHON = os.environ.get("CANSNPER2_PYTHON") or sys.executable
 # The checkout that reads the canSNP file, taken from CANSNPER2 or found beside this
 # repository. It is put first on the path of the python above, so that it is the one imported.
 CANSNPER2 = os.environ.get("CANSNPER2") or os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "CanSNPer2")
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "CanSNPer2"
+)
 
 
 def cansnper2_env():
@@ -533,38 +610,65 @@ def cansnper2_230_missing():
     try:
         completed = subprocess.run(
             [CANSNPER2_PYTHON, "-c", "import CanSNPer2.modules.SchemeInfo"],
-            capture_output=True, text=True, timeout=60, env=cansnper2_env())
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=cansnper2_env(),
+        )
     except (OSError, subprocess.SubprocessError):
         return True
     return completed.returncode != 0
 
 
-@pytest.mark.skipif(cansnper2_230_missing(),
-                    reason="CanSNPer2 2.3.0 is not importable; set CANSNPER2_PYTHON to a python "
-                           "that has it")
+@pytest.mark.skipif(
+    cansnper2_230_missing(),
+    reason="CanSNPer2 2.3.0 is not importable; set CANSNPER2_PYTHON to a python that has it",
+)
 def test_the_export_builds_with_cansnper2_230(dataset, scheme, tmp_path):
     scores, outdir = scheme
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
-                       snps_per_node=2, spacing=0) == 0
+    assert (
+        export_main(
+            scores, dataset.hierarchy, dataset.reference, outdir, **METADATA, snps_per_node=2, spacing=0
+        )
+        == 0
+    )
     database = str(tmp_path / "testus.db")
     completed = subprocess.run(
-        [CANSNPER2_PYTHON, "-m", "CanSNPer2.SNPDatabase", "--create", "-db", database,
-         "--tree", os.path.join(outdir, "testus_organismus_tree.txt"),
-         "--annotation", os.path.join(outdir, "testus_organismus_canSNPs.txt"),
-         "--references", os.path.join(outdir, "testus_organismus_references.txt"),
-         "--tmpdir", str(tmp_path)],
-        cwd=str(tmp_path), capture_output=True, text=True, timeout=300,
-        env=cansnper2_env())
+        [
+            CANSNPER2_PYTHON,
+            "-m",
+            "CanSNPer2.SNPDatabase",
+            "--create",
+            "-db",
+            database,
+            "--tree",
+            os.path.join(outdir, "testus_organismus_tree.txt"),
+            "--annotation",
+            os.path.join(outdir, "testus_organismus_canSNPs.txt"),
+            "--references",
+            os.path.join(outdir, "testus_organismus_references.txt"),
+            "--tmpdir",
+            str(tmp_path),
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=cansnper2_env(),
+    )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert os.path.getsize(database) > 0
 
     # The database gives back the SNPs as they were written.
     exported = tmp_path / "exported"
     completed = subprocess.run(
-        [CANSNPER2_PYTHON, "-m", "CanSNPer2.SNPDatabase", "-db", database, "--export",
-         "-o", str(exported)],
-        cwd=str(tmp_path), capture_output=True, text=True, timeout=300,
-        env=cansnper2_env())
+        [CANSNPER2_PYTHON, "-m", "CanSNPer2.SNPDatabase", "-db", database, "--export", "-o", str(exported)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=cansnper2_env(),
+    )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     written = sequences_of(outdir)
     found = {}
@@ -598,18 +702,26 @@ def several(dataset, scheme, tmp_path):
             position = original.position + offset
             base = contig.base(position - 1)
             derived = "A" if base != "A" else "C"
-            extra.append(ScoredSnp(contig=original.contig, position=position, node=original.node,
-                                   total=original.total - drop, terms=dict(original.terms),
-                                   derived=derived, ancestral=base))
+            extra.append(
+                ScoredSnp(
+                    contig=original.contig,
+                    position=position,
+                    node=original.node,
+                    total=original.total - drop,
+                    terms=dict(original.terms),
+                    derived=derived,
+                    ancestral=base,
+                )
+            )
     path = str(tmp_path / "several.vcf")
-    vcf.write_scores(path, planted + extra, reference, dataset.reference, 0, None,
-                     DEFAULT_WEIGHTS)
+    vcf.write_scores(path, planted + extra, reference, dataset.reference, 0, None, DEFAULT_WEIGHTS)
     return path, outdir
 
 
 def snp_set(outdir):
-    rows = [line.split("\t") for line in
-            read(os.path.join(outdir, "testus_organismus_canSNPs.txt")).splitlines()]
+    rows = [
+        line.split("\t") for line in read(os.path.join(outdir, "testus_organismus_canSNPs.txt")).splitlines()
+    ]
     assert rows[0] == list(CANSNP_COLUMNS)
     return rows[1:]
 
@@ -628,8 +740,12 @@ def test_one_snp_per_node_writes_the_cansnp_file_and_no_snp_file(dataset, severa
 
 def test_the_cansnp_file_ranks_each_node_and_types_rank_one(dataset, several):
     scores, outdir = several
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
-                       snps_per_node=None, spacing=0) == 0
+    assert (
+        export_main(
+            scores, dataset.hierarchy, dataset.reference, outdir, **METADATA, snps_per_node=None, spacing=0
+        )
+        == 0
+    )
     rows = snp_set(outdir)
     assert len(rows) == 3 * len(PLANTED)
     assert not os.path.exists(os.path.join(outdir, "testus_organismus_snp.txt"))
@@ -638,18 +754,20 @@ def test_the_cansnp_file_ranks_each_node_and_types_rank_one(dataset, several):
         ranked = [row for row in rows if row[0] == node]
         assert [row[1] for row in ranked] == ["1", "2", "3"]
         assert [row[9] for row in ranked] == ["yes", "no", "no"], "one typed canSNP per node"
-        assert [int(row[8]) for row in ranked] == sorted((int(row[8]) for row in ranked),
-                                                         reverse=True)
+        assert [int(row[8]) for row in ranked] == sorted((int(row[8]) for row in ranked), reverse=True)
     scheme = read_scheme(outdir)
     assert not scheme.problems
-    assert [snp.node for snp in scheme.snps] == [snp.node for snp in scheme.snp_set
-                                                 if snp.rank == 1]
+    assert [snp.node for snp in scheme.snps] == [snp.node for snp in scheme.snp_set if snp.rank == 1]
 
 
 def test_spacing_passes_over_a_canSNP_beside_one_already_kept(dataset, several):
     scores, outdir = several
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
-                       snps_per_node=2, spacing=10) == 0
+    assert (
+        export_main(
+            scores, dataset.hierarchy, dataset.reference, outdir, **METADATA, snps_per_node=2, spacing=10
+        )
+        == 0
+    )
     rows = snp_set(outdir)
     for node in PLANTED:
         positions = [int(row[5]) for row in rows if row[0] == node]
@@ -660,17 +778,37 @@ def test_spacing_passes_over_a_canSNP_beside_one_already_kept(dataset, several):
 def test_the_snp_set_is_chosen_from_the_command_line(dataset, several):
     scores, outdir = several
     metadata = [f"--{key.replace('_', '-')}={value}" for key, value in METADATA.items()]
-    assert cli_run("export", "--scores", scores, "--hierarchy", dataset.hierarchy,
-                   "--reference", dataset.reference, "--outdir", outdir, *metadata,
-                   "--snps-per-node", "all", "--min-spacing", "0") == 0
+    assert (
+        cli_run(
+            "export",
+            "--scores",
+            scores,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--reference",
+            dataset.reference,
+            "--outdir",
+            outdir,
+            *metadata,
+            "--snps-per-node",
+            "all",
+            "--min-spacing",
+            "0",
+        )
+        == 0
+    )
     assert len(snp_set(outdir)) == 3 * len(PLANTED)
 
 
 @needs_validator
 def test_the_snp_set_passes_the_cansnper2_data_validator(dataset, several, tmp_path):
     scores, outdir = several
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
-                       snps_per_node=None, spacing=0) == 0
+    assert (
+        export_main(
+            scores, dataset.hierarchy, dataset.reference, outdir, **METADATA, snps_per_node=None, spacing=0
+        )
+        == 0
+    )
     checkout = scheme_checkout(outdir, tmp_path)
     completed = run_validator(checkout)
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -699,8 +837,7 @@ def test_genome_rows_give_each_genome_its_accession_node_and_role():
         "A.1": ["Fam_Gen_sp_GCF_000000001.1", "GCA_000000002.1"],
         "B": ["Fam_Gen_sp_GCF_000000003.1", "in-house-7"],
     }
-    aligned = ["Fam_Gen_sp_GCF_000000001.1", "Fam_Gen_sp_GCF_000000003.1",
-               "Fam_Out_grp_GCF_000000009.1"]
+    aligned = ["Fam_Gen_sp_GCF_000000001.1", "Fam_Gen_sp_GCF_000000003.1", "Fam_Out_grp_GCF_000000009.1"]
     # A.1 was left out of the scheme, so its genomes move to A.
     rows, warnings = genome_rows(tree, ["root", "A", "B"], clusters, aligned)
     assert rows == [
@@ -718,15 +855,15 @@ def accessioned(dataset, tmp_path):
 
     from cansnpscorer.helpers.file_utils import read_alignment
 
-    names = {genome: f"Fam_Gen_sp_GCF_00000000{index}.1" for index, genome
-             in enumerate(GENOMES, 1)}
+    names = {genome: f"Fam_Gen_sp_GCF_00000000{index}.1" for index, genome in enumerate(GENOMES, 1)}
     alignment = read_alignment(dataset.alignment)
     aligned = str(tmp_path / "aligned.fasta")
     write_fasta(aligned, [(names[name], sequence) for name, sequence in alignment.items()])
     genome_map = tmp_path / "genome_map.tsv"
-    genome_map.write_text("".join(f"{names[genome]}\t{node}\n" for node, genomes
-                                  in CLUSTERS.items() for genome in genomes)
-                          + "GCA_000000099.1\tA.1\n")  # a member, not aligned
+    genome_map.write_text(
+        "".join(f"{names[genome]}\t{node}\n" for node, genomes in CLUSTERS.items() for genome in genomes)
+        + "GCA_000000099.1\tA.1\n"
+    )  # a member, not aligned
     return aligned, str(genome_map)
 
 
@@ -734,14 +871,52 @@ def test_the_genomes_file_is_written_validated_and_audited(dataset, tmp_path):
     aligned, genome_map = accessioned(dataset, tmp_path)
     snps, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "scores.vcf")
     outdir = str(tmp_path / "scheme")
-    assert cli_run("extract", "--alignment", aligned, "--reference", dataset.reference,
-                   "--hierarchy", dataset.hierarchy, "--genome-map", genome_map,
-                   "-o", snps) == 0
-    assert cli_run("evaluate", "--snps", snps, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats,
-                   "-o", scores, "--cutoff", "0") == 0
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir,
-                       genome_map=genome_map, alignment=aligned, **METADATA) == 0
+    assert (
+        cli_run(
+            "extract",
+            "--alignment",
+            aligned,
+            "--reference",
+            dataset.reference,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--genome-map",
+            genome_map,
+            "-o",
+            snps,
+        )
+        == 0
+    )
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snps,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+            "--cutoff",
+            "0",
+        )
+        == 0
+    )
+    assert (
+        export_main(
+            scores,
+            dataset.hierarchy,
+            dataset.reference,
+            outdir,
+            genome_map=genome_map,
+            alignment=aligned,
+            **METADATA,
+        )
+        == 0
+    )
 
     lines = read(os.path.join(outdir, "testus_organismus_genomes.txt")).splitlines()
     assert lines[0] == "genome\tnode\trole"
@@ -753,8 +928,8 @@ def test_the_genomes_file_is_written_validated_and_audited(dataset, tmp_path):
     # audit uses the scheme's own genomes file when given only the alignment
     report = tmp_path / "findings.tsv"
     from cansnpscorer.cansnp_audit import main as audit_main
-    assert audit_main(outdir, reference=dataset.reference, alignment=aligned,
-                      output=str(report)) == 0
+
+    assert audit_main(outdir, reference=dataset.reference, alignment=aligned, output=str(report)) == 0
     assert "not-canonical" not in report.read_text()
     assert "single-site" in report.read_text(), "the genome checks ran"
 
@@ -764,14 +939,52 @@ def test_the_genomes_file_passes_the_cansnper2_data_validator(dataset, tmp_path)
     aligned, genome_map = accessioned(dataset, tmp_path)
     snps, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "scores.vcf")
     outdir = str(tmp_path / "scheme")
-    assert cli_run("extract", "--alignment", aligned, "--reference", dataset.reference,
-                   "--hierarchy", dataset.hierarchy, "--genome-map", genome_map,
-                   "-o", snps) == 0
-    assert cli_run("evaluate", "--snps", snps, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats,
-                   "-o", scores, "--cutoff", "0") == 0
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir,
-                       genome_map=genome_map, alignment=aligned, **METADATA) == 0
+    assert (
+        cli_run(
+            "extract",
+            "--alignment",
+            aligned,
+            "--reference",
+            dataset.reference,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--genome-map",
+            genome_map,
+            "-o",
+            snps,
+        )
+        == 0
+    )
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snps,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+            "--cutoff",
+            "0",
+        )
+        == 0
+    )
+    assert (
+        export_main(
+            scores,
+            dataset.hierarchy,
+            dataset.reference,
+            outdir,
+            genome_map=genome_map,
+            alignment=aligned,
+            **METADATA,
+        )
+        == 0
+    )
 
     completed = run_validator(scheme_checkout(outdir, tmp_path))
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -780,8 +993,12 @@ def test_the_genomes_file_passes_the_cansnper2_data_validator(dataset, tmp_path)
 
 def test_the_region_is_set_from_the_command_line(tmp_path, dataset, several):
     scores, outdir = several
-    assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA,
-                       snps_per_node=3, spacing=0) == 0
+    assert (
+        export_main(
+            scores, dataset.hierarchy, dataset.reference, outdir, **METADATA, snps_per_node=3, spacing=0
+        )
+        == 0
+    )
     found = tmp_path / "found.tsv"
     cli_run("audit", "--scheme-dir", outdir, "--set-region", "1000000", "-o", str(found))
     assert "clustered-set" in found.read_text()

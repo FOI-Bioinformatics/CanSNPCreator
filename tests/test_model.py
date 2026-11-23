@@ -63,8 +63,14 @@ def test_positions_resolve_on_the_third_contig(tmp_path):
         ">c1\n" + "A" * 100 + "\n>c2\n" + "C" * 50 + "\n>c3\n" + "G" * 25 + "\n",
     )
     reference = reference_parser(path)
-    for position, expected in [(0, ("c1", 0)), (99, ("c1", 99)), (100, ("c2", 0)),
-                               (149, ("c2", 49)), (150, ("c3", 0)), (174, ("c3", 24))]:
+    for position, expected in [
+        (0, ("c1", 0)),
+        (99, ("c1", 99)),
+        (100, ("c2", 0)),
+        (149, ("c2", 49)),
+        (150, ("c3", 0)),
+        (174, ("c3", 24)),
+    ]:
         contig, local_position = reference.locate(position)
         assert (contig.name, local_position) == expected, position
 
@@ -130,8 +136,7 @@ def test_a_projected_row_maps_each_column_onto_its_own_position():
     reference = Reference.from_records([("c1", "ACGTA"), ("c2", "CGTAC")])
     mapping = AlignmentMap("AC--ACG-A", reference)
     assert mapping.projected
-    assert [mapping.to_reference(column) for column in range(9)] == [
-        0, 1, None, None, 4, 5, 6, None, 8]
+    assert [mapping.to_reference(column) for column in range(9)] == [0, 1, None, None, 4, 5, 6, None, 8]
     assert mapping.locate(5) == (reference.contig("c2"), 1)
     assert mapping.unaligned == 4, "two gaps, one more, and the last base"
 
@@ -286,20 +291,25 @@ def test_a_prokka_gff3_with_cds_only_gives_genes_and_frames(tmp_path):
     # Prokka writes CDS features without gene features unless --addgenes,
     # and ends the file with the sequence after a ##FASTA directive.
     path = tmp_path / "prokka.gff"
-    path.write_text("##gff-version 3\n"
-                    "c1\tProdigal:002006\tCDS\t3\t11\t.\t-\t0\tID=X_00001\n"
-                    "c1\tAragorn:001002\ttRNA\t20\t90\t.\t+\t.\tID=X_00002\n"
-                    "##FASTA\n>c1\nACGTACGTACGT\n")
+    path.write_text(
+        "##gff-version 3\n"
+        "c1\tProdigal:002006\tCDS\t3\t11\t.\t-\t0\tID=X_00001\n"
+        "c1\tAragorn:001002\ttRNA\t20\t90\t.\t+\t.\tID=X_00002\n"
+        "##FASTA\n>c1\nACGTACGTACGT\n"
+    )
     model = read_gff3(str(path))
     assert model.genes == {"c1": [(2, 10)]}
     assert model.cds == {"c1": [(2, 10, "-", 0)]}
 
 
-@pytest.mark.parametrize("line,message", [
-    ("c1\tx\tCDS\t3\t11\t.\t+\t.\tID=a", "without a phase"),
-    ("c1\tx\tgene\t11\t3\t.\t+\t.\tID=a", "impossible interval"),
-    ("c1 x gene 3 11 . + . ID=a", "9"),
-])
+@pytest.mark.parametrize(
+    "line,message",
+    [
+        ("c1\tx\tCDS\t3\t11\t.\t+\t.\tID=a", "without a phase"),
+        ("c1\tx\tgene\t11\t3\t.\t+\t.\tID=a", "impossible interval"),
+        ("c1 x gene 3 11 . + . ID=a", "9"),
+    ],
+)
 def test_a_malformed_gff3_line_is_refused(tmp_path, line, message):
     from cansnpscorer.helpers.file_utils import read_gff3
 
@@ -318,7 +328,6 @@ def test_genome_names_are_resolved_to_alignment_records():
     assert resolved == {"A": ["Fam_Gen_sp_GCF_000000001.1", "strain-7"], "B": []}
     # A name written without the separator may be another genome: S1_2 is not S12.
     assert unmatched == ["missing", "strain7"] and ambiguous == []
-
 
 
 # -- found in review ---------------------------------------------------------
@@ -351,13 +360,19 @@ def test_a_record_id_matches_itself_beside_a_record_named_as_its_file():
 def test_an_accession_matches_an_ncbi_file_name_and_an_unversioned_one():
     from cansnpscorer.helpers.names import resolve_names
 
-    records = ["GCA_900475405.1_49699_E01_genomic", "Fam_Gen_sp_GCF_000007125.1",
-               "Fam_Gen_sp_GCF_000007125.10x"]
+    records = [
+        "GCA_900475405.1_49699_E01_genomic",
+        "Fam_Gen_sp_GCF_000007125.1",
+        "Fam_Gen_sp_GCF_000007125.10x",
+    ]
     matched, unmatched, ambiguous = resolve_names(
-        ["GCA_900475405.1", "GCA_900475405", "GCF_000007125.1", "GCF_000007125",
-         "GCA_90047540.1"], records)
-    assert matched == {"GCA_900475405.1": records[0], "GCA_900475405": records[0],
-                       "GCF_000007125.1": records[1]}
+        ["GCA_900475405.1", "GCA_900475405", "GCF_000007125.1", "GCF_000007125", "GCA_90047540.1"], records
+    )
+    assert matched == {
+        "GCA_900475405.1": records[0],
+        "GCA_900475405": records[0],
+        "GCF_000007125.1": records[1],
+    }
     assert ambiguous == ["GCF_000007125"], "two versions of it are aligned"
     assert unmatched == ["GCA_90047540.1"]
 
@@ -368,9 +383,13 @@ def test_a_snp_in_a_gene_holding_smaller_features_is_in_a_gene(tmp_path):
     from cansnpscorer.model import Contig
 
     path = tmp_path / "nested.gff"
-    path.write_text("##gff-version 3\n" + "".join(
-        f"c1\tx\tgene\t{start}\t{end}\t.\t+\t.\tID=g{start}\n"
-        for start, end in [(1, 1000), (11, 20), (31, 40), (51, 60), (71, 80)]))
+    path.write_text(
+        "##gff-version 3\n"
+        + "".join(
+            f"c1\tx\tgene\t{start}\t{end}\t.\t+\t.\tID=g{start}\n"
+            for start, end in [(1, 1000), (11, 20), (31, 40), (51, 60), (71, 80)]
+        )
+    )
     genes = read_gff3(str(path)).genes["c1"]
     assert genes == [(0, 999)]
     snp = SnpContext(Contig("c1", "A" * 1000, 0), 500, "A", ("A", "G"), genes=genes)
@@ -391,22 +410,23 @@ def test_a_later_cds_is_read_when_the_first_cannot_give_a_codon():
 
     # In the first CDS the SNP's codon would run past the CDS's end; the
     # second reads it whole.
-    snp = SnpContext(Contig("c1", "TTATTGTAA", 0), 2, "A", ("A", "G"),
-                     cds=[(0, 3, "+", 2), (0, 8, "+", 0)])
+    snp = SnpContext(Contig("c1", "TTATTGTAA", 0), 2, "A", ("A", "G"), cds=[(0, 3, "+", 2), (0, 8, "+", 0)])
     assert mutation_score(snp) == 1.0, "TTA and TTG are both Leu"
 
 
-@pytest.mark.parametrize("line", [
-    "##INFO=<Number=1,Type=String,Description=\"no ID\">",
-    "##INFO=<ID=X,Number=1,Type=String,Description=\"unterminated>",
-    "##contig=<ID=c1,length=many>",
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        '##INFO=<Number=1,Type=String,Description="no ID">',
+        '##INFO=<ID=X,Number=1,Type=String,Description="unterminated>',
+        "##contig=<ID=c1,length=many>",
+    ],
+)
 def test_a_malformed_vcf_header_line_is_refused_cleanly(tmp_path, line):
     from cansnpscorer import vcf
 
     path = tmp_path / "bad.vcf"
-    path.write_text("##fileformat=VCFv4.3\n" + line + "\n"
-                    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    path.write_text("##fileformat=VCFv4.3\n" + line + "\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
     with pytest.raises(vcf.VcfError, match="malformed header line"):
         vcf.read(str(path))
 
@@ -454,10 +474,12 @@ def test_contigs_renamed_by_prokka_are_matched_by_their_sequence(tmp_path):
 
     reference = two_contig_reference()
     path = tmp_path / "prokka.gff"
-    path.write_text("##gff-version 3\n"
-                    "gnl|X|PFX_1\tProdigal:002006\tCDS\t1\t15\t.\t+\t0\tID=PFX_00001\n"
-                    "##FASTA\n>gnl|X|PFX_1\n" + "atgaaacccgggtaa" * 4 + "\n"
-                    ">gnl|X|PFX_2\n" + "GGGCCCAAATTT" * 3 + "\n")
+    path.write_text(
+        "##gff-version 3\n"
+        "gnl|X|PFX_1\tProdigal:002006\tCDS\t1\t15\t.\t+\t0\tID=PFX_00001\n"
+        "##FASTA\n>gnl|X|PFX_1\n" + "atgaaacccgggtaa" * 4 + "\n"
+        ">gnl|X|PFX_2\n" + "GGGCCCAAATTT" * 3 + "\n"
+    )
     model = read_gff3(str(path))
     assert set(model.sequences) == {"gnl|X|PFX_1", "gnl|X|PFX_2"}
     genes = annotations_by_contig(model.genes, reference, "gene", sequences=model.sequences)
@@ -469,8 +491,9 @@ def test_a_sequence_that_differs_is_not_matched(tmp_path):
 
     reference = two_contig_reference()
     with pytest.raises(ValueError, match="--contig-aliases"):
-        annotations_by_contig({"other": [(0, 1)]}, reference, "gene",
-                              sequences={"other": "ATGAAACCCGGGTAG" * 4})
+        annotations_by_contig(
+            {"other": [(0, 1)]}, reference, "gene", sequences={"other": "ATGAAACCCGGGTAG" * 4}
+        )
 
 
 def test_an_ncbi_assembly_report_pairs_genbank_and_refseq_names(tmp_path):
@@ -484,11 +507,11 @@ def test_an_ncbi_assembly_report_pairs_genbank_and_refseq_names(tmp_path):
         "GenBank-Accn\tRelationship\tRefSeq-Accn\tAssembly-Unit\tSequence-Length\t"
         "UCSC-style-name\n"
         "supercont1.1\tunplaced-scaffold\tna\tna\tA.1\t=\tNZ_A.1\tPrimary Assembly\t60\tna\n"
-        "supercont1.2\tunplaced-scaffold\tna\tna\tB.1\t=\tNZ_B.1\tPrimary Assembly\t36\tna\n")
+        "supercont1.2\tunplaced-scaffold\tna\tna\tB.1\t=\tNZ_B.1\tPrimary Assembly\t36\tna\n"
+    )
     aliases = read_contig_aliases(str(report))
     assert {"supercont1.1", "A.1", "NZ_A.1"} in aliases
-    genes = annotations_by_contig({"A.1": [(0, 5)], "B.1": [(1, 2)]}, two_contig_reference(),
-                                  "gene", aliases)
+    genes = annotations_by_contig({"A.1": [(0, 5)], "B.1": [(1, 2)]}, two_contig_reference(), "gene", aliases)
     assert genes == {"NZ_A.1": [(0, 5)], "NZ_B.1": [(1, 2)]}
 
 
@@ -504,8 +527,9 @@ def test_two_names_for_one_contig_are_refused():
     from cansnpscorer.cansnp_evaluator import annotations_by_contig
 
     with pytest.raises(ValueError, match=r"describes the contig NZ_A\.1 twice"):
-        annotations_by_contig({"NZ_A.1": [(0, 1)], "A.1": [(2, 3)]}, two_contig_reference(),
-                              "gene", [{"A.1", "NZ_A.1"}])
+        annotations_by_contig(
+            {"NZ_A.1": [(0, 1)], "A.1": [(2, 3)]}, two_contig_reference(), "gene", [{"A.1", "NZ_A.1"}]
+        )
 
 
 def test_pseudogenes_and_other_genetic_codes_give_no_frame(tmp_path, caplog):
@@ -516,7 +540,8 @@ def test_pseudogenes_and_other_genetic_codes_give_no_frame(tmp_path, caplog):
         "##gff-version 3\n"
         "NZ_A.1\tRefSeq\tCDS\t1\t15\t.\t+\t0\tID=cds-1;pseudo=true;transl_table=11\n"
         "NZ_A.1\tRefSeq\tCDS\t16\t30\t.\t+\t0\tID=cds-2;transl_table=4\n"
-        "NZ_A.1\tRefSeq\tCDS\t31\t45\t.\t+\t0\tID=cds-3;product=a%3Bb;transl_table=11\n")
+        "NZ_A.1\tRefSeq\tCDS\t31\t45\t.\t+\t0\tID=cds-3;product=a%3Bb;transl_table=11\n"
+    )
     model = read_gff3(str(path))
     assert model.cds == {"NZ_A.1": [(30, 44, "+", 0)]}
     assert model.genes == {"NZ_A.1": [(0, 44)]}, "all three still place a SNP in a gene"
@@ -565,5 +590,10 @@ def test_the_nearest_variation_is_sought_on_the_same_contig():
     from cansnpscorer.helpers.data_utils import nearest_distances
 
     variable = {"c1": [10, 15, 40], "c2": [3]}
-    assert nearest_distances([("c1", 15), ("c1", 12), ("c1", 100), ("c2", 3), ("c3", 5)],
-                             variable) == [5, 2, 60, None, None]
+    assert nearest_distances([("c1", 15), ("c1", 12), ("c1", 100), ("c2", 3), ("c3", 5)], variable) == [
+        5,
+        2,
+        60,
+        None,
+        None,
+    ]

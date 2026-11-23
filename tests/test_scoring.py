@@ -150,8 +150,7 @@ def test_repeat_proximity():
 
 
 def at(contig, position, alleles, cds):
-    return SnpContext(contig=contig, position=position, node="A.1", alleles=alleles,
-                      cds=[cds])
+    return SnpContext(contig=contig, position=position, node="A.1", alleles=alleles, cds=[cds])
 
 
 def test_the_codon_is_read_in_the_frame_of_the_cds():
@@ -192,8 +191,13 @@ def test_an_incomplete_codon_scores_zero():
 
 def test_a_gene_without_a_cds_gives_no_frame():
     # A gene feature says the SNP is in a gene; only a CDS says how it is read.
-    snp = SnpContext(contig=Contig(name="c1", sequence=GENE, start=0), position=5,
-                     node="A.1", alleles=("T", "G"), genes=[(0, 8, "+")])
+    snp = SnpContext(
+        contig=Contig(name="c1", sequence=GENE, start=0),
+        position=5,
+        node="A.1",
+        alleles=("T", "G"),
+        genes=[(0, 8, "+")],
+    )
     assert gene_score(snp, 0) == 1.0
     assert mutation_score(snp) == 0.0
 

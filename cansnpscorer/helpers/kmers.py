@@ -35,8 +35,9 @@ def _reverse_complement(sequence: str) -> str:
     return sequence.translate(COMPLEMENT)[::-1]
 
 
-def copy_numbers(reference: Reference, sites: Iterable[tuple[str, int]], k: int = DEFAULT_K,
-                 step: int = DEFAULT_STEP) -> dict[tuple[str, int], int]:
+def copy_numbers(
+    reference: Reference, sites: Iterable[tuple[str, int]], k: int = DEFAULT_K, step: int = DEFAULT_STEP
+) -> dict[tuple[str, int], int]:
     """The copy number of the context of each site.
 
     Args:
@@ -58,7 +59,7 @@ def copy_numbers(reference: Reference, sites: Iterable[tuple[str, int]], k: int 
     # on either strand is counted while the forward strand alone is read. A
     # k-mer that is its own reverse complement has one key, and each of its
     # occurrences is counted once, as it should be.
-    wanted: dict[int, int] = {}       # hash of a k-mer or its reverse complement -> entry
+    wanted: dict[int, int] = {}  # hash of a k-mer or its reverse complement -> entry
     entries_of: dict[tuple[str, int], tuple[int, ...]] = {}
     entries = 0
     for name, position in sites:
@@ -72,7 +73,7 @@ def copy_numbers(reference: Reference, sites: Iterable[tuple[str, int]], k: int 
         for start in starts:
             if start < 0 or start + k > len(sequence):
                 continue
-            kmer = sequence[start:start + k].upper()
+            kmer = sequence[start : start + k].upper()
             if not set(kmer) <= BASES:
                 continue
             key = hash(kmer)
@@ -90,9 +91,8 @@ def copy_numbers(reference: Reference, sites: Iterable[tuple[str, int]], k: int 
         for contig in reference.contigs:
             sequence = contig.sequence.upper()
             for start in range(len(sequence) - k + 1):
-                entry = wanted.get(hash(sequence[start:start + k]))
+                entry = wanted.get(hash(sequence[start : start + k]))
                 if entry is not None:
                     counts[entry] += 1
 
-    return {site: max((counts[entry] for entry in found), default=0)
-            for site, found in entries_of.items()}
+    return {site: max((counts[entry] for entry in found), default=0) for site, found in entries_of.items()}

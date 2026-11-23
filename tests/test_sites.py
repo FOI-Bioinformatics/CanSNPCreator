@@ -12,8 +12,7 @@ REFERENCE = Reference.from_records([("c1", "ACGTACGT")])
 def vcf_with_positions(tmp_path, *positions):
     path = tmp_path / "snps.vcf"
     lines = ["##fileformat=VCFv4.2", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"]
-    lines += [f"c1\t{position}\t.\t{REFERENCE.base(position - 1)}\tN\t.\tPASS\t."
-              for position in positions]
+    lines += [f"c1\t{position}\t.\t{REFERENCE.base(position - 1)}\tN\t.\tPASS\t." for position in positions]
     path.write_text("\n".join(lines) + "\n")
     return str(path)
 
@@ -58,8 +57,7 @@ def test_the_sample_is_that_of_python_random_on_the_positions_in_file_order(tmp_
 
     a_path, _b_path = two_alignments(tmp_path)
     positions = [8, 2, 5, 1, 7, 4]
-    rows = sample_sites(vcf_with_positions(tmp_path, *positions), REFERENCE, [a_path], sites=3,
-                        seed=0)
+    rows = sample_sites(vcf_with_positions(tmp_path, *positions), REFERENCE, [a_path], sites=3, seed=0)
     taken = sorted(random.Random(0).sample([p - 1 for p in positions], 3))
     assert rows["genomeA1"] == "".join("ACGTTCGT"[p] for p in taken)
 
@@ -82,9 +80,26 @@ def test_sites_from_the_command_line(tmp_path):
     reference = tmp_path / "reference.fasta"
     reference.write_text(">c1\nACGTACGT\n")
     output = tmp_path / "sites.fasta"
-    assert cli_run("sites", "--snps", vcf_with_positions(tmp_path, 5), "--reference",
-                   str(reference), "--alignment", a_path, "--alignment", b_path,
-                   "--sites", "1", "--seed", "0", "-o", str(output)) == 0
+    assert (
+        cli_run(
+            "sites",
+            "--snps",
+            vcf_with_positions(tmp_path, 5),
+            "--reference",
+            str(reference),
+            "--alignment",
+            a_path,
+            "--alignment",
+            b_path,
+            "--sites",
+            "1",
+            "--seed",
+            "0",
+            "-o",
+            str(output),
+        )
+        == 0
+    )
     assert output.read_text() == ">ref\nA\n>genomeA1\nT\n>shared\nC\n>genomeB1\nG\n"
 
 
@@ -94,8 +109,20 @@ def test_sites_reports_a_contig_the_reference_lacks(tmp_path):
     reference.write_text(">c1\nACGTACGT\n")
     vcf = tmp_path / "other.vcf"
     vcf.write_text("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nc9\t5\t.\tA\tT\t.\tPASS\t.\n")
-    assert cli_run("sites", "--snps", str(vcf), "--reference", str(reference),
-                   "--alignment", a_path, "-o", str(tmp_path / "out.fasta")) == 1
+    assert (
+        cli_run(
+            "sites",
+            "--snps",
+            str(vcf),
+            "--reference",
+            str(reference),
+            "--alignment",
+            a_path,
+            "-o",
+            str(tmp_path / "out.fasta"),
+        )
+        == 1
+    )
 
 
 def test_a_name_repeated_within_one_alignment_is_refused(tmp_path):

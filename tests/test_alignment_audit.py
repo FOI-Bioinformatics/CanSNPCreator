@@ -33,13 +33,21 @@ def audit(outdir, dataset, alignment_path=None, group_path=None, **arguments):
     alignment = read_alignment(alignment_path or dataset.alignment)
     group_path = group_path or dataset.genome_map
     clusters = read_genome_map(group_path)
-    return audit_scheme(read_scheme(outdir), reference_parser(dataset.reference),
-                        alignment=alignment, clusters=clusters, **arguments)
+    return audit_scheme(
+        read_scheme(outdir),
+        reference_parser(dataset.reference),
+        alignment=alignment,
+        clusters=clusters,
+        **arguments,
+    )
 
 
 def of(findings, category, severity=None):
-    return [finding for finding in findings if finding.category == category
-            and (severity is None or finding.severity == severity)]
+    return [
+        finding
+        for finding in findings
+        if finding.category == category and (severity is None or finding.severity == severity)
+    ]
 
 
 def changed_alignment(dataset, tmp_path, changes):
@@ -57,8 +65,9 @@ def changed_alignment(dataset, tmp_path, changes):
 
 def write_groups(tmp_path, placements):
     path = tmp_path / "genome_map.tsv"
-    path.write_text("".join(
-        f"{genome}\t{node}\n" for node, genomes in placements.items() for genome in genomes))
+    path.write_text(
+        "".join(f"{genome}\t{node}\n" for node, genomes in placements.items() for genome in genomes)
+    )
     return str(path)
 
 
@@ -110,8 +119,7 @@ def test_an_isolate_without_the_derived_base_is_reported(written, dataset, tmp_p
     assert [finding.node for finding in of(findings, "unsupported-node")] == ["A.1"]
 
 
-def test_a_genome_outside_the_node_with_the_derived_base_is_reported(written, dataset,
-                                                                      tmp_path):
+def test_a_genome_outside_the_node_with_the_derived_base_is_reported(written, dataset, tmp_path):
     column, _ancestral, derived = PLANTED["A.1"]
     path = changed_alignment(dataset, tmp_path, {"s3": {column: derived}})
     findings = audit(written[0], dataset, alignment_path=path)
@@ -125,8 +133,12 @@ def test_swapped_alleles_are_reported_as_polarity(written, dataset):
     outdir, _scores = written
     column, ancestral, derived = PLANTED["A.1"]
     sequence, position = dataset.contig_of(column)
-    edit(outdir, SNPS, f"\t{sequence}\t{position}\t{derived}\t{ancestral}\t",
-         f"\t{sequence}\t{position}\t{ancestral}\t{derived}\t")
+    edit(
+        outdir,
+        SNPS,
+        f"\t{sequence}\t{position}\t{derived}\t{ancestral}\t",
+        f"\t{sequence}\t{position}\t{ancestral}\t{derived}\t",
+    )
     # The isolates below A.1 now carry what the scheme calls ancestral, and
     # every genome outside it what the scheme calls derived.
     findings = audit(outdir, dataset)
@@ -180,8 +192,9 @@ def test_every_ranked_canSNP_is_checked_in_the_genomes(written, dataset):
     column, ancestral, derived, _isolates = INCONGRUENT
     sequence, position = dataset.contig_of(column)
     genome = add_cansnps(outdir, [])
-    add_cansnps(outdir, [f"A.1\t2\tSjodin2026\t{genome}\t{sequence}\t{position}\t{derived}\t"
-                         f"{ancestral}\t400\tno"])
+    add_cansnps(
+        outdir, [f"A.1\t2\tSjodin2026\t{genome}\t{sequence}\t{position}\t{derived}\t{ancestral}\t400\tno"]
+    )
     scheme = read_scheme(outdir)
     assert scheme.problems == []
     assert [snp.rank for snp in scheme.checked_snps if snp.node == "A.1"] == [1, 2]
@@ -227,9 +240,9 @@ def test_a_clade_needs_enough_genomes_and_snps_to_be_reported(written, dataset, 
 
 def test_genomes_named_by_file_name_are_matched_to_records(written, dataset, tmp_path):
     genome_map = tmp_path / "genomes_map.tsv"
-    genome_map.write_text("".join(
-        f"{genome}.fna.gz\t{node}\n" for node, genomes in CLUSTERS.items()
-        for genome in genomes))
+    genome_map.write_text(
+        "".join(f"{genome}.fna.gz\t{node}\n" for node, genomes in CLUSTERS.items() for genome in genomes)
+    )
     findings = audit(written[0], dataset, group_path=str(genome_map))
     assert [finding for finding in findings if finding.severity == PROBLEM] == []
 
@@ -251,11 +264,23 @@ def test_a_projected_alignment_is_read_as_reference_coordinates(written, dataset
     assert len(of(findings, "single-site")) == len(PLANTED) - 1
 
     snp_file = str(tmp_path / "snps.vcf")
-    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
-                   "--alignment", path, "--reference", dataset.reference,
-                   "-o", snp_file) == 0
-    found = {record.node: (record.chrom, record.pos) for record in vcf_records(snp_file)
-             if record.node}
+    assert (
+        cli_run(
+            "extract",
+            "--genome-map",
+            dataset.genome_map,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--alignment",
+            path,
+            "--reference",
+            dataset.reference,
+            "-o",
+            snp_file,
+        )
+        == 0
+    )
+    found = {record.node: (record.chrom, record.pos) for record in vcf_records(snp_file) if record.node}
     assert found["B.2"] == ("c2", 1)
     assert found["A.1"] == ("c1", PLANTED["A.1"][0] + 1)
 
@@ -266,29 +291,52 @@ def test_a_projected_alignment_is_read_as_reference_coordinates(written, dataset
 def test_the_genomes_are_checked_from_the_command_line(written, dataset, tmp_path):
     outdir, _scores = written
     report = tmp_path / "findings.tsv"
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                   "--alignment", dataset.alignment, "--genome-map", dataset.genome_map,
-                   "-o", str(report)) == 0
+    assert (
+        cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            dataset.alignment,
+            "--genome-map",
+            dataset.genome_map,
+            "-o",
+            str(report),
+        )
+        == 0
+    )
     assert "single-site" in report.read_text()
 
 
 def test_an_alignment_needs_a_group_file_and_a_reference(written, dataset):
     outdir, _scores = written
     assert audit_main(outdir, alignment=dataset.alignment) == 1
-    assert audit_main(outdir, alignment=dataset.alignment,
-                      reference=dataset.reference) == 1
-    assert audit_main(outdir, genome_map=dataset.genome_map,
-                      reference=dataset.reference) == 1
+    assert audit_main(outdir, alignment=dataset.alignment, reference=dataset.reference) == 1
+    assert audit_main(outdir, genome_map=dataset.genome_map, reference=dataset.reference) == 1
 
 
 def test_a_recommendation_alone_exits_zero(written, dataset):
     outdir, _scores = written
     # The planted data leaves only recommendations: single sites, the
     # incongruent site, the ungrouped reference and the shallow nodes.
-    assert audit_main(outdir, reference=dataset.reference, alignment=dataset.alignment,
-                      genome_map=dataset.genome_map) == 0
-    assert audit_main(outdir, reference=dataset.reference, alignment=dataset.alignment,
-                      genome_map=dataset.genome_map, strict=True) == 2
+    assert (
+        audit_main(
+            outdir, reference=dataset.reference, alignment=dataset.alignment, genome_map=dataset.genome_map
+        )
+        == 0
+    )
+    assert (
+        audit_main(
+            outdir,
+            reference=dataset.reference,
+            alignment=dataset.alignment,
+            genome_map=dataset.genome_map,
+            strict=True,
+        )
+        == 2
+    )
 
 
 # -- without an outgroup -----------------------------------------------------
@@ -300,9 +348,19 @@ def small_scheme(snps):
 
     paths = [["root"], ["root", "A"], ["root", "X"], ["root", "Y"]]
     hierarchy, _conflicts, _problems = hierarchy_from_paths(paths)
-    rows = [SchemeSnp(node=node, strain="t", reference="t", genome="REF", sequence="c1", position=position,
-                      derived=derived, ancestral=ancestral)
-            for node, position, derived, ancestral in snps]
+    rows = [
+        SchemeSnp(
+            node=node,
+            strain="t",
+            reference="t",
+            genome="REF",
+            sequence="c1",
+            position=position,
+            derived=derived,
+            ancestral=ancestral,
+        )
+        for node, position, derived, ancestral in snps
+    ]
     return Scheme(organism="small", paths=paths, snps=rows, hierarchy=hierarchy)
 
 
@@ -319,8 +377,11 @@ def test_a_node_holding_more_genomes_than_its_sisters_keeps_its_site():
     reference = Reference.from_records([("c1", "ACGTACGT")])
     # x1 is the reference genome, so it comes first.
     alignment = {
-        "x1": "ACGTACGT", "y1": "ACGTACGT",
-        "a1": "ACTTACGT", "a2": "ACTTACGT", "a3": "ACTTACGT",
+        "x1": "ACGTACGT",
+        "y1": "ACGTACGT",
+        "a1": "ACTTACGT",
+        "a2": "ACTTACGT",
+        "a3": "ACTTACGT",
     }
     scheme = small_scheme([("A", 3, "T", "G")])
 
@@ -328,8 +389,7 @@ def test_a_node_holding_more_genomes_than_its_sisters_keeps_its_site():
     assert [finding for finding in findings if finding.category == "alignment"] == []
     assert of(findings, "new-clade") == []
     assert of(findings, "not-canonical") == [] and of(findings, "homoplasy") == []
-    assert [finding.node for finding in of(findings, "single-site")] == ["A"], (
-        "the site is credited to A")
+    assert [finding.node for finding in of(findings, "single-site")] == ["A"], "the site is credited to A"
 
 
 def test_a_snp_every_genome_carries_is_reported_as_untested():
@@ -353,8 +413,11 @@ def test_a_grouping_against_a_better_supported_one_is_not_a_new_clade():
 
     reference = Reference.from_records([("c1", "AAAAAAAA")])
     alignment = {
-        "x1": "AAAAAAAA", "y1": "AAAAAAAA",
-        "a1": "CCCAAAAA", "a2": "CCCCAAAA", "a3": "AAACAAAA",
+        "x1": "AAAAAAAA",
+        "y1": "AAAAAAAA",
+        "a1": "CCCAAAAA",
+        "a2": "CCCCAAAA",
+        "a3": "AAACAAAA",
     }
     scheme = small_scheme([])
 
@@ -364,8 +427,7 @@ def test_a_grouping_against_a_better_supported_one_is_not_a_new_clade():
     assert "a1, a2" in clades[0].detail and "3 SNPs" in clades[0].detail
     conflicting = of(findings, "conflicting-sites")
     assert len(conflicting) == 1
-    assert "1 of them because they group genomes against a better supported" in (
-        conflicting[0].detail)
+    assert "1 of them because they group genomes against a better supported" in (conflicting[0].detail)
 
 
 # -- each genome's own path through the scheme -------------------------------
@@ -377,8 +439,7 @@ def test_a_sound_scheme_has_no_misplaced_or_discordant_genome(written, dataset):
     assert of(findings, "discordant-genome") == []
 
 
-def test_a_genome_placed_on_the_wrong_branch_is_reported_where_it_would_be_typed(
-        written, dataset, tmp_path):
+def test_a_genome_placed_on_the_wrong_branch_is_reported_where_it_would_be_typed(written, dataset, tmp_path):
     # s2 carries the canSNPs of A.2 but the genome map puts it at A.1, as a
     # cluster spanning the two would.
     groups = write_groups(tmp_path, {"A.1": ["s1", "s1b", "s2"], "B.1": ["s3"], "B.2": ["s4"]})
@@ -388,8 +449,7 @@ def test_a_genome_placed_on_the_wrong_branch_is_reported_where_it_would_be_typed
     assert "at least 1 canSNP of A.2" in misplaced[0].detail
 
 
-def test_a_genome_that_contradicts_the_scheme_at_many_nodes_is_reported(
-        written, dataset, tmp_path):
+def test_a_genome_that_contradicts_the_scheme_at_many_nodes_is_reported(written, dataset, tmp_path):
     changes = {"s4": {PLANTED[node][0]: PLANTED[node][2] for node in ("A", "A.1", "A.2")}}
     path = changed_alignment(dataset, tmp_path, changes)
     findings = audit(written[0], dataset, alignment_path=path)
@@ -397,12 +457,10 @@ def test_a_genome_that_contradicts_the_scheme_at_many_nodes_is_reported(
     assert len(discordant) == 1 and "s4 (3)" in discordant[0].detail
     # It is not also reported as misplaced.
     assert of(findings, "misplaced") == []
-    assert of(audit(written[0], dataset, alignment_path=path, genome_conflicts=4),
-              "discordant-genome") == []
+    assert of(audit(written[0], dataset, alignment_path=path, genome_conflicts=4), "discordant-genome") == []
 
 
-def test_one_homoplastic_site_in_one_genome_is_left_to_the_snp_checks(
-        written, dataset, tmp_path):
+def test_one_homoplastic_site_in_one_genome_is_left_to_the_snp_checks(written, dataset, tmp_path):
     column, _ancestral, derived = PLANTED["A.1"]
     path = changed_alignment(dataset, tmp_path, {"s4": {column: derived}})
     findings = audit(written[0], dataset, alignment_path=path)
@@ -414,9 +472,21 @@ def test_the_cli_takes_the_genome_conflicts_threshold(written, dataset, tmp_path
     changes = {"s4": {PLANTED[node][0]: PLANTED[node][2] for node in ("A", "A.1")}}
     path = changed_alignment(dataset, tmp_path, changes)
     output = tmp_path / "findings.tsv"
-    cli_run("audit", "--scheme-dir", written[0], "--reference", dataset.reference,
-            "--alignment", path, "--genome-map", dataset.genome_map,
-            "--genome-conflicts", "2", "-o", str(output))
+    cli_run(
+        "audit",
+        "--scheme-dir",
+        written[0],
+        "--reference",
+        dataset.reference,
+        "--alignment",
+        path,
+        "--genome-map",
+        dataset.genome_map,
+        "--genome-conflicts",
+        "2",
+        "-o",
+        str(output),
+    )
     assert "discordant-genome" in output.read_text()
 
 
@@ -452,8 +522,7 @@ def test_column_rows_match_full_read(tmp_path):
     kept = read_alignment_columns(path, lambda reference_row: {0, 4})
     assert list(kept) == list(full)
     assert kept["ref"] == full["ref"]
-    assert all(kept[name][4] == full[name][4] and kept[name][0] == full[name][0]
-               for name in full)
+    assert all(kept[name][4] == full[name][4] and kept[name][0] == full[name][0] for name in full)
     assert all(len(kept[name]) == len(full[name]) for name in full)
 
 

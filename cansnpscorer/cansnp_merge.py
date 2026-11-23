@@ -54,12 +54,10 @@ class Merged:
 
 
 def reference_key(references: Sequence[SchemeReference]) -> list[tuple[str, ...]]:
-    return sorted((r.genome, r.strain, r.genbank_id, r.refseq_id, r.assembly_name)
-                  for r in references)
+    return sorted((r.genome, r.strain, r.genbank_id, r.refseq_id, r.assembly_name) for r in references)
 
 
-def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]
-                  ) -> tuple[Merged, list[str], list[str]]:
+def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]) -> tuple[Merged, list[str], list[str]]:
     """Join schemes at their seams. Returns the merge, its problems and its warnings.
 
     The first scheme is the coarsest. Each later one must share exactly one node
@@ -89,19 +87,20 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]
             problems.append(
                 f"{name} shares no node with the schemes before it, so its tree would hang from "
                 f"nothing and the merged tree would have two roots; its root {root!r} must be a "
-                f"node of the schemes before it")
+                f"node of the schemes before it"
+            )
             continue
         extra = sorted(shared - {root})
         if extra:
             problems.append(
                 f"{name} names {len(extra)} nodes that the schemes before it already hold, besides "
                 f"its root {root!r}, the seam where the two meet: {', '.join(extra[:5])}. Node "
-                f"names must be distinct apart from the seam")
+                f"names must be distinct apart from the seam"
+            )
             continue
         for path in scheme.paths:
             if path[0] != root:
-                problems.append(f"{name}: the path {';'.join(path)} does not start at the root "
-                                f"{root!r}")
+                problems.append(f"{name}: the path {';'.join(path)} does not start at the root {root!r}")
                 break
             if len(path) > 1:
                 joined = path_to[root] + list(path[1:])
@@ -116,7 +115,8 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]
         if reference_key(scheme.references) != reference_key(first.references):
             problems.append(
                 f"{name} names other reference genomes than {names[0]}; the tiers must be built "
-                f"against one reference, or their positions do not agree")
+                f"against one reference, or their positions do not agree"
+            )
 
     hierarchy, conflicts, tree_problems = hierarchy_from_paths(paths)
     problems += [f"the merged tree: {problem}" for problem in tree_problems]
@@ -130,21 +130,34 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]
         at.setdefault((snp.sequence, snp.position), set()).add(snp.node)
     repeated = sorted((site, nodes) for site, nodes in at.items() if len(nodes) > 1)
     if repeated:
-        examples = "; ".join(f"{sequence}:{position} by {', '.join(sorted(nodes))}"
-                             for (sequence, position), nodes in repeated[:5])
-        problems.append(f"{len(repeated)} sites are used by more than one node, and CanSNPer2 "
-                        f"needs a site of its own for every canSNP: {examples}")
+        examples = "; ".join(
+            f"{sequence}:{position} by {', '.join(sorted(nodes))}"
+            for (sequence, position), nodes in repeated[:5]
+        )
+        problems.append(
+            f"{len(repeated)} sites are used by more than one node, and CanSNPer2 "
+            f"needs a site of its own for every canSNP: {examples}"
+        )
     check_ranks(snps, "the merged canSNPs", problems)
 
-    genomes, left_out = merge_genomes(schemes, set(hierarchy.leaves) if hierarchy else set(),
-                                      problems)
-    return (Merged(paths=paths, snps=snps, references=list(first.references), genomes=genomes,
-                   seams=seams, left_out=left_out),
-            problems, warnings)
+    genomes, left_out = merge_genomes(schemes, set(hierarchy.leaves) if hierarchy else set(), problems)
+    return (
+        Merged(
+            paths=paths,
+            snps=snps,
+            references=list(first.references),
+            genomes=genomes,
+            seams=seams,
+            left_out=left_out,
+        ),
+        problems,
+        warnings,
+    )
 
 
-def merge_genomes(schemes: Sequence[Scheme], terminal: set[str], problems: list[str]
-                  ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
+def merge_genomes(
+    schemes: Sequence[Scheme], terminal: set[str], problems: list[str]
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
     """The genomes of all schemes, at terminal nodes of the merged tree.
 
     In the coarse scheme the seam is a leaf, so its genomes file lists the finer
@@ -168,14 +181,19 @@ def merge_genomes(schemes: Sequence[Scheme], terminal: set[str], problems: list[
     rows = []
     for genome, nodes in sorted(placed.items()):
         if len(nodes) > 1:
-            problems.append(f"{genome} is placed at {len(nodes)} terminal nodes of the merged "
-                            f"tree, {', '.join(sorted(nodes))}; a genome sits at one node")
+            problems.append(
+                f"{genome} is placed at {len(nodes)} terminal nodes of the merged "
+                f"tree, {', '.join(sorted(nodes))}; a genome sits at one node"
+            )
             continue
-        (node, roles), = nodes.items()
+        ((node, roles),) = nodes.items()
         rows.append((genome, node, min(roles, key=ROLE_ORDER.__getitem__)))
     moved = {genome for genome, _node in left_out}
-    rows += [(genome, "", role) for genome, role in sorted(outgroup.items())
-             if genome not in placed and genome not in moved]
+    rows += [
+        (genome, "", role)
+        for genome, role in sorted(outgroup.items())
+        if genome not in placed and genome not in moved
+    ]
     rows.sort(key=lambda row: (ROLE_ORDER[row[2]], row[1], row[0]))
     return rows, sorted(left_out)
 
@@ -194,17 +212,33 @@ def write_merged(merged: Merged, outdir: str, organism: str) -> list[str]:
     cansnps = os.path.join(outdir, organism + CANSNP_SUFFIX)
     with open(cansnps, "w", newline="\n") as handle:
         handle.write("\t".join(CANSNP_COLUMNS) + "\n")
-        handle.writelines("\t".join([
-                snp.node, str(snp.rank), snp.reference, snp.genome, snp.sequence,
-                str(snp.position), snp.derived, snp.ancestral, snp.score,
-                "yes" if snp.typed else "no"]) + "\n" for snp in sorted(merged.snps, key=lambda snp: (order.get(snp.node, len(order)), snp.rank)))
+        handle.writelines(
+            "\t".join(
+                [
+                    snp.node,
+                    str(snp.rank),
+                    snp.reference,
+                    snp.genome,
+                    snp.sequence,
+                    str(snp.position),
+                    snp.derived,
+                    snp.ancestral,
+                    snp.score,
+                    "yes" if snp.typed else "no",
+                ]
+            )
+            + "\n"
+            for snp in sorted(merged.snps, key=lambda snp: (order.get(snp.node, len(order)), snp.rank))
+        )
     written.append(cansnps)
 
     references = os.path.join(outdir, organism + REFERENCES_SUFFIX)
     with open(references, "w", newline="\n") as handle:
         handle.write("\t".join(REFERENCE_COLUMNS) + "\n")
-        handle.writelines("\t".join([r.genome, r.strain, r.genbank_id, r.refseq_id,
-                                     r.assembly_name]) + "\n" for r in merged.references)
+        handle.writelines(
+            "\t".join([r.genome, r.strain, r.genbank_id, r.refseq_id, r.assembly_name]) + "\n"
+            for r in merged.references
+        )
     written.append(references)
 
     if merged.genomes:
@@ -233,14 +267,19 @@ def main(schemes: Sequence[str] = (), outdir: str = ".", organism: str | None = 
     written = write_merged(merged, outdir, organism or read[0].organism)
 
     for seam, dropped in merged.seams:
-        logging.info(f"Joined at the seam {seam!r}: its canSNPs are those of the scheme before "
-                     f"it, and the {dropped} of the finer scheme there were dropped")
+        logging.info(
+            f"Joined at the seam {seam!r}: its canSNPs are those of the scheme before "
+            f"it, and the {dropped} of the finer scheme there were dropped"
+        )
     if merged.left_out:
         logging.info(
             f"{len(merged.left_out)} genome rows at a node that is no longer terminal were left "
             f"out, since the genomes file lists terminal nodes; the finer scheme places them: "
-            f"{', '.join(f'{genome} ({node})' for genome, node in merged.left_out[:5])}")
+            f"{', '.join(f'{genome} ({node})' for genome, node in merged.left_out[:5])}"
+        )
     nodes = {node for path in merged.paths for node in path}
-    logging.info(f"Merged {len(read)} schemes into {len(nodes)} nodes and {len(merged.snps)} "
-                 f"canSNPs; wrote {', '.join(written)}")
+    logging.info(
+        f"Merged {len(read)} schemes into {len(nodes)} nodes and {len(merged.snps)} "
+        f"canSNPs; wrote {', '.join(written)}"
+    )
     return 0

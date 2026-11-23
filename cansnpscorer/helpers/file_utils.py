@@ -1,4 +1,3 @@
-
 import gzip
 import logging
 from collections import Counter
@@ -47,7 +46,7 @@ def hierarchy_format(path: str) -> str:
             while in_comment or stripped.startswith("["):
                 end = stripped.find("]")
                 in_comment = end < 0
-                stripped = "" if in_comment else stripped[end + 1:].lstrip()
+                stripped = "" if in_comment else stripped[end + 1 :].lstrip()
                 if in_comment:
                     break
             if not stripped or stripped.startswith("#"):
@@ -59,7 +58,8 @@ def hierarchy_format(path: str) -> str:
                 return "table"
             raise HierarchyError(
                 f"{path}: is neither a Newick tree nor a tab separated table with 'child' and "
-                f"'parent' columns; its first line is '{stripped[:60]}'")
+                f"'parent' columns; its first line is '{stripped[:60]}'"
+            )
     raise HierarchyError(f"{path}: is empty")
 
 
@@ -89,8 +89,7 @@ def read_hierarchy(path: str) -> Hierarchy:
     else:
         pairs = []
         with open_text(path, newline="") as handle:
-            lines = [line.rstrip("\r\n") for line in handle
-                     if line.strip() and not line.startswith("#")]
+            lines = [line.rstrip("\r\n") for line in handle if line.strip() and not line.startswith("#")]
         # Spaces around a header cell, as a spreadsheet may leave, are ignored.
         header = [column.strip() for column in lines[0].split("\t")]
         child_at, parent_at = header.index("child"), header.index("parent")
@@ -108,7 +107,8 @@ def read_hierarchy(path: str) -> Hierarchy:
 
     logging.info(
         f"Read a hierarchy of {len(hierarchy)} nodes rooted at '{hierarchy.root}', "
-        f"with {len(hierarchy.leaves)} leaves")
+        f"with {len(hierarchy.leaves)} leaves"
+    )
     return hierarchy
 
 
@@ -143,20 +143,21 @@ def iter_fasta(fasta_file: str) -> Iterator[tuple[str, str]]:
                     yield name, "".join(chunks)
                 words = line[1:].split()
                 if not words or line[1:2].isspace():
-                    raise ValueError(f"{fasta_file}: line {line_number} is a header without an ID "
-                                     f"directly after '>'")
+                    raise ValueError(
+                        f"{fasta_file}: line {line_number} is a header without an ID directly after '>'"
+                    )
                 name = words[0]
                 chunks = []
             else:
                 if name is None:
-                    raise ValueError(
-                        f"{fasta_file}: sequence before the first header, at line {line_number}")
+                    raise ValueError(f"{fasta_file}: sequence before the first header, at line {line_number}")
                 line = "".join(line.split())
                 invalid = set(line.upper()) - SEQUENCE_CHARACTERS
                 if invalid:
                     raise ValueError(
                         f"{fasta_file}: line {line_number} holds characters that are not IUPAC "
-                        f"bases or gaps: {''.join(sorted(invalid))[:10]}")
+                        f"bases or gaps: {''.join(sorted(invalid))[:10]}"
+                    )
                 masked += sum(1 for base in line if base.islower())
                 chunks.append(line.upper())
 
@@ -200,7 +201,8 @@ def read_fasta(fasta_file: str) -> list[tuple[str, str]]:
     if repeated:
         raise ValueError(
             f"{fasta_file}: names {', '.join(repeated)} more than once; sequence IDs, the first "
-            "word of each header, must be unique")
+            "word of each header, must be unique"
+        )
 
     logging.info(f"Read {len(records)} records from {fasta_file}")
     return records
@@ -237,7 +239,8 @@ def read_alignment(alignment_file: str) -> dict[str, str]:
     if len(records) < 2:
         raise ValueError(
             f"{alignment_file}: an alignment needs the reference and at least one other "
-            f"genome, found {len(records)}")
+            f"genome, found {len(records)}"
+        )
 
     lengths = {len(sequence) for _name, sequence in records}
     if len(lengths) > 1:
@@ -245,11 +248,13 @@ def read_alignment(alignment_file: str) -> dict[str, str]:
         longest = max(records, key=lambda record: len(record[1]))
         raise ValueError(
             f"{alignment_file}: the records are not aligned; '{longest[0]}' holds "
-            f"{len(longest[1])} columns and '{shortest[0]}' holds {len(shortest[1])}")
+            f"{len(longest[1])} columns and '{shortest[0]}' holds {len(shortest[1])}"
+        )
 
     logging.info(
         f"Read an alignment of {len(records)} genomes over {len(records[0][1])} columns, "
-        f"with '{records[0][0]}' as the reference")
+        f"with '{records[0][0]}' as the reference"
+    )
     return dict(records)
 
 
@@ -277,8 +282,9 @@ class ColumnRow:
         return self._length
 
 
-def read_alignment_columns(path: str, columns_of: Callable[[str], Collection[int]]
-                           ) -> dict[str, str | ColumnRow]:
+def read_alignment_columns(
+    path: str, columns_of: Callable[[str], Collection[int]]
+) -> dict[str, str | ColumnRow]:
     """
     Read a whole genome alignment, keeping only some columns of all but its first record.
 
@@ -333,22 +339,23 @@ def read_alignment_columns(path: str, columns_of: Callable[[str], Collection[int
     if repeated:
         raise ValueError(
             f"{path}: names {', '.join(sorted(repeated))} more than once; sequence IDs, the "
-            "first word of each header, must be unique")
+            "first word of each header, must be unique"
+        )
     if len(records) < 2:
         raise ValueError(
-            f"{path}: an alignment needs the reference and at least one other "
-            f"genome, found {len(records)}")
+            f"{path}: an alignment needs the reference and at least one other genome, found {len(records)}"
+        )
     if shortest[1] != longest[1]:
         raise ValueError(
             f"{path}: the records are not aligned; '{longest[0]}' holds "
-            f"{longest[1]} columns and '{shortest[0]}' holds {shortest[1]}")
+            f"{longest[1]} columns and '{shortest[0]}' holds {shortest[1]}"
+        )
 
     logging.info(
         f"Read {len(wanted)} columns of an alignment of {len(records)} genomes over "
-        f"{longest[1]} columns, with '{next(iter(records))}' as the reference")
+        f"{longest[1]} columns, with '{next(iter(records))}' as the reference"
+    )
     return records
-
-
 
 
 def read_labels(path: str) -> dict[str, str]:
@@ -365,14 +372,14 @@ def read_labels(path: str) -> dict[str, str]:
                 continue
             fields = line.split("\t")
             if len(fields) < 2:
-                raise ValueError(f"{path} line {number}: expected a genome and a label, "
-                                 f"tab separated")
+                raise ValueError(f"{path} line {number}: expected a genome and a label, tab separated")
             genome, label = strip_fasta_suffix(fields[0].strip()), fields[1].strip()
             if (genome, label) == ("genome", "label") and not labels:
                 continue
             if labels.get(genome, label) != label:
-                raise ValueError(f"{path} line {number}: {genome} is given two labels, "
-                                 f"{labels[genome]} and {label}")
+                raise ValueError(
+                    f"{path} line {number}: {genome} is given two labels, {labels[genome]} and {label}"
+                )
             labels[genome] = label
     if not labels:
         raise ValueError(f"{path} labels no genome")
@@ -412,13 +419,15 @@ def read_genome_map(path: str) -> dict[str, list[str]]:
             if len(fields) != 2 or not fields[0].strip() or not fields[1].strip():
                 raise ValueError(
                     f"{path}: line {number} should hold a genome and a node separated by one "
-                    f"tab, with no header line")
+                    f"tab, with no header line"
+                )
             genome = strip_fasta_suffix(fields[0].strip())
             node = fields[1].strip()
             if genome in placed and placed[genome] != node:
                 raise ValueError(
                     f"{path}: line {number} places {genome} at {node}, but it is already "
-                    f"placed at {placed[genome]}")
+                    f"placed at {placed[genome]}"
+                )
             if genome not in placed:
                 placed[genome] = node
                 clusters.setdefault(node, []).append(genome)
@@ -443,9 +452,9 @@ def reference_parser(reference: str) -> Reference:
     """
     logging.info(f"Reading the reference genome from {reference}")
     parsed = Reference.from_records(read_fasta(reference))
-    logging.info(
-        f"Read {len(parsed)} contigs totalling {parsed.length} bases: {', '.join(parsed.names)}")
+    logging.info(f"Read {len(parsed)} contigs totalling {parsed.length} bases: {', '.join(parsed.names)}")
     return parsed
+
 
 #: GFF3 feature types that place a SNP inside a gene. A CDS counts as well as a
 #: gene, since Prokka writes CDS features without gene features by default.
@@ -455,8 +464,7 @@ GENE_FEATURES = frozenset({"gene", "CDS"})
 #: for bacteria, differs from table 1 only in its start codons.
 STANDARD_CODES = frozenset({"1", "11"})
 
-GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE, GFF_ATTRIBUTES = (
-    0, 2, 3, 4, 6, 7, 8)
+GFF_SEQID, GFF_TYPE, GFF_START, GFF_END, GFF_STRAND, GFF_PHASE, GFF_ATTRIBUTES = (0, 2, 3, 4, 6, 7, 8)
 
 
 @dataclass
@@ -538,28 +546,26 @@ def read_gff3(gff_file: str) -> GeneModel:
             if len(fields) != 9:
                 raise ValueError(
                     f"{gff_file}: line {line_number} holds {len(fields)} tab separated columns "
-                    f"where GFF3 has 9")
+                    f"where GFF3 has 9"
+                )
             if fields[GFF_TYPE] not in GENE_FEATURES:
                 continue
             try:
                 start = int(fields[GFF_START]) - 1
                 end = int(fields[GFF_END]) - 1
             except ValueError:
-                raise ValueError(
-                    f"{gff_file}: line {line_number} has no readable start and end") from None
+                raise ValueError(f"{gff_file}: line {line_number} has no readable start and end") from None
             if end < start or start < 0:
                 raise ValueError(f"{gff_file}: line {line_number} has an impossible interval")
             sequence = unquote(fields[GFF_SEQID])
             strand = fields[GFF_STRAND] if fields[GFF_STRAND] in {"+", "-"} else "+"
             genes.setdefault(sequence, []).append((start, end, strand))
-            features.setdefault(sequence, {}).setdefault(fields[GFF_TYPE], set()).add(
-                (start, end))
+            features.setdefault(sequence, {}).setdefault(fields[GFF_TYPE], set()).add((start, end))
             if fields[GFF_TYPE] != "CDS":
                 continue
             phase = fields[GFF_PHASE]
             if phase not in {"0", "1", "2"}:
-                raise ValueError(
-                    f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
+                raise ValueError(f"{gff_file}: line {line_number} is a CDS without a phase of 0, 1 or 2")
             attributes = gff3_attributes(fields[GFF_ATTRIBUTES])
             if attributes.get("pseudo", "").lower() == "true" or "pseudogene" in attributes:
                 pseudo += 1
@@ -574,8 +580,10 @@ def read_gff3(gff_file: str) -> GeneModel:
     # are searched with a binary search, which needs intervals that do not
     # overlap: a gene with its CDS, or a gene holding smaller features, would
     # otherwise hide the bases it covers.
-    merged = {sequence: merge_intervals([(start, end) for start, end, _ in found])
-              for sequence, found in genes.items()}
+    merged = {
+        sequence: merge_intervals([(start, end) for start, end, _ in found])
+        for sequence, found in genes.items()
+    }
     for sequence in cds:
         cds[sequence].sort(key=itemgetter(0, 1))
     if pseudo:
@@ -583,19 +591,23 @@ def read_gff3(gff_file: str) -> GeneModel:
     for code, count in sorted(other_code.items()):
         logging.warning(
             f"{count} CDS of {gff_file} use genetic code {code}, whose codons translate "
-            f"differently from the standard code, and give no reading frame")
+            f"differently from the standard code, and give no reading frame"
+        )
     logging.info(
         f"Read {sum(len(found) for found in genes.values())} genes and CDS features, "
         f"{sum(len(found) for found in cds.values())} CDS with a reading frame, over "
         f"{len(genes)} sequences from {gff_file}"
-        + (f", and {len(sequences)} sequences after ##FASTA" if sequences else ""))
+        + (f", and {len(sequences)} sequences after ##FASTA" if sequences else "")
+    )
     # Each gene on its own, for telling which gene a SNP lies in: the gene
     # features where the file has them, as NCBI and Bakta write a gene with
     # its CDS, and the CDS features where it does not, as Prokka can.
-    loci = {sequence: sorted(found.get("gene") or found.get("CDS", ()))
-            for sequence, found in features.items()}
-    return GeneModel(genes=merged, cds=cds, loci=loci,
-                     sequences={key: "".join(value) for key, value in sequences.items()})
+    loci = {
+        sequence: sorted(found.get("gene") or found.get("CDS", ())) for sequence, found in features.items()
+    }
+    return GeneModel(
+        genes=merged, cds=cds, loci=loci, sequences={key: "".join(value) for key, value in sequences.items()}
+    )
 
 
 class AliasGroup(set):
@@ -712,8 +724,8 @@ def read_intervals(path: str) -> dict[str, list[tuple[int, int]]]:
             fields = line.split("\t")
             if len(fields) != 9:
                 raise ValueError(
-                    f"{path}: line {number} holds {len(fields)} tab separated columns where "
-                    f"GFF3 has 9")
+                    f"{path}: line {number} holds {len(fields)} tab separated columns where GFF3 has 9"
+                )
             sequence, first, last = fields[0], fields[3], fields[4]
             try:
                 start, end = int(first) - 1, int(last) - 1
@@ -729,7 +741,8 @@ def read_intervals(path: str) -> dict[str, list[tuple[int, int]]]:
             if len(fields) < 3:
                 raise ValueError(
                     f"{path}: line {number} holds {len(fields)} tab separated columns where BED "
-                    f"has at least 3")
+                    f"has at least 3"
+                )
             sequence = fields[0]
             try:
                 start, end = int(fields[1]), int(fields[2]) - 1
@@ -744,5 +757,6 @@ def read_intervals(path: str) -> dict[str, list[tuple[int, int]]]:
     merged = {sequence: merge_intervals(found) for sequence, found in regions.items()}
     logging.info(
         f"Read {sum(len(found) for found in merged.values())} regions over {len(merged)} "
-        f"sequences from {path}, as {'GFF3' if is_gff else 'BED'}")
+        f"sequences from {path}, as {'GFF3' if is_gff else 'BED'}"
+    )
     return merged
