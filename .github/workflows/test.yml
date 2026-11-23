@@ -60,3 +60,6 @@ jobs:
 
       - name: Lint
         run: python -m ruff check cansnpscorer tests
+
+      - name: Format
+        run: python -m ruff format --check cansnpscorer tests
