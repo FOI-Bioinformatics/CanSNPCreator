@@ -52,7 +52,7 @@ jobs:
           CANSNPER2: ${{ github.workspace }}/downstream/CanSNPer2
         run: |
           set -o pipefail
-          python -m pytest tests -v -rs -p no:cacheprovider | tee pytest.log
+          python -m pytest tests -v -rs -p no:cacheprovider --cov=cansnpscorer | tee pytest.log
           if grep -q "^SKIPPED" pytest.log; then
             echo "::error::tests were skipped; every test must run in CI"
             exit 1

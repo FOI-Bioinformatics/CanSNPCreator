@@ -823,7 +823,7 @@ it is given before the subcommand.
 
 ```sh
 pip install -e ".[dev]"
-python -m pytest tests
+python -m pytest tests --cov=cansnpscorer
 python -m ruff check cansnpscorer tests
 python -m ruff format --check cansnpscorer tests
 ```
