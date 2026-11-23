@@ -16,7 +16,8 @@ from cansnpscorer.helpers.data_utils import canSNP_extractor, snp_extractor
 from cansnpscorer.helpers.scoring_methods import TERMS, ScoredSnp, contexts_for
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
-from cansnpscorer.tree_tools import collapse, reroot
+from cansnpscorer.trees.collapsing import collapse
+from cansnpscorer.trees.rooting import reroot
 
 
 def clades(tree: Hierarchy) -> set[frozenset[str]]:

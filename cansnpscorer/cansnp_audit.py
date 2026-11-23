@@ -60,7 +60,8 @@ from cansnpscorer.hierarchy import HierarchyError
 from cansnpscorer.model import AlignmentMap, Reference, ReferenceError
 from cansnpscorer.report import write_markdown
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
-from cansnpscorer.tree_tools import place, read_genome_tree, read_members
+from cansnpscorer.trees.placing import place
+from cansnpscorer.trees.reading import read_genome_tree, read_members
 from cansnpscorer.typing_report import (
     NA,
     STRICTNESS,

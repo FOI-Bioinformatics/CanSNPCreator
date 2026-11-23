@@ -41,7 +41,7 @@ def scheme_of(paths, snps):
 
 def test_place_refuses_a_scheme_on_two_genomes_without_genome():
     # It took whichever genome's SNP came first for each node.
-    from cansnpscorer.tree_tools import place
+    from cansnpscorer.trees.placing import place
 
     scheme = scheme_of([["R"], ["R", "N"]], [("N", "G2", 3, "T", "G"), ("N", "G1", 3, "T", "G")])
     reference = Reference.from_records([("c1", "ACGTACGT")])
@@ -112,7 +112,7 @@ def test_audit_refuses_a_genome_the_scheme_does_not_name(written, dataset, caplo
 def test_place_leaves_single_leaves_out_as_clades():
     # On an unresolved tree the genomes outside one leaf stood in for a clade,
     # and d, which lacks the derived base, was placed at N1.
-    from cansnpscorer.tree_tools import place
+    from cansnpscorer.trees.placing import place
 
     scheme = scheme_of([["R"], ["R", "N1"]], [("N1", "G", 3, "T", "G")])
     reference = Reference.from_records([("c1", "ACGTACGT")])
@@ -124,7 +124,8 @@ def test_place_leaves_single_leaves_out_as_clades():
 
 
 def test_node_table_supports_in_percent_are_read_as_fractions(tmp_path):
-    from cansnpscorer.tree_tools import collapse, read_genome_tree
+    from cansnpscorer.trees.collapsing import collapse
+    from cansnpscorer.trees.reading import read_genome_tree
 
     edges = tmp_path / "tree2tax.tsv"
     edges.write_text("child\tparent\nn1\troot\nn2\troot\na\tn1\nb\tn1\nc\tn2\nd\tn2\n")
@@ -139,7 +140,7 @@ def test_node_table_supports_in_percent_are_read_as_fractions(tmp_path):
 
 
 def test_a_member_under_two_leaves_keeps_the_first(tmp_path, caplog):
-    from cansnpscorer.tree_tools import read_members
+    from cansnpscorer.trees.reading import read_members
 
     genome_map = tmp_path / "genomes_map.tsv"
     genome_map.write_text("m1\ta\nm1\tc\nd\ta\n")
