@@ -125,8 +125,7 @@ def neighbour_score(context: SnpContext, flank: int = 50) -> float:
     return neighbour_distance(context.position, left, right, flank)
 
 
-def gc_score(context: SnpContext, goal: float, distance: int = 50,
-             tolerance: float = 0.1) -> float:
+def gc_score(context: SnpContext, goal: float, distance: int = 50, tolerance: float = 0.1) -> float:
     """How close the GC content around the SNP is to the goal; full marks
     within ``tolerance`` of it, as a primer is designed in a range of GC."""
     return gc_content(context.position, context.contig.sequence, goal, distance, tolerance)
@@ -257,9 +256,15 @@ class ScoredSnp:
         return not self.filters
 
 
-def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
-              gc_goal: float = 0.5, weights: dict[str, float] | None = None,
-              flank: int = 50, gc_tolerance: float = 0.1) -> ScoredSnp:
+def score_snp(
+    context: SnpContext,
+    tandem_limit: int = 50,
+    gene_limit: int = 0,
+    gc_goal: float = 0.5,
+    weights: dict[str, float] | None = None,
+    flank: int = 50,
+    gc_tolerance: float = 0.1,
+) -> ScoredSnp:
     """Score one SNP.
 
     Every term is a percentage rounded to a whole number, and the total is
@@ -287,10 +292,12 @@ def score_snp(context: SnpContext, tandem_limit: int = 50, gene_limit: int = 0,
     )
 
 
-def contexts_for(snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
-                 genes: dict[str, Sequence[Sequence[int]]],
-                 repeats: dict[str, Sequence[Sequence[int]]],
-                 cds: dict[str, Sequence[Sequence[int]]] | None = None) -> list[SnpContext]:
+def contexts_for(
+    snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
+    genes: dict[str, Sequence[Sequence[int]]],
+    repeats: dict[str, Sequence[Sequence[int]]],
+    cds: dict[str, Sequence[Sequence[int]]] | None = None,
+) -> list[SnpContext]:
     """Build the contexts for a set of SNPs, filling in each SNP's neighbours.
 
     Args:
@@ -312,8 +319,7 @@ def contexts_for(snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
     # Sorted once per contig and shared by its SNPs, not copied for each, which
     # on a genome of a few thousand genes and some 10^5 SNPs is gigabytes.
     def by_start(intervals: dict[str, Sequence[Sequence[int]]]) -> dict[str, list]:
-        return {name: sorted(found, key=lambda interval: interval[0])
-                for name, found in intervals.items()}
+        return {name: sorted(found, key=lambda interval: interval[0]) for name, found in intervals.items()}
 
     sorted_genes, sorted_repeats, sorted_cds = by_start(genes), by_start(repeats), by_start(cds or {})
     contexts: list[SnpContext] = []

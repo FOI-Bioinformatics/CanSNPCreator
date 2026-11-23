@@ -70,12 +70,15 @@ def test_named_internal_nodes_and_quoted_leaves_are_kept():
     assert tree.lengths["A.1"] == 0.5
 
 
-@pytest.mark.parametrize("text,message", [
-    ("((a,b),);", "leaf without a name"),
-    ("(a,b);(c,d);", "more than one tree"),
-    ("(a,b", "ends inside a group"),
-    ("(a:x,b);", "not a branch length"),
-])
+@pytest.mark.parametrize(
+    "text,message",
+    [
+        ("((a,b),);", "leaf without a name"),
+        ("(a,b);(c,d);", "more than one tree"),
+        ("(a,b", "ends inside a group"),
+        ("(a:x,b);", "not a branch length"),
+    ],
+)
 def test_a_malformed_newick_tree_is_refused(text, message):
     with pytest.raises(HierarchyError, match=message):
         Hierarchy.from_newick(text)
@@ -83,13 +86,17 @@ def test_a_malformed_newick_tree_is_refused(text, message):
 
 def test_repgenr2_tables_give_support_and_lengths(tmp_path):
     edges = tmp_path / "tree2tax.tsv"
-    edges.write_text("child\tparent\nn1\troot\nn2\troot\nG_s_GCF_000000001.1\tn1\n"
-                     "G_s_GCF_000000002.1\tn1\nG_s_GCF_000000003.1\tn2\n"
-                     "G_s_GCF_000000004.1\tn2\n")
+    edges.write_text(
+        "child\tparent\nn1\troot\nn2\troot\nG_s_GCF_000000001.1\tn1\n"
+        "G_s_GCF_000000002.1\tn1\nG_s_GCF_000000003.1\tn2\n"
+        "G_s_GCF_000000004.1\tn2\n"
+    )
     nodes = tmp_path / "tree2tax_nodes.tsv"
-    nodes.write_text("node\tparent\tn_leaves\tdepth\tbranch_length\tsupport\tred\tlineage\n"
-                     "root\t\t4\t0\tNA\tNA\t0\t\nn1\troot\t2\t0.1\t0.1\t0.95\t0.4\t\n"
-                     "n2\troot\t2\t0.2\t0.2\tNA\t0.5\t\n")
+    nodes.write_text(
+        "node\tparent\tn_leaves\tdepth\tbranch_length\tsupport\tred\tlineage\n"
+        "root\t\t4\t0\tNA\tNA\t0\t\nn1\troot\t2\t0.1\t0.1\t0.95\t0.4\t\n"
+        "n2\troot\t2\t0.2\t0.2\tNA\t0.5\t\n"
+    )
     tree = read_genome_tree(str(edges), str(nodes))
     assert tree.support == {"n1": 0.95}
     assert tree.lengths == {"n1": 0.1, "n2": 0.2}
@@ -101,8 +108,8 @@ def test_repgenr2_tables_give_support_and_lengths(tmp_path):
 def test_an_accession_finds_the_record_that_holds_it():
     records = ["Fam_Gen_sp1_GCF_000000001.1", "Fam.Gen.sp2.GCF_000000001.10"]
     matched, unmatched, ambiguous = resolve_names(
-        ["GCF_000000001.1", "GCF_000000001.10", "Fam_Gen_sp1_GCF_000000001.1", "other"],
-        records)
+        ["GCF_000000001.1", "GCF_000000001.10", "Fam_Gen_sp1_GCF_000000001.1", "other"], records
+    )
     assert matched["GCF_000000001.1"] == records[0], "version 1 is not version 10"
     assert matched["GCF_000000001.10"] == records[1]
     assert matched["Fam_Gen_sp1_GCF_000000001.1"] == records[0]
@@ -111,7 +118,8 @@ def test_an_accession_finds_the_record_that_holds_it():
 
 def test_an_accession_in_two_records_matches_neither():
     _matched, _unmatched, ambiguous = resolve_names(
-        ["GCF_000000001.1"], ["a_GCF_000000001.1", "b_GCF_000000001.1"])
+        ["GCF_000000001.1"], ["a_GCF_000000001.1", "b_GCF_000000001.1"]
+    )
     assert ambiguous == ["GCF_000000001.1"]
 
 
@@ -120,8 +128,8 @@ def test_an_accession_in_two_records_matches_neither():
 
 def collapsed_tree():
     return Hierarchy.from_newick(
-        "(((a:1,b:1)0.99:5,(c:1,d:1)0.40:5)0.95:1,((e:1,f:1)0.99:0.5,g:1)0.98:3);",
-        support_labels=True)
+        "(((a:1,b:1)0.99:5,(c:1,d:1)0.40:5)0.95:1,((e:1,f:1)0.99:0.5,g:1)0.98:3);", support_labels=True
+    )
 
 
 def test_weakly_supported_nodes_are_removed_and_their_genomes_move_up():
@@ -190,13 +198,39 @@ def test_a_scheme_is_extracted_from_a_collapsed_tree(dataset, tmp_path):
     # is found and polarised.
     tree_file = tmp_path / "tree.nwk"
     tree_file.write_text(PLANTED_TREE)
-    assert cli_run("collapse", "--tree", str(tree_file), "--outgroup", "ref",
-                   "--rename", "T", "--outdir", str(tmp_path), "--prefix", "t") == 0
+    assert (
+        cli_run(
+            "collapse",
+            "--tree",
+            str(tree_file),
+            "--outgroup",
+            "ref",
+            "--rename",
+            "T",
+            "--outdir",
+            str(tmp_path),
+            "--prefix",
+            "t",
+        )
+        == 0
+    )
     snps = tmp_path / "snps.vcf"
-    assert cli_run("extract", "--genome-map", str(tmp_path / "t_genomes.tsv"),
-                   "--hierarchy", str(tmp_path / "t_hierarchy.tsv"),
-                   "--alignment", dataset.alignment, "--reference", dataset.reference,
-                   "-o", str(snps)) == 0
+    assert (
+        cli_run(
+            "extract",
+            "--genome-map",
+            str(tmp_path / "t_genomes.tsv"),
+            "--hierarchy",
+            str(tmp_path / "t_hierarchy.tsv"),
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "-o",
+            str(snps),
+        )
+        == 0
+    )
     found = {record.node: record.pos for record in vcf_records(str(snps)) if record.node}
     # T is the planted root, T.1 is A, T.1.1 is A.1, T.2 is B.
     assert found["T"] == PLANTED["root"][0] + 1
@@ -218,10 +252,15 @@ def test_complementary_nodes_are_reported_as_a_missing_outgroup(caplog):
 
 def test_the_planted_genomes_are_placed_where_they_belong(written, dataset):
     outdir, _scores = written
-    placement = place(read_scheme(outdir), Hierarchy.from_newick(PLANTED_TREE, support_labels=True),
-                      read_alignment(dataset.alignment), reference_parser(dataset.reference))
+    placement = place(
+        read_scheme(outdir),
+        Hierarchy.from_newick(PLANTED_TREE, support_labels=True),
+        read_alignment(dataset.alignment),
+        reference_parser(dataset.reference),
+    )
     assert {node: sorted(genomes) for node, genomes in placement.clusters.items()} == {
-        node: sorted(genomes) for node, genomes in CLUSTERS.items()}
+        node: sorted(genomes) for node, genomes in CLUSTERS.items()
+    }
     assert all(match.jaccard == 1.0 for match in placement.matches)
     assert "ref" not in {genome for genomes in placement.clusters.values() for genome in genomes}
 
@@ -232,8 +271,12 @@ def test_a_tree_rooted_inside_a_clade_still_places_the_genomes(written, dataset)
     # as rooted, only the other side of a branch.
     outdir, _scores = written
     rerooted = "((s1,s1b),(s2,((s3,s4),ref)));"
-    placement = place(read_scheme(outdir), Hierarchy.from_newick(rerooted),
-                      read_alignment(dataset.alignment), reference_parser(dataset.reference))
+    placement = place(
+        read_scheme(outdir),
+        Hierarchy.from_newick(rerooted),
+        read_alignment(dataset.alignment),
+        reference_parser(dataset.reference),
+    )
     assert sorted(placement.clusters["A.2"]) == ["s2"]
     assert sorted(placement.clusters["A.1"]) == ["s1", "s1b"]
     outside = [match for match in placement.matches if match.outside]
@@ -244,15 +287,35 @@ def five_and_two():
     """A clade X of five genomes and a clade Y of two, with the reference r."""
     paths = [["root"], ["root", "X"], ["root", "Y"]]
     hierarchy, _conflicts, _problems = hierarchy_from_paths(paths)
-    scheme = Scheme(organism="t", paths=paths, hierarchy=hierarchy, snps=[
-        SchemeSnp(node="X", strain="t", reference="t", genome="REF", sequence="c1", position=2,
-                  derived="T", ancestral="C"),
-    ])
+    scheme = Scheme(
+        organism="t",
+        paths=paths,
+        hierarchy=hierarchy,
+        snps=[
+            SchemeSnp(
+                node="X",
+                strain="t",
+                reference="t",
+                genome="REF",
+                sequence="c1",
+                position=2,
+                derived="T",
+                ancestral="C",
+            ),
+        ],
+    )
     reference = Reference.from_records([("c1", "ACGTA")])
-    alignment = {"r": "ACGTA", "y1": "ACGTA", "y2": "ACGTA",
-                 "x1": "ATGTA", "x2": "ATGTA", "x3": "ATGTA", "x4": "ATGTA",
-                 # x5 sits in the clade but lacks the derived base
-                 "x5": "ACGTA"}
+    alignment = {
+        "r": "ACGTA",
+        "y1": "ACGTA",
+        "y2": "ACGTA",
+        "x1": "ATGTA",
+        "x2": "ATGTA",
+        "x3": "ATGTA",
+        "x4": "ATGTA",
+        # x5 sits in the clade but lacks the derived base
+        "x5": "ACGTA",
+    }
     tree = Hierarchy.from_newick("(r,((x1,x2,x3,x4,x5)X,(y1,y2)Y));")
     return scheme, reference, alignment, tree
 
@@ -267,8 +330,7 @@ def test_a_genome_lacking_the_derived_base_stays_in_its_clade():
     assert x.jaccard == pytest.approx(0.8) and x.clade_only == 1
     assert any(finding.category == "partial-match" for finding in placement.findings)
 
-    findings = audit_scheme(scheme, reference, alignment=alignment,
-                            clusters=placement.clusters)
+    findings = audit_scheme(scheme, reference, alignment=alignment, clusters=placement.clusters)
     failing = [finding for finding in findings if finding.category == "not-canonical"]
     assert len(failing) == 1 and "x5" in failing[0].detail
 
@@ -289,10 +351,14 @@ def test_genomes_folded_into_a_leaf_are_placed_with_it(written, dataset, tmp_pat
     tree = Hierarchy.from_newick("(ref,((s1,s2),(s3,s4)));")
     members = read_members(str(genome_map), tree)
     assert members == {"s1": ["s1b"]}
-    placement = place(read_scheme(outdir), tree, read_alignment(dataset.alignment),
-                      reference_parser(dataset.reference), members=members)
-    holding = {genome: node for node, genomes in placement.clusters.items()
-               for genome in genomes}
+    placement = place(
+        read_scheme(outdir),
+        tree,
+        read_alignment(dataset.alignment),
+        reference_parser(dataset.reference),
+        members=members,
+    )
+    holding = {genome: node for node, genomes in placement.clusters.items() for genome in genomes}
     assert holding["s1b"] == holding["s1"]
 
 
@@ -305,23 +371,61 @@ def test_place_and_audit_by_tree_from_the_command_line(written, dataset, tmp_pat
     tree_file.write_text(PLANTED_TREE)
     genome_map = tmp_path / "placed.tsv"
     report = tmp_path / "report.tsv"
-    assert cli_run("place", "--scheme-dir", outdir, "--tree", str(tree_file),
-                   "--alignment", dataset.alignment, "--reference", dataset.reference,
-                   "-o", str(genome_map), "--report", str(report)) == 0
+    assert (
+        cli_run(
+            "place",
+            "--scheme-dir",
+            outdir,
+            "--tree",
+            str(tree_file),
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "-o",
+            str(genome_map),
+            "--report",
+            str(report),
+        )
+        == 0
+    )
     assert "s1\tA.1" in genome_map.read_text()
     assert report.read_text().splitlines()[0].startswith("node\ttree_node\tside")
 
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                   "--alignment", dataset.alignment, "--tree", str(tree_file)) == 0
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                   "--alignment", dataset.alignment, "--tree", str(tree_file),
-                   "--genome-map", dataset.genome_map) == 1, "one or the other"
+    assert (
+        cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            dataset.alignment,
+            "--tree",
+            str(tree_file),
+        )
+        == 0
+    )
+    assert (
+        cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            dataset.alignment,
+            "--tree",
+            str(tree_file),
+            "--genome-map",
+            dataset.genome_map,
+        )
+        == 1
+    ), "one or the other"
 
 
 def test_collapse_reports_a_missing_file(tmp_path):
-    assert cli_run("collapse", "--tree", str(tmp_path / "none.nwk"),
-                   "--outdir", str(tmp_path)) == 1
-
+    assert cli_run("collapse", "--tree", str(tmp_path / "none.nwk"), "--outdir", str(tmp_path)) == 1
 
 
 def test_a_members_file_from_another_tree_is_reported(tmp_path, caplog):
@@ -360,8 +464,7 @@ def test_place_by_clade_a_node_with_one_genome_is_its_leaf_alone():
     # sister of A.1.1's only genome, may lie inside A.1.1 or beside it, and is
     # placed at A.1, the deepest node that certainly holds it.
     tree = read_genome_tree_text("((((r1,h1),r2),(r3,h2)),out);")
-    placed, unplaced = place_by_clade(tree, {"r1": "A.1.1", "r2": "A.1", "r3": "A.2"},
-                                      CLADE_PARENTS, ["out"])
+    placed, unplaced = place_by_clade(tree, {"r1": "A.1.1", "r2": "A.1", "r3": "A.2"}, CLADE_PARENTS, ["out"])
     assert placed == {"h1": "A.1", "h2": "A"} and unplaced == []
 
 
@@ -376,8 +479,8 @@ def test_place_by_clade_node_without_genomes_in_tree():
     # A.1.1's only genome r1 is missing from the tree: h1 goes to A.1
     tree = read_genome_tree_text("((((h1,r2),r2b),((r3,h2),r3b)),out);")
     placed, unplaced = place_by_clade(
-        tree, {"r1": "A.1.1", "r2": "A.1", "r2b": "A.1", "r3": "A.2", "r3b": "A.2"},
-        CLADE_PARENTS, ["out"])
+        tree, {"r1": "A.1.1", "r2": "A.1", "r2b": "A.1", "r3": "A.2", "r3b": "A.2"}, CLADE_PARENTS, ["out"]
+    )
     assert placed["h1"] == "A.1"
     assert placed["h2"] == "A.2" and unplaced == []
 
@@ -392,11 +495,19 @@ def test_place_by_clade_leaf_outside_every_clade():
 
 def test_place_by_clade_matches_scheme_genomes_by_accession():
     tree = read_genome_tree_text(
-        "((((Ec_GCF_000000001.1,h1),Ec_GCF_000000002.1),(Ec_GCF_000000003.1,"
-        "Ec_GCF_000000004.1)),out);")
+        "((((Ec_GCF_000000001.1,h1),Ec_GCF_000000002.1),(Ec_GCF_000000003.1,Ec_GCF_000000004.1)),out);"
+    )
     placed, _unplaced = place_by_clade(
-        tree, {"GCF_000000001.1": "A.1", "GCF_000000002.1": "A.1", "GCF_000000003.1": "A.2",
-               "GCF_000000004.1": "A.2"}, CLADE_PARENTS, ["out"])
+        tree,
+        {
+            "GCF_000000001.1": "A.1",
+            "GCF_000000002.1": "A.1",
+            "GCF_000000003.1": "A.2",
+            "GCF_000000004.1": "A.2",
+        },
+        CLADE_PARENTS,
+        ["out"],
+    )
     assert placed == {"h1": "A.1"}
 
 
@@ -414,9 +525,11 @@ def clade_scheme(tmp_path):
     (scheme_dir / "t_snp.txt").write_text(
         "snp_id\tstrain\treference\tgenome\tsequence\tsequence_position\tderived_base\t"
         "ancestral_base\n"
-        "A.1\tt\tt\tREF\tc1\t2\tT\tC\n")
+        "A.1\tt\tt\tREF\tc1\t2\tT\tC\n"
+    )
     (scheme_dir / "t_references.txt").write_text(
-        "genome\tstrain\tgenbank_id\trefseq_id\tassembly_name\nREF\tt\tGCA_1\tGCF_1\tASM1\n")
+        "genome\tstrain\tgenbank_id\trefseq_id\tassembly_name\nREF\tt\tGCA_1\tGCF_1\tASM1\n"
+    )
     return str(scheme_dir)
 
 
@@ -427,17 +540,37 @@ def test_place_by_clade_from_the_command_line(tmp_path):
     scheme_map.write_text("".join(f"{genome}\t{node}\n" for genome, node in CLADE_GENOMES.items()))
     # h4 is a genome of the alignment that the tree does not hold.
     alignment = tmp_path / "sites.fasta"
-    alignment.write_text("".join(f">{name}\nA\n" for name in
-                                 (*CLADE_GENOMES, "h1", "h2", "h3", "h4", "out")))
+    alignment.write_text("".join(f">{name}\nA\n" for name in (*CLADE_GENOMES, "h1", "h2", "h3", "h4", "out")))
     output = tmp_path / "placed.tsv"
     report = tmp_path / "report.tsv"
-    assert cli_run("place", "--rule", "clade", "--scheme-dir", clade_scheme(tmp_path),
-                   "--tree", str(tree_file), "--genome-map", str(scheme_map),
-                   "--outgroup", "out", "--alignment", str(alignment),
-                   "-o", str(output), "--report", str(report)) == 0
+    assert (
+        cli_run(
+            "place",
+            "--rule",
+            "clade",
+            "--scheme-dir",
+            clade_scheme(tmp_path),
+            "--tree",
+            str(tree_file),
+            "--genome-map",
+            str(scheme_map),
+            "--outgroup",
+            "out",
+            "--alignment",
+            str(alignment),
+            "-o",
+            str(output),
+            "--report",
+            str(report),
+        )
+        == 0
+    )
     placed = read_genome_map(str(output))
     assert {node: sorted(genomes) for node, genomes in placed.items()} == {
-        "A.1.1": ["h1", "r1", "r1b"], "A.1": ["r2"], "A.2": ["h2", "r3", "r3b"]}
+        "A.1.1": ["h1", "r1", "r1b"],
+        "A.1": ["r2"],
+        "A.2": ["h2", "r3", "r3b"],
+    }
     rows = [line.split("\t") for line in report.read_text().splitlines()]
     assert rows[0] == ["genome", "node", "note"]
     notes = {row[0]: (row[1], row[2]) for row in rows[1:]}
@@ -453,14 +586,37 @@ def test_place_by_clade_needs_a_genome_map_and_an_outgroup(tmp_path):
     tree_file.write_text("((r1,h1),out);")
     scheme_dir = clade_scheme(tmp_path)
     with pytest.raises(SystemExit):
-        cli_run("place", "--rule", "clade", "--scheme-dir", scheme_dir, "--tree", str(tree_file),
-                "--outgroup", "out", "-o", str(tmp_path / "out.tsv"))
+        cli_run(
+            "place",
+            "--rule",
+            "clade",
+            "--scheme-dir",
+            scheme_dir,
+            "--tree",
+            str(tree_file),
+            "--outgroup",
+            "out",
+            "-o",
+            str(tmp_path / "out.tsv"),
+        )
     with pytest.raises(SystemExit):
-        cli_run("place", "--rule", "clade", "--scheme-dir", scheme_dir, "--tree", str(tree_file),
-                "--genome-map", str(tree_file), "-o", str(tmp_path / "out.tsv"))
+        cli_run(
+            "place",
+            "--rule",
+            "clade",
+            "--scheme-dir",
+            scheme_dir,
+            "--tree",
+            str(tree_file),
+            "--genome-map",
+            str(tree_file),
+            "-o",
+            str(tmp_path / "out.tsv"),
+        )
     with pytest.raises(SystemExit):
-        cli_run("place", "--scheme-dir", scheme_dir, "--tree", str(tree_file),
-                "-o", str(tmp_path / "out.tsv"))
+        cli_run(
+            "place", "--scheme-dir", scheme_dir, "--tree", str(tree_file), "-o", str(tmp_path / "out.tsv")
+        )
 
 
 def test_audit_by_clade_from_the_command_line(written, dataset, tmp_path):
@@ -470,8 +626,15 @@ def test_audit_by_clade_from_the_command_line(written, dataset, tmp_path):
     scheme_map = tmp_path / "scheme_genomes.tsv"
     scheme_map.write_text("s1\tA.1\ns1b\tA.1\ns2\tA.2\ns3\tB.1\ns4\tB.2\n")
     clade = ["--tree", str(tree_file), "--rule", "clade", "--outgroup", "ref"]
-    common = ["audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-              "--alignment", dataset.alignment]
+    common = [
+        "audit",
+        "--scheme-dir",
+        outdir,
+        "--reference",
+        dataset.reference,
+        "--alignment",
+        dataset.alignment,
+    ]
     assert cli_run(*common, *clade, "--genome-map", str(scheme_map)) == 0
 
     # Without s1b among the scheme's genomes, A.1's clade is s1's leaf alone,
@@ -481,10 +644,10 @@ def test_audit_by_clade_from_the_command_line(written, dataset, tmp_path):
     assert cli_run(*common, *clade, "--genome-map", str(scheme_map), "-o", str(findings)) == 2
     assert "s1b; they are placed at A " in findings.read_text()
 
-    assert cli_run(*common, "--genome-map", str(scheme_map), "--rule", "clade",
-                   "--outgroup", "ref") == 1, "clade needs --tree"
-    assert cli_run(*common, "--tree", str(tree_file), "--outgroup", "ref") == 1, \
-        "--outgroup applies to clade"
+    assert cli_run(*common, "--genome-map", str(scheme_map), "--rule", "clade", "--outgroup", "ref") == 1, (
+        "clade needs --tree"
+    )
+    assert cli_run(*common, "--tree", str(tree_file), "--outgroup", "ref") == 1, "--outgroup applies to clade"
 
 
 def test_place_by_clade_ties_in_depth_go_to_the_smaller_clade():
@@ -494,7 +657,8 @@ def test_place_by_clade_ties_in_depth_go_to_the_smaller_clade():
     tree = read_genome_tree_text("(((b1a,((b2a,h),b2b)),b1b),out);")
     parents = {"A": None, "B1": "A", "B2": "A"}
     placed, unplaced = place_by_clade(
-        tree, {"b1a": "B1", "b1b": "B1", "b2a": "B2", "b2b": "B2"}, parents, ["out"])
+        tree, {"b1a": "B1", "b1b": "B1", "b2a": "B2", "b2b": "B2"}, parents, ["out"]
+    )
     assert placed == {"h": "B2"} and unplaced == []
 
 
@@ -508,51 +672,84 @@ def test_place_by_clade_warns_of_a_scheme_genome_that_is_not_a_leaf(tmp_path, ca
     scheme_map.write_text("".join(f"{genome}\t{node}\n" for genome, node in genomes.items()))
     scheme = read_scheme(clade_scheme(tmp_path))
     with caplog.at_level(logging.WARNING):
-        placement = place_clade(scheme, str(tree_file), str(scheme_map), ["out"],
-                                [*genomes, "h1", "h2", "out"])
+        placement = place_clade(
+            scheme, str(tree_file), str(scheme_map), ["out"], [*genomes, "h1", "h2", "out"]
+        )
     assert "1 scheme genomes of the alignment are not leaves of the tree" in caplog.text
     assert "r4" in caplog.text
     assert "r4" not in {g for genomes in placement.clusters.values() for g in genomes}
 
 
-def test_audit_by_clade_does_not_flag_a_reference_the_tree_lacks(written, dataset, tmp_path,
-                                                                caplog):
+def test_audit_by_clade_does_not_flag_a_reference_the_tree_lacks(written, dataset, tmp_path, caplog):
     outdir, _scores = written
     tree_file = tmp_path / "tree.nwk"
     tree_file.write_text("(((s1:0.01,s1b:0.01):0.2,s2:0.3):0.4,(s3:0.2,s4:0.2):0.4,out:0.5);")
     scheme_map = tmp_path / "scheme_genomes.tsv"
     scheme_map.write_text("s1\tA.1\ns1b\tA.1\ns2\tA.2\ns3\tB.1\ns4\tB.2\n")
     with caplog.at_level(logging.WARNING):
-        cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                "--alignment", dataset.alignment, "--tree", str(tree_file), "--rule", "clade",
-                "--outgroup", "out", "--genome-map", str(scheme_map))
+        cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            dataset.alignment,
+            "--tree",
+            str(tree_file),
+            "--rule",
+            "clade",
+            "--outgroup",
+            "out",
+            "--genome-map",
+            str(scheme_map),
+        )
     assert "not leaves of the tree" not in caplog.text
 
 
 def test_no_new_clades_needs_an_alignment(written, dataset):
     outdir, _scores = written
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                   "--no-new-clades") == 1
+    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference, "--no-new-clades") == 1
 
 
 def test_place_by_clade_refuses_a_min_match(tmp_path):
     tree_file = tmp_path / "tree.nwk"
     tree_file.write_text("((r1,h1),out);")
     with pytest.raises(SystemExit):
-        cli_run("place", "--rule", "clade", "--scheme-dir", clade_scheme(tmp_path),
-                "--tree", str(tree_file), "--genome-map", str(tree_file), "--outgroup", "out",
-                "--min-match", "0.8", "-o", str(tmp_path / "out.tsv"))
+        cli_run(
+            "place",
+            "--rule",
+            "clade",
+            "--scheme-dir",
+            clade_scheme(tmp_path),
+            "--tree",
+            str(tree_file),
+            "--genome-map",
+            str(tree_file),
+            "--outgroup",
+            "out",
+            "--min-match",
+            "0.8",
+            "-o",
+            str(tmp_path / "out.tsv"),
+        )
 
 
 # -- naming nodes after labelled genomes ----------------------------------------
 # Bsu is the root. Bsu.1 holds two clades; Bsu.1.1 holds a and b, Bsu.1.2 holds c.
 # Bsu.2 holds d. Labels are given for reference strains only; most genomes have none.
 
-NAMED_TREE = Hierarchy.from_child_parent([
-    ("Bsu", None), ("Bsu.1", "Bsu"), ("Bsu.2", "Bsu"),
-    ("Bsu.1.1", "Bsu.1"), ("Bsu.1.2", "Bsu.1"),
-    ("Bsu.1.1.1", "Bsu.1.1"), ("Bsu.1.1.2", "Bsu.1.1"),
-])
+NAMED_TREE = Hierarchy.from_child_parent(
+    [
+        ("Bsu", None),
+        ("Bsu.1", "Bsu"),
+        ("Bsu.2", "Bsu"),
+        ("Bsu.1.1", "Bsu.1"),
+        ("Bsu.1.2", "Bsu.1"),
+        ("Bsu.1.1.1", "Bsu.1.1"),
+        ("Bsu.1.1.2", "Bsu.1.1"),
+    ]
+)
 NAMED_GENOMES = {"Bsu.1.1.1": ["a"], "Bsu.1.1.2": ["b"], "Bsu.1.2": ["c"], "Bsu.2": ["d"]}
 
 
@@ -610,14 +807,30 @@ def test_a_label_a_scheme_cannot_hold_is_refused(label):
 
 def test_name_writes_files_that_extract_reads(tmp_path):
     hierarchy = tmp_path / "h.tsv"
-    hierarchy.write_text("child\tparent\n" + "".join(
-        f"{child}\t{parent or ''}\n" for child, parent in NAMED_TREE.parents.items()))
+    hierarchy.write_text(
+        "child\tparent\n"
+        + "".join(f"{child}\t{parent or ''}\n" for child, parent in NAMED_TREE.parents.items())
+    )
     genome_map = tmp_path / "g.tsv"
     genome_map.write_text("".join(f"{g}\t{node}\n" for node, gs in NAMED_GENOMES.items() for g in gs))
     labels = tmp_path / "labels.tsv"
     labels.write_text("genome\tlabel\na\tbv2\nb\tbv2\nc\tbv1\n")
-    assert cli_run("name", "--hierarchy", str(hierarchy), "--genome-map", str(genome_map),
-                   "--labels", str(labels), "--outdir", str(tmp_path), "--prefix", "n") == 0
+    assert (
+        cli_run(
+            "name",
+            "--hierarchy",
+            str(hierarchy),
+            "--genome-map",
+            str(genome_map),
+            "--labels",
+            str(labels),
+            "--outdir",
+            str(tmp_path),
+            "--prefix",
+            "n",
+        )
+        == 0
+    )
     renamed = read_hierarchy(str(tmp_path / "n_hierarchy.tsv"))
     assert "Bsu.bv2.1" in renamed and renamed.parents["Bsu.bv2.1"] == "Bsu.bv2"
     assert read_genome_map(str(tmp_path / "n_genomes.tsv"))["Bsu.bv1"] == ["c"]
@@ -629,8 +842,9 @@ def test_name_writes_files_that_extract_reads(tmp_path):
 def test_a_name_that_does_not_extend_its_parents_is_kept():
     # Hand-made names such as brucella_2017's are not paths: S.5 under B.2 is
     # not B.2 plus a segment, so it keeps its name even below a renamed node.
-    tree = Hierarchy.from_child_parent([
-        ("B.1", None), ("B.2", "B.1"), ("S.5", "B.2"), ("S.5.1", "S.5"), ("A.6", "B.1")])
+    tree = Hierarchy.from_child_parent(
+        [("B.1", None), ("B.2", "B.1"), ("S.5", "B.2"), ("S.5.1", "S.5"), ("A.6", "B.1")]
+    )
     genomes = {"S.5.1": ["s"], "A.6": ["a"]}
     named = name_from_labels(tree, genomes, {"s": "suis"})
     assert named.names["B.2"] == "B.1.suis"
@@ -645,4 +859,3 @@ def test_the_report_counts_the_labelled_genomes_behind_a_name():
     named = name_from_labels(NAMED_TREE, NAMED_GENOMES, {"a": "bv2"})
     assert named.names["Bsu.1"] == "Bsu.bv2", "the only label below Bsu.1"
     assert (named.below["Bsu.1"], named.labelled["Bsu.1"]) == (3, 1)
-

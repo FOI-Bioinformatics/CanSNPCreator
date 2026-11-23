@@ -87,8 +87,7 @@ def resolve_names(names, records):
         accession = ACCESSION.fullmatch(stripped)
         if not found and accession:
             stem, version = accession.groups()
-            found = (by_version.get((stem, version), set()) if version
-                     else by_stem.get(stem, set()))
+            found = by_version.get((stem, version), set()) if version else by_stem.get(stem, set())
         if len(found) == 1:
             matched[name] = next(iter(found))
         elif found:

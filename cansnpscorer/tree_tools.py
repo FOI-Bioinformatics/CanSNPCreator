@@ -73,18 +73,17 @@ def read_genome_tree(path: str, nodes_file: str | None = None) -> Hierarchy:
     if nodes_file:
         with open_text(nodes_file) as handle:
             reader = csv.DictReader(handle, delimiter="\t")
-            missing = [name for name in NODE_TABLE_COLUMNS
-                       if name not in (reader.fieldnames or [])]
+            missing = [name for name in NODE_TABLE_COLUMNS if name not in (reader.fieldnames or [])]
             if missing:
                 raise ValueError(
                     f"{nodes_file}: lacks the columns {', '.join(missing)}; it should be "
-                    f"RepGenR2's tree2tax_nodes.tsv")
+                    f"RepGenR2's tree2tax_nodes.tsv"
+                )
             for row in reader:
                 node = row["node"].strip()
                 if node not in tree:
                     continue
-                for column, target in (("support", tree.support),
-                                       ("branch_length", tree.lengths)):
+                for column, target in (("support", tree.support), ("branch_length", tree.lengths)):
                     value = (row.get(column) or "").strip()
                     if value and value.upper() != "NA":
                         target[node] = float(value)
@@ -94,7 +93,8 @@ def read_genome_tree(path: str, nodes_file: str | None = None) -> Hierarchy:
     logging.info(
         f"Read a genome tree of {len(tree.leaves)} genomes and "
         f"{len(tree) - len(tree.leaves)} internal nodes, {len(tree.support)} with a support "
-        f"value and {len(tree.lengths)} with a branch length")
+        f"value and {len(tree.lengths)} with a branch length"
+    )
     return tree
 
 
@@ -124,8 +124,7 @@ def read_members(path: str, tree: Hierarchy) -> dict[str, list[str]]:
                 continue
             rows.append((genome, leaf))
     # Matched against the leaves once, not row by row.
-    is_leaf, _unmatched, _ambiguous = resolve_names(sorted({genome for genome, _ in rows}),
-                                                    tree.leaves)
+    is_leaf, _unmatched, _ambiguous = resolve_names(sorted({genome for genome, _ in rows}), tree.leaves)
     for genome, leaf in rows:
         own, _unmatched, _ambiguous = resolve_names([genome], [leaf])
         if own:
@@ -143,15 +142,18 @@ def read_members(path: str, tree: Hierarchy) -> dict[str, list[str]]:
     if twice:
         logging.warning(
             f"{path} places {len(twice)} genomes under two leaves; each was kept under the "
-            f"first: {', '.join(sorted(twice)[:3])}")
+            f"first: {', '.join(sorted(twice)[:3])}"
+        )
     if foreign:
         logging.warning(
             f"{path} places genomes at {len(foreign)} leaves the tree does not have, and they "
             f"were left out: {', '.join(sorted(foreign)[:3])}. The file may come from another "
-            f"tree; RepGenR2 writes it with tree2tax, which must be rerun after phylo")
+            f"tree; RepGenR2 writes it with tree2tax, which must be rerun after phylo"
+        )
     logging.info(
         f"Read {sum(len(names) for names in members.values())} genomes folded into "
-        f"{len(members)} leaves of the tree")
+        f"{len(members)} leaves of the tree"
+    )
     return members
 
 
@@ -177,8 +179,7 @@ class Collapsed:
             own[node] = own.get(node, 0) + 1
         count: dict[str, int] = {}
         for node in reversed(self.hierarchy.nodes):
-            count[node] = own.get(node, 0) + sum(
-                count[child] for child in self.hierarchy.children[node])
+            count[node] = own.get(node, 0) + sum(count[child] for child in self.hierarchy.children[node])
         return count
 
 
@@ -201,7 +202,8 @@ def outgroup_leaves(tree: Hierarchy, outgroups: Sequence[str]) -> list[str]:
     if ambiguous:
         raise HierarchyError(
             f"the outgroups {', '.join(sorted(ambiguous))} each match more than one leaf of the "
-            f"tree; give the full leaf name")
+            f"tree; give the full leaf name"
+        )
     return list(dict.fromkeys(matched.values()))
 
 
@@ -219,13 +221,14 @@ def _without_unary_root(tree: Hierarchy) -> Hierarchy:
     if not removed:
         return tree
     gone = set(removed)
-    stripped = Hierarchy([(node, None if node == root else tree.parents[node])
-                          for node in tree.nodes if node not in gone])
-    stripped.support = {node: value for node, value in tree.support.items()
-                        if node not in gone}
+    stripped = Hierarchy(
+        [(node, None if node == root else tree.parents[node]) for node in tree.nodes if node not in gone]
+    )
+    stripped.support = {node: value for node, value in tree.support.items() if node not in gone}
     # The branch above the new root led to the removed one.
-    stripped.lengths = {node: value for node, value in tree.lengths.items()
-                        if node not in gone and node != root}
+    stripped.lengths = {
+        node: value for node, value in tree.lengths.items() if node not in gone and node != root
+    }
     return stripped
 
 
@@ -258,8 +261,7 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
     for node in reversed(nodes):
         children = tree.children[node]
         leaves_below[node] = sum(leaves_below[child] for child in children) if children else 1
-        outgroups_below[node] = sum(outgroups_below[child] for child in children) + (
-            node in outgroup)
+        outgroups_below[node] = sum(outgroups_below[child] for child in children) + (node in outgroup)
 
     n_ingroup = leaves_below[root] - len(outgroup)
     if not n_ingroup:
@@ -267,8 +269,9 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
 
     def splits(node: str) -> bool:
         """Whether the clade below the node is the outgroups or the ingroup."""
-        return ((leaves_below[node] == outgroups_below[node] == len(outgroup))
-                or (outgroups_below[node] == 0 and leaves_below[node] == n_ingroup))
+        return (leaves_below[node] == outgroups_below[node] == len(outgroup)) or (
+            outgroups_below[node] == 0 and leaves_below[node] == n_ingroup
+        )
 
     # The branch that splits the tree into outgroups and ingroup is held by
     # the node below it, on whichever side of the split that node is.
@@ -276,9 +279,11 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
     if branch is None:
         raise HierarchyError(
             f"the outgroups ({', '.join(sorted(outgroup))}) do not form a clade of the tree, "
-            f"however it is rooted, so no root separates them from the other genomes")
-    if tree.parents[branch] == root and (outgroups_below[branch] == len(outgroup)
-                                         or len(tree.children[root]) == 2):
+            f"however it is rooted, so no root separates them from the other genomes"
+        )
+    if tree.parents[branch] == root and (
+        outgroups_below[branch] == len(outgroup) or len(tree.children[root]) == 2
+    ):
         return tree
 
     # Every branch as an undirected edge, labelled by the node below it.
@@ -331,8 +336,7 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
     if old != upper and len(children.get(old, [])) == 1:
         (only,) = children[old]
         parent = next(parent for child, parent in pairs if child == old)
-        pairs = [(child, parent if child == only else above) for child, above in pairs
-                 if child != old]
+        pairs = [(child, parent if child == only else above) for child, above in pairs if child != old]
         if old in lengths or only in lengths:
             lengths[only] = lengths.pop(old, 0.0) + lengths.get(only, 0.0)
         value = support.pop(old, None)
@@ -346,10 +350,14 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
     return rerooted
 
 
-def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int = 2,
-             min_length: float | None = None,
-             members: Mapping[str, Sequence[str]] | None = None,
-             outgroups: Sequence[str] = ()) -> Collapsed:
+def collapse(
+    tree: Hierarchy,
+    min_support: float | None = None,
+    min_genomes: int = 2,
+    min_length: float | None = None,
+    members: Mapping[str, Sequence[str]] | None = None,
+    outgroups: Sequence[str] = (),
+) -> Collapsed:
     """Remove weak internal nodes of a genome tree and place its genomes.
 
     An internal node other than the root is kept when its support is at
@@ -373,8 +381,7 @@ def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int
     tree = reroot(tree, sorted(outgroup))
     nodes = tree.nodes
     root = tree.root
-    weight = {leaf: 0 if leaf in outgroup else 1 + len(members.get(leaf, []))
-              for leaf in tree.leaves}
+    weight = {leaf: 0 if leaf in outgroup else 1 + len(members.get(leaf, [])) for leaf in tree.leaves}
     below: dict[str, int] = {}
     for node in reversed(nodes):
         below[node] = weight.get(node, 0) + sum(below[child] for child in tree.children[node])
@@ -385,8 +392,7 @@ def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int
         if node == root or not tree.children[node]:
             continue
         reasons = []
-        if min_support is not None and node in tree.support \
-                and tree.support[node] < min_support:
+        if min_support is not None and node in tree.support and tree.support[node] < min_support:
             reasons.append(f"support {tree.support[node]:g}")
         if min_length is not None and node in tree.lengths and tree.lengths[node] < min_length:
             reasons.append(f"branch length {tree.lengths[node]:g}")
@@ -403,8 +409,7 @@ def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int
         parent = tree.parents[node]
         kept_above[node] = parent if parent in kept else kept_above[parent]
 
-    parent_of = {node: (None if node == root else kept_above[node])
-                 for node in nodes if node in kept}
+    parent_of = {node: (None if node == root else kept_above[node]) for node in nodes if node in kept}
     genomes: dict[str, str] = {}
     for leaf in tree.leaves:
         if leaf == root or leaf in outgroup:
@@ -430,16 +435,21 @@ def collapse(tree: Hierarchy, min_support: float | None = None, min_genomes: int
             joined_into[node] = joined_into.get(parent, parent)
             removed[node] = "holds the same genomes as its parent"
     if joined_into:
-        parent_of = {node: (None if parent is None else joined_into.get(parent, parent))
-                     for node, parent in parent_of.items() if node not in joined_into}
+        parent_of = {
+            node: (None if parent is None else joined_into.get(parent, parent))
+            for node, parent in parent_of.items()
+            if node not in joined_into
+        }
         genomes = {genome: joined_into.get(node, node) for genome, node in genomes.items()}
 
     hierarchy = Hierarchy(list(parent_of.items()))
     logging.info(
         f"Kept {len(hierarchy)} of {len(tree) - len(tree.leaves)} internal nodes, and placed "
-        f"{len(genomes)} genomes")
-    return Collapsed(hierarchy=hierarchy, genomes=genomes,
-                     source={node: node for node in hierarchy.nodes}, removed=removed)
+        f"{len(genomes)} genomes"
+    )
+    return Collapsed(
+        hierarchy=hierarchy, genomes=genomes, source={node: node for node in hierarchy.nodes}, removed=removed
+    )
 
 
 def rename(collapsed: Collapsed, prefix: str) -> Collapsed:
@@ -467,18 +477,22 @@ def rename(collapsed: Collapsed, prefix: str) -> Collapsed:
     names = {tree.root: prefix}
     for node in tree.nodes:
         # A node without genomes, which only a min_genomes below 1 keeps, last.
-        ordered = sorted(tree.children[node], key=lambda child: (
-            -count[child], child not in first, first.get(child, ""), child))
+        ordered = sorted(
+            tree.children[node],
+            key=lambda child: (-count[child], child not in first, first.get(child, ""), child),
+        )
         for index, child in enumerate(ordered, 1):
             names[child] = f"{names[node]}.{index}"
 
-    hierarchy = Hierarchy([(names[node], None if parent is None else names[parent])
-                           for node, parent in tree.parents.items()])
+    hierarchy = Hierarchy(
+        [(names[node], None if parent is None else names[parent]) for node, parent in tree.parents.items()]
+    )
     return Collapsed(
         hierarchy=hierarchy,
         genomes={genome: names[node] for genome, node in collapsed.genomes.items()},
         source={names[node]: collapsed.source[node] for node in tree.nodes},
-        removed=collapsed.removed)
+        removed=collapsed.removed,
+    )
 
 
 #: Characters no node name may hold, as CanSNPer2-data requires.
@@ -490,19 +504,20 @@ class Named:
     """A hierarchy whose nodes are named after the labelled genomes they hold."""
 
     hierarchy: Hierarchy
-    genomes: dict[str, str]          # each genome -> its node, under the new names
-    names: dict[str, str]            # each node's old name -> its new name
-    named_by: dict[str, str]         # each node's old name -> root, label or position
-    labels: dict[str, str]           # each node named after a label -> that label
-    below: dict[str, int]            # each node's old name -> the genomes at or below it
-    labelled: dict[str, int]         # each node's old name -> the labelled genomes among them
-    unplaced: list[str]              # labels that no node holds apart from another label
-    split: dict[str, list[str]]      # labels named at more than one node -> those nodes
-    missing: list[str]               # labelled genomes the genome map does not place
+    genomes: dict[str, str]  # each genome -> its node, under the new names
+    names: dict[str, str]  # each node's old name -> its new name
+    named_by: dict[str, str]  # each node's old name -> root, label or position
+    labels: dict[str, str]  # each node named after a label -> that label
+    below: dict[str, int]  # each node's old name -> the genomes at or below it
+    labelled: dict[str, int]  # each node's old name -> the labelled genomes among them
+    unplaced: list[str]  # labels that no node holds apart from another label
+    split: dict[str, list[str]]  # labels named at more than one node -> those nodes
+    missing: list[str]  # labelled genomes the genome map does not place
 
 
-def name_from_labels(hierarchy: Hierarchy, clusters: Mapping[str, Sequence[str]],
-                     labels: Mapping[str, str]) -> Named:
+def name_from_labels(
+    hierarchy: Hierarchy, clusters: Mapping[str, Sequence[str]], labels: Mapping[str, str]
+) -> Named:
     """Name the nodes of a hierarchy after the labels of the genomes they hold.
 
     A node takes a label when every labelled genome at or below it carries that
@@ -523,7 +538,8 @@ def name_from_labels(hierarchy: Hierarchy, clusters: Mapping[str, Sequence[str]]
         if not label or any(character in label for character in NAME_REFUSED):
             raise ValueError(
                 f"the label {label!r} of {genome} cannot name a node: it must be non-empty and "
-                f"hold no semicolon, tab or line break")
+                f"hold no semicolon, tab or line break"
+            )
 
     placed = {genome for genomes in clusters.values() for genome in genomes}
     missing = sorted(set(labels) - placed)
@@ -532,8 +548,7 @@ def name_from_labels(hierarchy: Hierarchy, clusters: Mapping[str, Sequence[str]]
     root = hierarchy.root
     isolates = hierarchy.isolates(clusters)
     below = {node: len(isolates[node]) for node in hierarchy.nodes}
-    held = {node: {labelled[g] for g in isolates[node] if g in labelled}
-            for node in hierarchy.nodes}
+    held = {node: {labelled[g] for g in isolates[node] if g in labelled} for node in hierarchy.nodes}
 
     # The shallowest node holding one label alone: its parent holds another
     # label too, or is the root, which keeps its own name.
@@ -578,14 +593,18 @@ def name_from_labels(hierarchy: Hierarchy, clusters: Mapping[str, Sequence[str]]
         # B.2, is kept as it is.
         old_parent = hierarchy.parents[node]
         if node.startswith(old_parent + ".") and names[old_parent] != old_parent:
-            names[node] = unique(names[old_parent] + node[len(old_parent):])
+            names[node] = unique(names[old_parent] + node[len(old_parent) :])
         else:
             used.add(node)
             names[node] = node
         named_by[node] = "position"
 
-    renamed = Hierarchy([(names[node], None if parent is None else names[parent])
-                         for node, parent in hierarchy.parents.items()])
+    renamed = Hierarchy(
+        [
+            (names[node], None if parent is None else names[parent])
+            for node, parent in hierarchy.parents.items()
+        ]
+    )
     return Named(
         hierarchy=renamed,
         genomes={genome: names[node] for node, genomes in clusters.items() for genome in genomes},
@@ -596,44 +615,53 @@ def name_from_labels(hierarchy: Hierarchy, clusters: Mapping[str, Sequence[str]]
         labelled={node: sum(1 for g in isolates[node] if g in labelled) for node in hierarchy.nodes},
         unplaced=sorted({*labelled.values()} - set(by_label)),
         split={label: sorted(nodes) for label, nodes in by_label.items() if len(nodes) > 1},
-        missing=missing)
+        missing=missing,
+    )
 
 
 def write_named(named: Named, old: Hierarchy, outdir: str, prefix: str) -> list[str]:
     """Write the renamed hierarchy and genome map, and how each node got its name."""
     os.makedirs(outdir, exist_ok=True)
-    paths = [os.path.join(outdir, f"{prefix}_{name}")
-             for name in ("hierarchy.tsv", "genomes.tsv", "names.tsv")]
+    paths = [
+        os.path.join(outdir, f"{prefix}_{name}") for name in ("hierarchy.tsv", "genomes.tsv", "names.tsv")
+    ]
     hierarchy = named.hierarchy
     with open(paths[0], "w", newline="\n") as handle:
         handle.write("child\tparent\n")
         handle.writelines(f"{node}\t{hierarchy.parents[node] or ''}\n" for node in hierarchy.nodes)
     with open(paths[1], "w", newline="\n") as handle:
-        handle.writelines(f"{genome}\t{node}\n" for genome, node in
-                          sorted(named.genomes.items(), key=lambda item: (item[1], item[0])))
+        handle.writelines(
+            f"{genome}\t{node}\n"
+            for genome, node in sorted(named.genomes.items(), key=lambda item: (item[1], item[0]))
+        )
     with open(paths[2], "w", newline="\n") as handle:
         handle.write("old_name\tnew_name\tnamed_by\tlabel\tgenomes\tlabelled\n")
         handle.writelines(
             f"{node}\t{named.names[node]}\t{named.named_by[node]}\t{named.labels.get(node, '')}"
-            f"\t{named.below[node]}\t{named.labelled[node]}\n" for node in old.nodes)
+            f"\t{named.below[node]}\t{named.labelled[node]}\n"
+            for node in old.nodes
+        )
     return paths
 
 
-def write_collapsed(collapsed: Collapsed, tree: Hierarchy, outdir: str,
-                    prefix: str) -> list[str]:
+def write_collapsed(collapsed: Collapsed, tree: Hierarchy, outdir: str, prefix: str) -> list[str]:
     """Write the hierarchy, the genome map and a node table."""
     os.makedirs(outdir, exist_ok=True)
     hierarchy = collapsed.hierarchy
     count = collapsed.genome_count()
-    paths = [os.path.join(outdir, f"{prefix}_{name}")
-             for name in ("hierarchy.tsv", "genomes.tsv", "nodes.tsv")]
+    paths = [
+        os.path.join(outdir, f"{prefix}_{name}") for name in ("hierarchy.tsv", "genomes.tsv", "nodes.tsv")
+    ]
 
     with open(paths[0], "w", newline="\n") as handle:
         handle.write("child\tparent\n")
         handle.writelines(f"{node}\t{hierarchy.parents[node] or ''}\n" for node in hierarchy.nodes)
 
     with open(paths[1], "w", newline="\n") as handle:
-        handle.writelines(f"{genome}\t{node}\n" for genome, node in sorted(collapsed.genomes.items(), key=lambda item: (item[1], item[0])))
+        handle.writelines(
+            f"{genome}\t{node}\n"
+            for genome, node in sorted(collapsed.genomes.items(), key=lambda item: (item[1], item[0]))
+        )
 
     with open(paths[2], "w", newline="\n") as handle:
         handle.write("node\tparent\tgenomes\tsupport\tbranch_length\ttree_node\n")
@@ -641,10 +669,19 @@ def write_collapsed(collapsed: Collapsed, tree: Hierarchy, outdir: str,
             source = collapsed.source[node]
             support = tree.support.get(source)
             length = tree.lengths.get(source)
-            handle.write("\t".join([
-                node, hierarchy.parents[node] or "", str(count[node]),
-                "NA" if support is None else f"{support:g}",
-                "NA" if length is None else f"{length:g}", source]) + "\n")
+            handle.write(
+                "\t".join(
+                    [
+                        node,
+                        hierarchy.parents[node] or "",
+                        str(count[node]),
+                        "NA" if support is None else f"{support:g}",
+                        "NA" if length is None else f"{length:g}",
+                        source,
+                    ]
+                )
+                + "\n"
+            )
     return paths
 
 
@@ -678,8 +715,18 @@ class Match:
     def described(self) -> str:
         return f"the genomes outside {self.clade}" if self.outside else str(self.clade)
 
-    HEADER = ("node", "tree_node", "side", "jaccard", "carriers", "shared", "clade_only",
-              "carriers_only", "genomes_placed", "note")
+    HEADER = (
+        "node",
+        "tree_node",
+        "side",
+        "jaccard",
+        "carriers",
+        "shared",
+        "clade_only",
+        "carriers_only",
+        "genomes_placed",
+        "note",
+    )
 
 
 @dataclass
@@ -709,9 +756,15 @@ def _clade_sizes(tree: Hierarchy, records: Mapping[str, str]) -> dict[str, int]:
     return sizes
 
 
-def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], reference: Reference,
-          genome: str | None = None, min_match: float = 0.5,
-          members: Mapping[str, Sequence[str]] | None = None) -> Placement:
+def place(
+    scheme: Scheme,
+    tree: Hierarchy,
+    alignment: Mapping[str, str],
+    reference: Reference,
+    genome: str | None = None,
+    min_match: float = 0.5,
+    members: Mapping[str, Sequence[str]] | None = None,
+) -> Placement:
     """Place the genomes of a tree on the nodes of an existing scheme.
 
     Args:
@@ -727,24 +780,33 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     """
     findings: list[Finding] = []
     if scheme.hierarchy is None:
-        return Placement({}, [], [problem(
-            CHECK, "placement", "", "the tree file of the scheme is not a single rooted tree")])
+        return Placement(
+            {},
+            [],
+            [problem(CHECK, "placement", "", "the tree file of the scheme is not a single rooted tree")],
+        )
 
     mapping = AlignmentMap(next(iter(alignment.values())), reference)
     records = list(alignment)
     matched, unmatched, ambiguous = resolve_names(tree.leaves, records)
     if unmatched or ambiguous:
-        findings.append(recommendation(
-            CHECK, "tree-genomes", "",
-            f"{len(unmatched) + len(ambiguous)} leaves of the tree match no single genome of "
-            f"the alignment and are left out: {', '.join(sorted(unmatched + ambiguous)[:5])}"))
+        findings.append(
+            recommendation(
+                CHECK,
+                "tree-genomes",
+                "",
+                f"{len(unmatched) + len(ambiguous)} leaves of the tree match no single genome of "
+                f"the alignment and are left out: {', '.join(sorted(unmatched + ambiguous)[:5])}",
+            )
+        )
     leaf_record = dict(matched)
 
     member_record: dict[str, str] = {}
     folded = {leaf: names for leaf, names in (members or {}).items() if leaf in leaf_record}
     # Matched against the records once, not leaf by leaf.
     found, _missing, _ambiguous = resolve_names(
-        list(dict.fromkeys(name for names in folded.values() for name in names)), records)
+        list(dict.fromkeys(name for names in folded.values() for name in names)), records
+    )
     for leaf, names in folded.items():
         for name in names:
             if name in found:
@@ -760,11 +822,12 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
     if genome is None and len(annotated) > 1:
         raise ValueError(
             f"the scheme annotates {len(annotated)} reference genomes ({', '.join(annotated)}), "
-            f"so --genome must say which one the alignment is against")
+            f"so --genome must say which one the alignment is against"
+        )
     if genome is not None and genome not in annotated:
         raise ValueError(
-            f"the scheme annotates no SNP on genome '{genome}'; it names "
-            f"{', '.join(annotated) or 'none'}")
+            f"the scheme annotates no SNP on genome '{genome}'; it names {', '.join(annotated) or 'none'}"
+        )
     # Every canSNP of a node is tried, best rank first, and the one that
     # matches a side of a branch best is kept: one homoplastic or uncalled
     # canSNP then does not misplace a node whose other canSNPs mark it.
@@ -807,9 +870,11 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
             own_called = 1 if record in called else 0
             own_carrier = 1 if record in carriers else 0
             below_called[tree_node] = own_called + sum(
-                below_called[child] for child in tree.children[tree_node])
+                below_called[child] for child in tree.children[tree_node]
+            )
             below_carriers[tree_node] = own_carrier + sum(
-                below_carriers[child] for child in tree.children[tree_node])
+                below_carriers[child] for child in tree.children[tree_node]
+            )
 
         best: tuple[float, int, int, str] | None = None
         for tree_node in nodes:
@@ -822,8 +887,13 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
             # is unrooted and one outgroup genome lies outside the scheme's
             # root, and rank after a clade that matches as well.
             if tree_node != root:
-                sides.append((n_called - inside_called, n_carriers - inside_carriers,
-                              1 if tree.children[tree_node] else 2))
+                sides.append(
+                    (
+                        n_called - inside_called,
+                        n_carriers - inside_carriers,
+                        1 if tree.children[tree_node] else 2,
+                    )
+                )
             for side_called, shared, outside in sides:
                 if not shared:
                     continue
@@ -841,16 +911,27 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         inside = _clade(tree, clade, leaf_record)
         group = in_tree - inside if outside else inside
         genomes = group & called
-        match = Match(node, clade, index, len(carriers), len(genomes & carriers),
-                      len(genomes - carriers), len(carriers - genomes),
-                      outside=outside, group=group, uncalled=frozenset(in_tree - called),
-                      rank=snp.rank)
+        match = Match(
+            node,
+            clade,
+            index,
+            len(carriers),
+            len(genomes & carriers),
+            len(genomes - carriers),
+            len(carriers - genomes),
+            outside=outside,
+            group=group,
+            uncalled=frozenset(in_tree - called),
+            rank=snp.rank,
+        )
         if index < min_match:
             match.reason = f"the best clade matches with a Jaccard index of {index:.2f} only"
             match.clade = None
         elif outside:
-            match.reason = (f"matches the genomes outside the tree's clade {clade}, so the tree "
-                            f"is rooted inside this node's clade")
+            match.reason = (
+                f"matches the genomes outside the tree's clade {clade}, so the tree "
+                f"is rooted inside this node's clade"
+            )
         return match
 
     for node in scheme.hierarchy.nodes:
@@ -859,42 +940,65 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
             continue
         tried = [match_snp(node, snp) for snp in snps[node]]
         # A matched clade before none, then the higher index, then the better rank.
-        matches[node] = min(tried, key=lambda match: (match.clade is None, -match.jaccard,
-                                                      match.rank))
+        matches[node] = min(tried, key=lambda match: (match.clade is None, -match.jaccard, match.rank))
 
     for node, match in matches.items():
         if match.clade is None:
-            findings.append(recommendation(
-                CHECK, "unplaced-node", node,
-                f"the node could not be matched to a clade of the tree: {match.reason}. No "
-                f"genome is placed at it"))
+            findings.append(
+                recommendation(
+                    CHECK,
+                    "unplaced-node",
+                    node,
+                    f"the node could not be matched to a clade of the tree: {match.reason}. No "
+                    f"genome is placed at it",
+                )
+            )
         elif match.jaccard < 1.0:
-            findings.append(recommendation(
-                CHECK, "partial-match", node,
-                f"the node matches {match.described} with a Jaccard index of "
-                f"{match.jaccard:.2f}: {match.clade_only} genomes of the clade lack the derived "
-                f"base, and {match.carriers_only} genomes outside it carry it"))
+            findings.append(
+                recommendation(
+                    CHECK,
+                    "partial-match",
+                    node,
+                    f"the node matches {match.described} with a Jaccard index of "
+                    f"{match.jaccard:.2f}: {match.clade_only} genomes of the clade lack the derived "
+                    f"base, and {match.carriers_only} genomes outside it carry it",
+                )
+            )
 
     rerooted = sorted(node for node, match in matches.items() if match.clade and match.outside)
     if rerooted:
-        findings.append(recommendation(
-            CHECK, "tree-root", ", ".join(rerooted[:5]),
-            f"{len(rerooted)} nodes match the genomes outside a clade of the tree rather than a "
-            f"clade, so the tree is rooted inside them. The placement does not depend on it, "
-            f"but a tree rooted on an outgroup avoids the question"))
+        findings.append(
+            recommendation(
+                CHECK,
+                "tree-root",
+                ", ".join(rerooted[:5]),
+                f"{len(rerooted)} nodes match the genomes outside a clade of the tree rather than a "
+                f"clade, so the tree is rooted inside them. The placement does not depend on it, "
+                f"but a tree rooted on an outgroup avoids the question",
+            )
+        )
 
     for node in scheme.hierarchy.nodes:
         parent = scheme.hierarchy.parents[node]
         child_match, parent_match = matches[node], matches.get(parent) if parent else None
         # Genomes without a base at the parent's SNP may belong to it: only a
         # genome called there and left outside contradicts the scheme.
-        if child_match.clade and parent_match and parent_match.clade \
-                and not child_match.group <= parent_match.group | parent_match.uncalled:
-            findings.append(problem(
-                MODIFY, "placement-order", node,
-                f"the node matches {child_match.described}, which is not inside "
-                f"{parent_match.described}, which its parent {parent} matches. The tree and the "
-                f"scheme disagree on where this branch belongs"))
+        if (
+            child_match.clade
+            and parent_match
+            and parent_match.clade
+            and not child_match.group <= parent_match.group | parent_match.uncalled
+        ):
+            findings.append(
+                problem(
+                    MODIFY,
+                    "placement-order",
+                    node,
+                    f"the node matches {child_match.described}, which is not inside "
+                    f"{parent_match.described}, which its parent {parent} matches. The tree and the "
+                    f"scheme disagree on where this branch belongs",
+                )
+            )
 
     depth = {node: len(scheme.hierarchy.path(node)) for node in scheme.hierarchy.nodes}
     matched_nodes = [node for node, match in matches.items() if match.clade]
@@ -917,23 +1021,32 @@ def place(scheme: Scheme, tree: Hierarchy, alignment: Mapping[str, str], referen
         clusters.setdefault(node, []).append(record)
 
     if split:
-        findings.append(problem(
-            CHECK, "placement-conflict", "",
-            f"{len(split)} genomes lie in the clades of nodes on different branches of the "
-            f"scheme, and were placed at the deepest of them: {', '.join(split[:5])}"))
+        findings.append(
+            problem(
+                CHECK,
+                "placement-conflict",
+                "",
+                f"{len(split)} genomes lie in the clades of nodes on different branches of the "
+                f"scheme, and were placed at the deepest of them: {', '.join(split[:5])}",
+            )
+        )
 
     for match in matches.values():
         match.genomes = frozenset(clusters.get(match.node, []))
 
     logging.info(
         f"Matched {len(matched_nodes)} of {len(matches)} nodes of the scheme to clades of the "
-        f"tree, and placed {len(placed_at)} of {len(in_tree)} genomes")
+        f"tree, and placed {len(placed_at)} of {len(in_tree)} genomes"
+    )
     return Placement(clusters, list(matches.values()), findings)
 
 
-def place_by_clade(tree: Hierarchy, scheme_genomes: Mapping[str, str],
-                   parents: Mapping[str, str | None],
-                   outgroups: Sequence[str]) -> tuple[dict[str, str], list[str]]:
+def place_by_clade(
+    tree: Hierarchy,
+    scheme_genomes: Mapping[str, str],
+    parents: Mapping[str, str | None],
+    outgroups: Sequence[str],
+) -> tuple[dict[str, str], list[str]]:
     """Place the leaves of a tree at the deepest scheme node whose clade holds them.
 
     Where ``place`` reads a node's clade from where its canSNP's derived base
@@ -970,18 +1083,21 @@ def place_by_clade(tree: Hierarchy, scheme_genomes: Mapping[str, str],
         raise ValueError(
             f"{len(unknown)} nodes of the scheme genomes are not nodes of the scheme: "
             f"{', '.join(unknown[:5])}. A scheme exported with --prune lacks the nodes it left "
-            f"out; its genomes file places the genomes at the nodes it kept")
+            f"out; its genomes file places the genomes at the nodes it kept"
+        )
     outgroup = set(outgroup_leaves(tree, outgroups))
     tree = reroot(tree, sorted(outgroup))
     matched, unmatched, ambiguous = resolve_names(list(scheme_genomes), tree.leaves)
     if unmatched:
-        logging.info(f"{len(unmatched)} scheme genomes are not in the tree: "
-                     f"{', '.join(sorted(unmatched)[:5])}")
+        logging.info(
+            f"{len(unmatched)} scheme genomes are not in the tree: {', '.join(sorted(unmatched)[:5])}"
+        )
     if ambiguous:
-        logging.warning(f"{len(ambiguous)} scheme genomes match more than one leaf of the tree "
-                        f"and were left out: {', '.join(sorted(ambiguous)[:5])}")
-    leaf_node = {leaf: scheme_genomes[genome] for genome, leaf in matched.items()
-                 if leaf not in outgroup}
+        logging.warning(
+            f"{len(ambiguous)} scheme genomes match more than one leaf of the tree "
+            f"and were left out: {', '.join(sorted(ambiguous)[:5])}"
+        )
+    leaf_node = {leaf: scheme_genomes[genome] for genome, leaf in matched.items() if leaf not in outgroup}
 
     # The scheme's genomes in the tree at or below each scheme node.
     below: dict[str, set[str]] = {}
@@ -1023,7 +1139,8 @@ def place_by_clade(tree: Hierarchy, scheme_genomes: Mapping[str, str],
             placed[leaf] = node
     logging.info(
         f"Found the clades of {len(clade_of)} scheme nodes from {len(leaf_node)} scheme genomes "
-        f"in the tree, and placed {len(placed)} of {len(placed) + len(unplaced)} other genomes")
+        f"in the tree, and placed {len(placed)} of {len(placed) + len(unplaced)} other genomes"
+    )
     return placed, sorted(unplaced)
 
 
@@ -1035,10 +1152,21 @@ def write_placement(placement: Placement, genome_map: str, report: str | None = 
     if report:
         with open(report, "w", newline="\n") as handle:
             handle.write("\t".join(Match.HEADER) + "\n")
-            handle.writelines("\t".join([
-                    match.node, match.clade or "",
-                    "" if not match.clade else ("outside" if match.outside else "inside"),
-                    f"{match.jaccard:.3f}", str(match.carriers),
-                    str(match.shared), str(match.clade_only), str(match.carriers_only),
-                    str(len(match.genomes)), match.reason]) + "\n" for match in placement.matches)
-
+            handle.writelines(
+                "\t".join(
+                    [
+                        match.node,
+                        match.clade or "",
+                        "" if not match.clade else ("outside" if match.outside else "inside"),
+                        f"{match.jaccard:.3f}",
+                        str(match.carriers),
+                        str(match.shared),
+                        str(match.clade_only),
+                        str(match.carriers_only),
+                        str(len(match.genomes)),
+                        match.reason,
+                    ]
+                )
+                + "\n"
+                for match in placement.matches
+            )

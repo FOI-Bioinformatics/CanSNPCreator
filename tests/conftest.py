@@ -105,7 +105,9 @@ def write_fasta(path: str, records: list[tuple[str, str]], width: int = 70) -> N
     with open(path, "w") as handle:
         for name, sequence in records:
             handle.write(f">{name}\n")
-            handle.writelines(sequence[start:start + width] + "\n" for start in range(0, len(sequence), width))
+            handle.writelines(
+                sequence[start : start + width] + "\n" for start in range(0, len(sequence), width)
+            )
 
 
 @dataclass
@@ -146,8 +148,10 @@ def dataset(tmp_path) -> Dataset:
     # names the contig.
     write_fasta(
         reference,
-        [(f"{name} Testus organismus {name}, complete sequence", sequences["ref"][start:end])
-         for name, start, end in CONTIGS],
+        [
+            (f"{name} Testus organismus {name}, complete sequence", sequences["ref"][start:end])
+            for name, start, end in CONTIGS
+        ],
     )
 
     # The genome map places each genome at a node, as FlexTaxD's
@@ -170,9 +174,7 @@ def dataset(tmp_path) -> Dataset:
     with open(gff, "w") as handle:
         handle.write("##gff-version 3\n")
         for name, start, end in CONTIGS:
-            handle.write(
-                f"{name}\tRefSeq\tregion\t1\t{end - start}\t.\t+\t.\tID={name}:1..{end - start}\n"
-            )
+            handle.write(f"{name}\tRefSeq\tregion\t1\t{end - start}\t.\t+\t.\tID={name}:1..{end - start}\n")
             for contig, gene_start, gene_end, strand in GENES:
                 if contig != name:
                     continue
@@ -229,8 +231,7 @@ def parsed_snps(dataset, cansnps):
     parsed = []
     for cansnp in cansnps:
         contig, position = dataset.contig_of(cansnp.column)
-        derived, ancestral = ((cansnp.derived, cansnp.ancestral) if cansnp.is_canonical
-                              else cansnp.bases)
+        derived, ancestral = (cansnp.derived, cansnp.ancestral) if cansnp.is_canonical else cansnp.bases
         parsed.append(Snp(contig, position, cansnp.node, derived, ancestral))
     return parsed
 
@@ -288,13 +289,42 @@ def written(dataset, tmp_path):
     snp_file = str(tmp_path / "snps.vcf")
     scores = str(tmp_path / "scores.vcf")
     outdir = str(tmp_path / "scheme")
-    assert cli_run("extract", "--genome-map", dataset.genome_map, "--hierarchy", dataset.hierarchy,
-                   "--alignment", dataset.alignment, "--reference", dataset.reference,
-                   "-o", snp_file) == 0
-    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats,
-                   "--hierarchy", dataset.hierarchy, "-o", scores,
-                   "--cutoff", "0") == 0
+    assert (
+        cli_run(
+            "extract",
+            "--genome-map",
+            dataset.genome_map,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            dataset.reference,
+            "-o",
+            snp_file,
+        )
+        == 0
+    )
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snp_file,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "--hierarchy",
+            dataset.hierarchy,
+            "-o",
+            scores,
+            "--cutoff",
+            "0",
+        )
+        == 0
+    )
     from cansnpscorer.cansnp_export import main as export_main
 
     assert export_main(scores, dataset.hierarchy, dataset.reference, outdir, **METADATA) == 0
@@ -324,8 +354,10 @@ def vcf_lines(path):
     """The header and the record lines of a VCF file, as two lists."""
     with open(path) as handle:
         lines = handle.read().splitlines()
-    return ([line for line in lines if line.startswith("#")],
-            [line for line in lines if not line.startswith("#")])
+    return (
+        [line for line in lines if line.startswith("#")],
+        [line for line in lines if not line.startswith("#")],
+    )
 
 
 def vcf_rewrite(path, out, keep=lambda fields: True, change=lambda fields: fields):

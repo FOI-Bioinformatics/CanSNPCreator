@@ -23,8 +23,13 @@ from cansnpscorer.typing_report import (
     single_call,
 )
 
-LINEAGE = {"root": ["root"], "A": ["A", "root"], "A.1": ["A.1", "A", "root"],
-           "A.2": ["A.2", "A", "root"], "B": ["B", "root"]}
+LINEAGE = {
+    "root": ["root"],
+    "A": ["A", "root"],
+    "A.1": ["A.1", "A", "root"],
+    "A.2": ["A.2", "A", "root"],
+    "B": ["B", "root"],
+}
 
 
 def table(path):
@@ -35,9 +40,18 @@ def table(path):
 def run_report(written, dataset, tmp_path, alignment=None, *extra):
     outdir, _scores = written
     prefix = str(tmp_path / "typing")
-    status = cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                     "--alignment", alignment or dataset.alignment,
-                     "--typing-report", prefix, *extra)
+    status = cli_run(
+        "audit",
+        "--scheme-dir",
+        outdir,
+        "--reference",
+        dataset.reference,
+        "--alignment",
+        alignment or dataset.alignment,
+        "--typing-report",
+        prefix,
+        *extra,
+    )
     return status, prefix
 
 
@@ -74,8 +88,22 @@ def add_set(outdir, extra):
         lines.append("\t".join(row.values()))
         for rank, (column, derived, ancestral) in enumerate(extra.get(row["node"], []), 2):
             sequence, position = contig_of(column)
-            lines.append("\t".join([row["node"], str(rank), row["reference"], row["genome"],
-                                    sequence, str(position), derived, ancestral, "600", "no"]))
+            lines.append(
+                "\t".join(
+                    [
+                        row["node"],
+                        str(rank),
+                        row["reference"],
+                        row["genome"],
+                        sequence,
+                        str(position),
+                        derived,
+                        ancestral,
+                        "600",
+                        "no",
+                    ]
+                )
+            )
     with open(path, "w") as handle:
         handle.write("\n".join(lines) + "\n")
 
@@ -149,8 +177,7 @@ def test_derived_nodes_off_the_path_of_a_call_all_contradict_it():
 
 
 def test_every_isolate_is_typed_at_its_node_under_both_rules(written, dataset, tmp_path):
-    status, prefix = run_report(written, dataset, tmp_path, None,
-                                "--genome-map", dataset.genome_map)
+    status, prefix = run_report(written, dataset, tmp_path, None, "--genome-map", dataset.genome_map)
     assert status in (0, 2)  # the audit's own findings do not matter here
     genomes = {row["genome"]: row for row in table(prefix + "_genomes.tsv")}
     for node, isolates in CLUSTERS.items():
@@ -177,12 +204,21 @@ def test_the_report_needs_no_placement_of_the_genomes(written, dataset, tmp_path
 
 def test_without_the_report_an_alignment_still_needs_a_placement(written, dataset):
     outdir, _scores = written
-    assert cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                   "--alignment", dataset.alignment) == 1
+    assert (
+        cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            dataset.alignment,
+        )
+        == 1
+    )
 
 
-def test_a_missing_base_stops_the_single_rule_and_not_the_set_rule(written, dataset,
-                                                                   tmp_path):
+def test_a_missing_base_stops_the_single_rule_and_not_the_set_rule(written, dataset, tmp_path):
     alignment = changed(dataset, tmp_path, {"s1": {PLANTED["A"][0]: "N"}})
     _status, prefix = run_report(written, dataset, tmp_path, alignment)
     row = {r["genome"]: r for r in table(prefix + "_genomes.tsv")}["s1"]
@@ -195,16 +231,16 @@ def test_a_missing_base_stops_the_single_rule_and_not_the_set_rule(written, data
     assert snps["A"]["missing"] == "1" and snps["A"]["called"] == "5"
 
 
-def test_a_set_outvotes_one_discordant_base_and_the_snp_is_counted(written, dataset,
-                                                                    tmp_path):
+def test_a_set_outvotes_one_discordant_base_and_the_snp_is_counted(written, dataset, tmp_path):
     outdir, _scores = written
     column, ancestral, _derived = PLANTED["A"]
     # Two more canSNPs for A, whose ancestral base is the reference's own.
     reference = read_alignment(dataset.alignment)["ref"]
     added = [(at, "C" if reference[at] != "C" else "G", reference[at]) for at in (210, 220)]
-    extra = {name: {at: new if name in ("s1", "s1b", "s2") else old
-                    for at, new, old in added}
-             for name in read_alignment(dataset.alignment)}
+    extra = {
+        name: {at: new if name in ("s1", "s1b", "s2") else old for at, new, old in added}
+        for name in read_alignment(dataset.alignment)
+    }
     extra["s2"][column] = ancestral  # the first canSNP of A fails in s2
     alignment = changed(dataset, tmp_path, extra)
     add_set(outdir, {"A": added})
@@ -232,8 +268,17 @@ def test_a_set_outvotes_one_discordant_base_and_the_snp_is_counted(written, data
 
 
 def snp(position, total=600, contig="c1", locus="", **fields):
-    return ScoredSnp(contig=contig, position=position, node="A", total=total, terms={},
-                     derived="C", ancestral="G", locus=locus, **fields)
+    return ScoredSnp(
+        contig=contig,
+        position=position,
+        node="A",
+        total=total,
+        terms={},
+        derived="C",
+        ancestral="G",
+        locus=locus,
+        **fields,
+    )
 
 
 def test_a_snp_that_disagreed_with_its_node_is_ranked_after_a_lower_score():
@@ -248,23 +293,54 @@ def test_observed_missing_counts_with_the_missing_of_the_alignment():
 
 
 def test_evaluate_reads_the_observed_behaviour_into_the_scores(written, dataset, tmp_path):
-    _status, prefix = run_report(written, dataset, tmp_path,
-                                 changed(dataset, tmp_path, {"s1": {PLANTED["A"][0]: "N"}}))
+    _status, prefix = run_report(
+        written, dataset, tmp_path, changed(dataset, tmp_path, {"s1": {PLANTED["A"][0]: "N"}})
+    )
     snp_file, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "observed.vcf")
-    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores,
-                   "--profile", "typing", "--observed", prefix + "_snps.tsv") == 0
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snp_file,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+            "--profile",
+            "typing",
+            "--observed",
+            prefix + "_snps.tsv",
+        )
+        == 0
+    )
     by_node = {record.node: record for record in vcf_records(scores)}
     assert by_node["A"].info["OBS_MISSING"] == "1"
     assert by_node["B"].info["OBS_MISSING"] == "0"
     assert by_node["B"].info["OBS_DISCORDANT"] == "0"
 
 
-def test_the_typing_profile_is_the_default_and_drops_the_gc_term_and_the_cutoff(
-        written, dataset, tmp_path):
+def test_the_typing_profile_is_the_default_and_drops_the_gc_term_and_the_cutoff(written, dataset, tmp_path):
     snp_file, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "typing.vcf")
-    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores) == 0
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snp_file,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+        )
+        == 0
+    )
     records = vcf_records(scores)
     assert records and all(record.info["GC"] == "0" for record in records)
     assert all("LowScore" not in record.filters for record in records)
@@ -273,13 +349,27 @@ def test_the_typing_profile_is_the_default_and_drops_the_gc_term_and_the_cutoff(
 
 def test_the_assay_profile_keeps_its_cutoff_of_500(written, dataset, tmp_path):
     snp_file, scores = str(tmp_path / "snps.vcf"), str(tmp_path / "assay.vcf")
-    assert cli_run("evaluate", "--snps", snp_file, "--reference", dataset.reference,
-                   "--genes", dataset.gff, "--repeats", dataset.repeats, "-o", scores,
-                   "--profile", "assay") == 0
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            snp_file,
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+            "--profile",
+            "assay",
+        )
+        == 0
+    )
     records = vcf_records(scores)
     assert any(int(record.info["GC"]) > 0 for record in records)
-    assert all(("LowScore" in record.filters) == (int(record.info["SCORE"]) <= 500)
-               for record in records)
+    assert all(("LowScore" in record.filters) == (int(record.info["SCORE"]) <= 500) for record in records)
 
 
 # -- sets that fail independently -------------------------------------------
@@ -295,16 +385,14 @@ def test_another_gene_is_taken_before_a_better_snp_of_the_same_gene():
     same_gene = snp(5000, total=590, locus="1-9000")
     other_gene = snp(20000, total=400, locus="19000-21000")
     assert select_per_node([first, same_gene, other_gene], top=2)["A"] == [first, other_gene]
-    assert select_per_node([first, same_gene, other_gene], top=3)["A"] == [
-        first, other_gene, same_gene]
+    assert select_per_node([first, same_gene, other_gene], top=3)["A"] == [first, other_gene, same_gene]
 
 
 def test_of_equal_scores_an_unused_contig_is_taken_first():
     first = snp(100, locus="1-900")
     same_contig = snp(5000, locus="4000-6000")
     other_contig = snp(7000, contig="c2", locus="6500-7500")
-    assert select_per_node([first, same_contig, other_contig], top=2)["A"] == [
-        first, other_contig]
+    assert select_per_node([first, same_contig, other_contig], top=2)["A"] == [first, other_contig]
     lower = snp(7000, total=599, contig="c2", locus="6500-7500")  # score comes first
     assert select_per_node([first, same_contig, lower], top=2)["A"] == [first, same_contig]
 
@@ -344,29 +432,57 @@ def test_what_was_observed_survives_the_scores_file(written, dataset, tmp_path):
     from cansnpscorer import vcf
     from cansnpscorer.helpers.file_utils import reference_parser
 
-    _status, prefix = run_report(written, dataset, tmp_path,
-                                 changed(dataset, tmp_path, {"s1": {PLANTED["A"][0]: "N"}}))
+    _status, prefix = run_report(
+        written, dataset, tmp_path, changed(dataset, tmp_path, {"s1": {PLANTED["A"][0]: "N"}})
+    )
     scores = str(tmp_path / "observed.vcf")
-    assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
-                   dataset.reference, "--genes", dataset.gff, "--repeats", dataset.repeats,
-                   "-o", scores, "--profile", "typing",
-                   "--observed", prefix + "_snps.tsv") == 0
-    read = {score.node: score for score in
-            vcf.read_scores(scores, reference_parser(dataset.reference))}
+    assert (
+        cli_run(
+            "evaluate",
+            "--snps",
+            str(tmp_path / "snps.vcf"),
+            "--reference",
+            dataset.reference,
+            "--genes",
+            dataset.gff,
+            "--repeats",
+            dataset.repeats,
+            "-o",
+            scores,
+            "--profile",
+            "typing",
+            "--observed",
+            prefix + "_snps.tsv",
+        )
+        == 0
+    )
+    read = {score.node: score for score in vcf.read_scores(scores, reference_parser(dataset.reference))}
     assert (read["A"].observed_genomes, read["A"].observed_missing) == (5, 1)
     assert (read["B"].observed_genomes, read["B"].observed_missing) == (6, 0)
 
 
-def test_audit_findings_and_typing_unchanged_when_only_scheme_columns_are_read(
-        written, dataset, tmp_path):
+def test_audit_findings_and_typing_unchanged_when_only_scheme_columns_are_read(written, dataset, tmp_path):
     outdir, _scores = written
     outputs = {}
     for label, extra in (("full", []), ("columns", ["--no-new-clades"])):
         prefix = str(tmp_path / label)
         findings = str(tmp_path / f"{label}_findings.tsv")
-        status = cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                         "--alignment", dataset.alignment, "--genome-map", dataset.genome_map,
-                         "--typing-report", prefix, "-o", findings, *extra)
+        status = cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            dataset.alignment,
+            "--genome-map",
+            dataset.genome_map,
+            "--typing-report",
+            prefix,
+            "-o",
+            findings,
+            *extra,
+        )
         texts = []
         for path in (findings, prefix + "_genomes.tsv", prefix + "_snps.tsv"):
             with open(path) as handle:
@@ -397,11 +513,14 @@ def derived_set_rows(states_by_genome, discordant=()):
     from cansnpscorer.typing_report import GenomeTyping, _snp_rows
 
     width = len(next(iter(states_by_genome.values())))
-    snps = [(SchemeSnp("A", "", "", "G", "c1", 10 + index, "T", "C", rank=index + 1,
-                       typed=index == 0), index)
-            for index in range(width)]
-    typed = [GenomeTyping(genome=name, states=states, discordant=name in discordant)
-             for name, states in states_by_genome.items()]
+    snps = [
+        (SchemeSnp("A", "", "", "G", "c1", 10 + index, "T", "C", rank=index + 1, typed=index == 0), index)
+        for index in range(width)
+    ]
+    typed = [
+        GenomeTyping(genome=name, states=states, discordant=name in discordant)
+        for name, states in states_by_genome.items()
+    ]
     return _snp_rows({"A": snps}, {"A": 0}, typed)
 
 
@@ -416,14 +535,14 @@ def test_derived_set_is_the_last_column_of_the_snp_table():
     from cansnpscorer.typing_report import SNP_COLUMNS
 
     assert SNP_COLUMNS[-2:] == ("derived_set", "set_apart")
-    assert SNP_COLUMNS[:-2][-3:] == ("discordant_in_set", "ancestral_on_path",
-                                     "derived_off_path")
+    assert SNP_COLUMNS[:-2][-3:] == ("discordant_in_set", "ancestral_on_path", "derived_off_path")
 
 
 def test_equal_counts_different_genomes_are_two_groups():
     # Two canSNPs derived in g1-g3, two in g4-g6: the counts are equal.
-    rows = derived_set_rows({"g1": "DDAA", "g2": "DDAA", "g3": "DDAA",
-                             "g4": "AADD", "g5": "AADD", "g6": "AADD", "g7": "AAAA"})
+    rows = derived_set_rows(
+        {"g1": "DDAA", "g2": "DDAA", "g3": "DDAA", "g4": "AADD", "g5": "AADD", "g6": "AADD", "g7": "AAAA"}
+    )
     assert labels_of(rows) == [1, 1, 2, 2]
 
 
@@ -434,14 +553,12 @@ def test_missing_base_does_not_split_a_group():
 
 
 def test_the_set_of_most_genomes_is_labelled_first_and_none_without_derived_genomes():
-    rows = derived_set_rows({"g1": "DAA", "g2": "ADA", "g3": "ADA", "g4": "ADA",
-                             "g5": "ADA", "g6": "AAA"})
+    rows = derived_set_rows({"g1": "DAA", "g2": "ADA", "g3": "ADA", "g4": "ADA", "g5": "ADA", "g6": "AAA"})
     assert labels_of(rows) == [2, 1, None]
 
 
 def test_a_discordant_genome_does_not_split_a_group():
-    rows = derived_set_rows({"g1": "DD", "g2": "DD", "bad": "DA", "g4": "AA"},
-                            discordant={"bad"})
+    rows = derived_set_rows({"g1": "DD", "g2": "DD", "bad": "DA", "g4": "AA"}, discordant={"bad"})
     assert labels_of(rows) == [1, 1]
 
 
@@ -462,14 +579,31 @@ def group_table(tmp_path, rows, with_sets=True, apart=None):
     of 300 genomes, with set_apart from ``apart`` when it is given."""
     from cansnpscorer.typing_report import SNP_COLUMNS
 
-    columns = tuple(column for column in SNP_COLUMNS
-                    if (with_sets or column != "derived_set")
-                    and (apart is not None or column != "set_apart"))
+    columns = tuple(
+        column
+        for column in SNP_COLUMNS
+        if (with_sets or column != "derived_set") and (apart is not None or column != "set_apart")
+    )
     lines = ["\t".join(columns)]
     for index, (derived, missing, label) in enumerate(rows):
-        fields = ["A", str(index + 1), "G", "c1", str(100 + index), "T", "C",
-                  "300", str(300 - missing), str(missing), str(derived),
-                  str(300 - missing - derived), "0", "5", "0", "0"]
+        fields = [
+            "A",
+            str(index + 1),
+            "G",
+            "c1",
+            str(100 + index),
+            "T",
+            "C",
+            "300",
+            str(300 - missing),
+            str(missing),
+            str(derived),
+            str(300 - missing - derived),
+            "0",
+            "5",
+            "0",
+            "0",
+        ]
         if with_sets:
             fields.append(str(label) if label else "")
         if apart is not None:
@@ -530,8 +664,18 @@ def test_derived_set_allows_conflicts_up_to_the_width_tolerance():
 def test_derived_set_a_cansnp_without_enough_bases_founds_no_label():
     # 10 genomes, tolerance 2. The first canSNP is derived in g1-g6 and has
     # no base in g7-g10; it would found label 1 and keep the other two apart.
-    states = {"g1": "DDD", "g2": "DDD", "g3": "DDD", "g4": "DAA", "g5": "DAA", "g6": "DAA",
-              "g7": "NDD", "g8": "NDD", "g9": "NDD", "g10": "NAA"}
+    states = {
+        "g1": "DDD",
+        "g2": "DDD",
+        "g3": "DDD",
+        "g4": "DAA",
+        "g5": "DAA",
+        "g6": "DAA",
+        "g7": "NDD",
+        "g8": "NDD",
+        "g9": "NDD",
+        "g10": "NAA",
+    }
     assert labels_of(derived_set_rows(states)) == [2, 1, 1]
 
 
@@ -575,8 +719,10 @@ def test_set_apart_lets_a_missing_base_be_either_state():
 
 def test_set_apart_is_empty_without_a_set_of_two():
     # Three canSNPs, each derived in four genomes of its own.
-    states = {f"g{number}": "".join("D" if (number - 1) // 4 == index else "A"
-                                    for index in range(3)) for number in range(1, 15)}
+    states = {
+        f"g{number}": "".join("D" if (number - 1) // 4 == index else "A" for index in range(3))
+        for number in range(1, 15)
+    }
     rows = derived_set_rows(states)
     assert labels_of(rows) == [1, 2, 3]
     assert apart_of(rows) == [None, None, None]
@@ -596,8 +742,7 @@ def test_evaluate_judges_by_set_apart_when_the_table_holds_it(tmp_path):
     assert [row.set_apart for row in observed.values()] == [90, 90, 120, 119, 0, 1]
     judged, nodes = judge_by_narrowest_group(observed)
     assert nodes == ["A"]
-    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [
-        90, 90, 120, 119, 0, 1]
+    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [90, 90, 120, 119, 0, 1]
 
 
 def test_evaluate_judges_by_counts_when_a_set_apart_is_empty(tmp_path):
@@ -606,16 +751,14 @@ def test_evaluate_judges_by_counts_when_a_set_apart_is_empty(tmp_path):
     rows = [(150, 0, 1), (150, 0, 1), (60, 0, 2), (60, 0, 2), (60, 0, 3), (59, 0, 3)]
     observed = read_observed(group_table(tmp_path, rows, apart=[90, 90, None, 119, 0, 1]))
     judged, _nodes = judge_by_narrowest_group(observed)
-    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [
-        91, 91, 1, 1, 1, 0]
+    assert [judged[("A", "c1", 100 + index)].discordant for index in range(6)] == [91, 91, 1, 1, 1, 0]
 
 
 def write_rows(tmp_path, rows):
     from cansnpscorer.typing_report import SNP_COLUMNS
 
     path = tmp_path / "round_snps.tsv"
-    path.write_text("\n".join(["\t".join(SNP_COLUMNS), *("\t".join(row) for row in rows)])
-                    + "\n")
+    path.write_text("\n".join(["\t".join(SNP_COLUMNS), *("\t".join(row) for row in rows)]) + "\n")
     return str(path)
 
 
@@ -677,15 +820,13 @@ def test_a_third_base_breaks_the_chain_like_an_ancestral_one():
     states = chain_states(c2=OTHER)
     assert confirm_chain("c5", states, CHAIN, 3) == ("c2", "other-base")
     assert single_call(states, CHAIN, 3) is None
-    assert confirm_chain("c5", chain_states(c2=ANCESTRAL, c1=OTHER), CHAIN, 3) == (
-        "c1", "other-base")
+    assert confirm_chain("c5", chain_states(c2=ANCESTRAL, c1=OTHER), CHAIN, 3) == ("c1", "other-base")
 
 
 def test_the_genome_needs_min_required_hits_derived_nodes():
     from cansnpscorer.typing_report import confirm_chain
 
-    states = {"c0": DERIVED, "c1": MISSING, "c2": MISSING, "c3": MISSING, "c4": DERIVED,
-              "c5": DERIVED}
+    states = {"c0": DERIVED, "c1": MISSING, "c2": MISSING, "c3": MISSING, "c4": DERIVED, "c5": DERIVED}
     assert confirm_chain("c5", states, CHAIN, 3) == ("", "strictness")
     assert single_call(states, CHAIN, 3, strictness=0.0) == "c5"
     assert single_call(states, CHAIN, 4, strictness=0.0) is None
@@ -695,8 +836,7 @@ def test_the_stop_reason_follows_the_chain_check():
     from cansnpscorer.typing_report import GenomeTyping, _single_stop
 
     def stop(states, elsewhere=frozenset()):
-        result = GenomeTyping(genome="g", set_call="c5",
-                              single_call=single_call(states, CHAIN, 3))
+        result = GenomeTyping(genome="g", set_call="c5", single_call=single_call(states, CHAIN, 3))
         return _single_stop(result, states, CHAIN, 3, elsewhere)
 
     assert stop(chain_states(c1=MISSING, c2=MISSING)) == ("", "strictness")
@@ -739,4 +879,3 @@ def test_an_ambiguity_code_is_another_base_for_the_single_rule():
     assert cansnper2_state("R", snp) == OTHER and snp_state("R", snp) == MISSING
     assert cansnper2_state("n", snp) == MISSING and cansnper2_state("-", snp) == MISSING
     assert cansnper2_state("t", snp) == DERIVED and cansnper2_state("G", snp) == OTHER
-

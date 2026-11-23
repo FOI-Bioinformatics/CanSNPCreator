@@ -53,9 +53,23 @@ def test_a_deep_tree_is_read_collapsed_and_used_for_placing_without_recursion():
 
     paths = [["root"], ["root", "X"]]
     hierarchy, _, _ = hierarchy_from_paths(paths)
-    scheme = Scheme(organism="t", paths=paths, hierarchy=hierarchy, snps=[
-        SchemeSnp(node="X", strain="t", reference="t", genome="REF", sequence="c", position=2,
-                  derived="G", ancestral="A")])
+    scheme = Scheme(
+        organism="t",
+        paths=paths,
+        hierarchy=hierarchy,
+        snps=[
+            SchemeSnp(
+                node="X",
+                strain="t",
+                reference="t",
+                genome="REF",
+                sequence="c",
+                position=2,
+                derived="G",
+                ancestral="A",
+            )
+        ],
+    )
     # The 10 genomes deepest in the caterpillar carry the derived base.
     alignment = {"ref": "AAA"}
     alignment.update({f"L{i}": "AGA" if i <= 10 else "AAA" for i in range(3001)})
@@ -72,9 +86,18 @@ def test_a_newick_tree_opening_with_a_comment_is_read(tmp_path):
     assert sorted(read_genome_tree(str(path)).leaves) == ["A", "B", "C"]
 
 
-@pytest.mark.parametrize("label, value", [
-    ("1e-1", 0.1), ("1.", 1.0), (".95", 0.95), ("/90", 0.9), ("85.3/97", 0.97),
-    ("0.95", 0.95), ("95/100", 1.0)])
+@pytest.mark.parametrize(
+    "label, value",
+    [
+        ("1e-1", 0.1),
+        ("1.", 1.0),
+        (".95", 0.95),
+        ("/90", 0.9),
+        ("85.3/97", 0.97),
+        ("0.95", 0.95),
+        ("95/100", 1.0),
+    ],
+)
 def test_support_labels_in_every_number_form_are_support(label, value):
     # Read as names, these made a support value a node of the scheme.
     tree = newick(f"((A,B){label},C);")
@@ -94,8 +117,7 @@ def test_rename_orders_children_of_equal_size_by_their_genomes():
     # The names followed the order of the branches in the tree file.
     first = "(O:1,((A:1,B:1)95:1,(C:1,D:1)96:1,(E:1,F:1,G:1)97:1)98:1);"
     second = "(O:1,((C:1,D:1)96:1,(A:1,B:1)95:1,(E:1,F:1,G:1)97:1)98:1);"
-    named = [rename(collapse(newick(text), outgroups=["O"]), "T").genomes
-             for text in (first, second)]
+    named = [rename(collapse(newick(text), outgroups=["O"]), "T").genomes for text in (first, second)]
     assert named[0] == named[1]
     assert named[0]["E"] == "T.1", "largest first"
     assert named[0]["A"] == "T.2" and named[0]["C"] == "T.3", "then by the first genome"
@@ -104,8 +126,7 @@ def test_rename_orders_children_of_equal_size_by_their_genomes():
 # -- outgroups -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("outgroup", ["GCF_000007125", "GCF_000007125.1",
-                                      "Brucella_sp_GCF_000007125.1"])
+@pytest.mark.parametrize("outgroup", ["GCF_000007125", "GCF_000007125.1", "Brucella_sp_GCF_000007125.1"])
 def test_an_outgroup_given_by_accession_matches_its_leaf(outgroup):
     # Only the full leaf name was accepted.
     tree = newick("(Brucella_sp_GCF_000007125.1:1,((A:1,B:1)95:1,(C:1,D:1)96:1)98:1);")
@@ -133,8 +154,7 @@ def test_collapse_place_and_read_members_take_linear_time(tmp_path):
     leaves = [f"Fam_Gen_sp_GCF_{i:09d}.1" for i in range(2000)]
     flat = Hierarchy([(leaf, "r") for leaf in leaves])
     path = tmp_path / "genomes_map.tsv"
-    path.write_text("".join(f"GCF_{100000 + i:09d}.1\t{leaves[i % 2000]}\n"
-                            for i in range(20000)))
+    path.write_text("".join(f"GCF_{100000 + i:09d}.1\t{leaves[i % 2000]}\n" for i in range(20000)))
     members = read_members(str(path), flat)
     assert sum(len(names) for names in members.values()) == 20000
     assert time.perf_counter() - start < 20
@@ -143,8 +163,7 @@ def test_collapse_place_and_read_members_take_linear_time(tmp_path):
 def test_a_run_of_single_children_is_joined_into_its_highest_node():
     # Joining is now done in one pass; the result is the same as joining one
     # node at a time.
-    collapsed = collapse(newick("(O:1,((((A:1,B:1)95:1)96:1)97:1,C:1)99:1);"),
-                         outgroups=["O"])
+    collapsed = collapse(newick("(O:1,((((A:1,B:1)95:1)96:1)97:1,C:1)99:1);"), outgroups=["O"])
     assert collapsed.genomes == {"A": "node3", "B": "node3", "C": "node5"}
     # The root holds no genome and node4 is its one child, the outgroup
     # being at no node.

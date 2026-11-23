@@ -111,8 +111,8 @@ class Hierarchy:
                 raise HierarchyError(f"node '{child}' is its own parent")
             if child in self.parents and self.parents[child] != parent:
                 raise HierarchyError(
-                    f"node '{child}' is given more than one parent: "
-                    f"{self.parents[child]}, {parent}")
+                    f"node '{child}' is given more than one parent: {self.parents[child]}, {parent}"
+                )
             if child not in self.parents:
                 self.parents[child] = parent
                 self.order.append(child)
@@ -137,8 +137,8 @@ class Hierarchy:
             raise HierarchyError("the hierarchy has no root; every node has a parent")
         if len(roots) > 1:
             raise HierarchyError(
-                f"the hierarchy has {len(roots)} roots where one is expected: "
-                f"{', '.join(sorted(roots))}")
+                f"the hierarchy has {len(roots)} roots where one is expected: {', '.join(sorted(roots))}"
+            )
 
         reached: set[str] = set()
         ordered: list[str] = []
@@ -153,10 +153,8 @@ class Hierarchy:
 
         unreached = set(self.order) - reached
         if unreached:
-            raise HierarchyError(
-                f"these nodes are not connected to the root: {', '.join(sorted(unreached))}")
-        return (roots[0], tuple(ordered),
-                tuple(node for node in ordered if not self.children[node]))
+            raise HierarchyError(f"these nodes are not connected to the root: {', '.join(sorted(unreached))}")
+        return (roots[0], tuple(ordered), tuple(node for node in ordered if not self.children[node]))
 
     # -- constructors --------------------------------------------------------
 
@@ -167,10 +165,7 @@ class Hierarchy:
         The root is the node that appears only as a parent, so it needs no row
         of its own; a row that leaves the parent empty names a root explicitly.
         """
-        return cls([
-            (child, parent if parent and str(parent).strip() else None)
-            for child, parent in pairs
-        ])
+        return cls([(child, parent if parent and str(parent).strip() else None) for child, parent in pairs])
 
     @classmethod
     def from_newick(cls, text: str, support_labels: bool = False) -> "Hierarchy":
@@ -195,8 +190,9 @@ class Hierarchy:
         structure = {"(", ")", ",", ";"}
 
         def is_label(token: str | None) -> bool:
-            return token is not None and (token.startswith(QUOTED) or (
-                token not in structure and not token.startswith(":")))
+            return token is not None and (
+                token.startswith(QUOTED) or (token not in structure and not token.startswith(":"))
+            )
 
         # Generated names must not take a name the tree already uses.
         taken = {token.lstrip(QUOTED) for token in tokens if is_label(token)}
@@ -225,12 +221,10 @@ class Hierarchy:
                 try:
                     length = float(tokens[position][1:])
                 except ValueError:
-                    raise HierarchyError(
-                        f"'{tokens[position][1:]}' is not a branch length") from None
+                    raise HierarchyError(f"'{tokens[position][1:]}' is not a branch length") from None
                 position += 1
 
-            value = (_support_value(label) if children and support_labels and not quoted
-                     else None)
+            value = _support_value(label) if children and support_labels and not quoted else None
             name = label if value is None else ""
             if not name:
                 if not children:
@@ -241,8 +235,8 @@ class Hierarchy:
                 name = f"node{generated}"
             if name in names_seen:
                 raise HierarchyError(
-                    f"the Newick string names '{name}' twice; every node of a tree needs its "
-                    f"own name")
+                    f"the Newick string names '{name}' twice; every node of a tree needs its own name"
+                )
             names_seen.add(name)
             if value is not None and value == value:
                 support[name] = value
@@ -280,8 +274,7 @@ class Hierarchy:
         if peek() == ";":
             position += 1
         if peek() is not None:
-            raise HierarchyError(
-                "the Newick string holds more than one tree, or text after its ';'")
+            raise HierarchyError("the Newick string holds more than one tree, or text after its ';'")
         pairs.append((root, None))
 
         hierarchy = cls(pairs)
@@ -359,8 +352,8 @@ class Hierarchy:
         unknown = sorted(set(clusters) - set(self.parents))
         if unknown:
             raise HierarchyError(
-                f"the genome map names clusters that are not in the hierarchy: "
-                f"{', '.join(unknown)}")
+                f"the genome map names clusters that are not in the hierarchy: {', '.join(unknown)}"
+            )
 
         isolates: dict[str, list[str]] = {}
         for node in reversed(self.nodes):

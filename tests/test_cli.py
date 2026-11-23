@@ -21,12 +21,18 @@ def run(monkeypatch, *arguments):
 
 def extract(monkeypatch, dataset, output, hierarchy=None, groups=None, *extra):
     return run(
-        monkeypatch, "extract",
-        "--genome-map", groups or dataset.genome_map,
-        "--hierarchy", hierarchy or dataset.hierarchy,
-        "--alignment", dataset.alignment,
-        "--reference", dataset.reference,
-        "-o", output,
+        monkeypatch,
+        "extract",
+        "--genome-map",
+        groups or dataset.genome_map,
+        "--hierarchy",
+        hierarchy or dataset.hierarchy,
+        "--alignment",
+        dataset.alignment,
+        "--reference",
+        dataset.reference,
+        "-o",
+        output,
         *extra,
     )
 
@@ -42,14 +48,22 @@ def placed_everywhere(dataset, tmp_path):
 
 def evaluate(monkeypatch, dataset, snp_file, output, *extra):
     return run(
-        monkeypatch, "evaluate",
-        "--snps", snp_file,
-        "--reference", dataset.reference,
-        "--genes", dataset.gff,
-        "--repeats", dataset.repeats,
-        "--hierarchy", dataset.hierarchy,
-        "-o", output,
-        "--cutoff", "0",
+        monkeypatch,
+        "evaluate",
+        "--snps",
+        snp_file,
+        "--reference",
+        dataset.reference,
+        "--genes",
+        dataset.gff,
+        "--repeats",
+        dataset.repeats,
+        "--hierarchy",
+        dataset.hierarchy,
+        "-o",
+        output,
+        "--cutoff",
+        "0",
         *extra,
     )
 
@@ -81,8 +95,7 @@ def test_extract_then_evaluate(monkeypatch, dataset, tmp_path, which):
         assert record.passed
 
 
-def test_each_snp_records_the_nearest_variation_among_the_placed_genomes(monkeypatch, dataset,
-                                                                          tmp_path):
+def test_each_snp_records_the_nearest_variation_among_the_placed_genomes(monkeypatch, dataset, tmp_path):
     snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
     header, _records = vcf_lines(snp_file)
@@ -91,8 +104,7 @@ def test_each_snp_records_the_nearest_variation_among_the_placed_genomes(monkeyp
     # every genome, and the root's site does not vary among the placed
     # genomes, so each canSNP's nearest variation is 100 bases away; B.2 sits
     # at the start of c2, whose nearest is the incongruent site at 800.
-    nearest = {record.node: record.info["NEAREST"] for record in vcf_records(snp_file)
-               if record.node}
+    nearest = {record.node: record.info["NEAREST"] for record in vcf_records(snp_file) if record.node}
     assert nearest == dict.fromkeys(PLANTED, "100")
 
 
@@ -144,12 +156,18 @@ def test_an_existing_output_is_replaced_without_a_backup(monkeypatch, dataset, t
 
 def test_a_missing_input_file_exits_non_zero(monkeypatch, dataset, tmp_path):
     status = run(
-        monkeypatch, "extract",
-        "--genome-map", dataset.genome_map,
-        "--hierarchy", dataset.hierarchy,
-        "--alignment", str(tmp_path / "absent.fasta"),
-        "--reference", dataset.reference,
-        "-o", str(tmp_path / "snps.vcf"),
+        monkeypatch,
+        "extract",
+        "--genome-map",
+        dataset.genome_map,
+        "--hierarchy",
+        dataset.hierarchy,
+        "--alignment",
+        str(tmp_path / "absent.fasta"),
+        "--reference",
+        dataset.reference,
+        "-o",
+        str(tmp_path / "snps.vcf"),
     )
     assert status == 1
 
@@ -157,14 +175,23 @@ def test_a_missing_input_file_exits_non_zero(monkeypatch, dataset, tmp_path):
 def test_a_reference_that_is_not_the_aligned_one_exits_two(monkeypatch, dataset, tmp_path):
     other = tmp_path / "other.fasta"
     other.write_text(">c1\n" + "A" * 1000 + "\n")
-    monkeypatch.setattr("sys.argv", [
-        "CanSNPCreator", "extract",
-        "--genome-map", dataset.genome_map,
-        "--hierarchy", dataset.hierarchy,
-        "--alignment", dataset.alignment,
-        "--reference", str(other),
-        "-o", str(tmp_path / "snps.vcf"),
-    ])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "CanSNPCreator",
+            "extract",
+            "--genome-map",
+            dataset.genome_map,
+            "--hierarchy",
+            dataset.hierarchy,
+            "--alignment",
+            dataset.alignment,
+            "--reference",
+            str(other),
+            "-o",
+            str(tmp_path / "snps.vcf"),
+        ],
+    )
     assert main() == 2, "the inputs are inconsistent, so nothing is written"
     assert not os.path.exists(tmp_path / "snps.vcf")
 
@@ -173,8 +200,7 @@ def test_snps_from_another_reference_are_refused(monkeypatch, dataset, tmp_path)
     # The ##contig lines record the reference the SNPs were found against.
     snp_file = str(tmp_path / "snps.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
-    text = Path(snp_file).read_text().replace("##contig=<ID=c2,length=300>",
-                                         "##contig=<ID=c2,length=301>")
+    text = Path(snp_file).read_text().replace("##contig=<ID=c2,length=300>", "##contig=<ID=c2,length=301>")
     other = tmp_path / "other.vcf"
     other.write_text(text)
     assert evaluate(monkeypatch, dataset, str(other), str(tmp_path / "scores.vcf")) == 1
@@ -223,8 +249,12 @@ def test_weighting_the_gene_term_once_lowers_the_total(monkeypatch, dataset, tmp
     plain = str(tmp_path / "plain.vcf")
     assert extract(monkeypatch, dataset, snp_file) == 0
     assert evaluate(monkeypatch, dataset, snp_file, doubled, "--profile", "assay") == 0
-    assert evaluate(monkeypatch, dataset, snp_file, plain, "--profile", "assay",
-                    "--score-weight", "gene_score=1") == 0
+    assert (
+        evaluate(
+            monkeypatch, dataset, snp_file, plain, "--profile", "assay", "--score-weight", "gene_score=1"
+        )
+        == 0
+    )
 
     def totals(path):
         return {record.node: int(record.info["SCORE"]) for record in vcf_records(path)}
@@ -254,12 +284,10 @@ def test_masks_on_another_genome_are_refused(monkeypatch, dataset, tmp_path):
     masks = tmp_path / "masks.bed"
     masks.write_text("NC_000001.1\t0\t10\n")
     assert extract(monkeypatch, dataset, snp_file) == 0
-    assert evaluate(monkeypatch, dataset, snp_file, str(tmp_path / "s.vcf"),
-                    "--masks", str(masks)) == 1
+    assert evaluate(monkeypatch, dataset, snp_file, str(tmp_path / "s.vcf"), "--masks", str(masks)) == 1
 
 
-def test_genomes_the_alignment_lacks_are_left_out_with_a_warning(monkeypatch, dataset, tmp_path,
-                                                                  caplog):
+def test_genomes_the_alignment_lacks_are_left_out_with_a_warning(monkeypatch, dataset, tmp_path, caplog):
     # A RepGenR2 genome map names every genome, its alignment often only the
     # representatives.
     genome_map = tmp_path / "genome_map.tsv"
@@ -295,8 +323,9 @@ def test_no_outgroup_at_all_stops_extract(monkeypatch, dataset, tmp_path, caplog
 
 def test_allow_no_outgroup_takes_the_reference_base_and_says_so(monkeypatch, dataset, tmp_path):
     output = str(tmp_path / "snps.vcf")
-    status = extract(monkeypatch, dataset, output, None, placed_everywhere(dataset, tmp_path),
-                     "--allow-no-outgroup")
+    status = extract(
+        monkeypatch, dataset, output, None, placed_everywhere(dataset, tmp_path), "--allow-no-outgroup"
+    )
     assert status == 0
     assert "##outgroup=none" in vcf_lines(output)[0]
 
@@ -307,4 +336,3 @@ def test_an_outgroup_the_alignment_lacks_stops_extract(monkeypatch, dataset, tmp
     assert status == 2
     assert not output.exists()
     assert "GCF_000000001.1" in caplog.text
-

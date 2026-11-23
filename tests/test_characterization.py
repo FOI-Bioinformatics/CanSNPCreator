@@ -135,8 +135,7 @@ def test_gene_term_is_weighted_twice_by_default(scored):
 
 
 def make_score(position, node, total):
-    return ScoredSnp(contig="c1", position=position, node=node, total=total,
-                     terms=dict.fromkeys(TERMS, 0))
+    return ScoredSnp(contig="c1", position=position, node=node, total=total, terms=dict.fromkeys(TERMS, 0))
 
 
 def test_failing_scores_are_marked_and_kept():
@@ -152,8 +151,12 @@ def test_failing_scores_are_marked_and_kept():
 def test_the_best_of_a_node_are_taken_apart_from_each_other():
     # 300 and 290 lie 10 bases apart, so with a spacing of 100 the second best
     # gives way to the third, which lies far from both.
-    scores = [make_score(1000, "A", 300), make_score(1010, "A", 290),
-              make_score(5000, "A", 280), make_score(1005, "B", 250)]
+    scores = [
+        make_score(1000, "A", 300),
+        make_score(1010, "A", 290),
+        make_score(5000, "A", 280),
+        make_score(1005, "B", 250),
+    ]
     apply_filters(scores, 50, top=2, spacing=100)
     assert [entry.filters for entry in scores] == [[], ["NotTop"], [], []]
     # Without spacing the two best are taken, however close.

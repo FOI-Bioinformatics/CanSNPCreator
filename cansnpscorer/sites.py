@@ -49,19 +49,20 @@ def snp_positions(snps_vcf: str, reference: Reference) -> list[int]:
             try:
                 position = int(fields[1])
             except ValueError:
-                raise ValueError(
-                    f"{snps_vcf}: line {number} gives the position '{fields[1]}'") from None
+                raise ValueError(f"{snps_vcf}: line {number} gives the position '{fields[1]}'") from None
             contig = reference.contig(fields[0])
             if not 1 <= position <= contig.length:
                 raise ReferenceError(
                     f"{snps_vcf}: line {number} gives position {position}, outside contig "
-                    f"'{contig.name}' of {contig.length} bases")
+                    f"'{contig.name}' of {contig.length} bases"
+                )
             positions.setdefault(contig.start + position - 1, None)
     return list(positions)
 
 
-def sample_sites(snps_vcf: str, reference: Reference, alignments: Sequence[str],
-                 sites: int = 20000, seed: int = 0) -> dict[str, str]:
+def sample_sites(
+    snps_vcf: str, reference: Reference, alignments: Sequence[str], sites: int = 20000, seed: int = 0
+) -> dict[str, str]:
     """Sample SNP sites and take them from every record of the alignments.
 
     Args:
@@ -98,8 +99,9 @@ def sample_sites(snps_vcf: str, reference: Reference, alignments: Sequence[str],
         columns = [mapping.to_column(position) for position in taken]
         missing = sum(column is None for column in columns)
         if missing:
-            logging.warning(f"{path}: {missing} of the sampled positions have no column, and are "
-                            f"written as gaps")
+            logging.warning(
+                f"{path}: {missing} of the sampled positions have no column, and are written as gaps"
+            )
         width = len(aligned_reference)
         added = repeated = 0
         names: set[str] = set()
@@ -108,20 +110,23 @@ def sample_sites(snps_vcf: str, reference: Reference, alignments: Sequence[str],
             if len(sequence) != width:
                 raise ValueError(
                     f"{path}: the records are not aligned; '{name}' holds {len(sequence)} "
-                    f"columns and the reference row {width}")
+                    f"columns and the reference row {width}"
+                )
             if name in names:
                 raise ValueError(
                     f"{path}: the name '{name}' is used more than once; sequence IDs, the "
-                    "first word of each header, must be unique")
+                    "first word of each header, must be unique"
+                )
             names.add(name)
             if name in rows:
                 repeated += 1
                 continue
-            rows[name] = "".join(NO_COLUMN if column is None else sequence[column]
-                                 for column in columns)
+            rows[name] = "".join(NO_COLUMN if column is None else sequence[column] for column in columns)
             added += 1
-        logging.info(f"Took {added} records from {path}"
-                     + (f"; {repeated} were taken from an earlier alignment" if repeated else ""))
+        logging.info(
+            f"Took {added} records from {path}"
+            + (f"; {repeated} were taken from an earlier alignment" if repeated else "")
+        )
     return rows
 
 

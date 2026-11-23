@@ -59,15 +59,14 @@ class Contig:
         """The base at a 0-based position within this contig."""
         if not 0 <= local_position < self.length:
             raise ReferenceError(
-                f"position {local_position + 1} is outside contig '{self.name}' "
-                f"of {self.length} bases"
+                f"position {local_position + 1} is outside contig '{self.name}' of {self.length} bases"
             )
         return self.sequence[local_position]
 
     def window(self, local_position: int, distance: int) -> str:
         """The sequence around a position, clamped to the ends of the contig."""
         start = max(local_position - distance, 0)
-        return self.sequence[start:local_position + distance]
+        return self.sequence[start : local_position + distance]
 
 
 class Reference:
@@ -110,17 +109,13 @@ class Reference:
 
     def contig(self, name: str) -> Contig:
         if name not in self._by_name:
-            raise ReferenceError(
-                f"the reference has no contig '{name}'; it has {', '.join(self.names)}"
-            )
+            raise ReferenceError(f"the reference has no contig '{name}'; it has {', '.join(self.names)}")
         return self._by_name[name]
 
     def locate(self, position: int) -> tuple[Contig, int]:
         """Split a 0-based global position into a contig and a 0-based local position."""
         if not 0 <= position < self.length:
-            raise ReferenceError(
-                f"position {position + 1} is outside the reference of {self.length} bases"
-            )
+            raise ReferenceError(f"position {position + 1} is outside the reference of {self.length} bases")
         contig = self.contigs[bisect_right(self._starts, position) - 1]
         return contig, position - contig.start
 
@@ -172,7 +167,8 @@ class AlignmentMap:
                     positions.append(position)
                     position += 1
             mismatches = [
-                index for index, (left, right) in enumerate(zip(observed, expected, strict=True))
+                index
+                for index, (left, right) in enumerate(zip(observed, expected, strict=True))
                 if left != right
             ]
         elif len(aligned_reference) <= len(expected):
@@ -230,8 +226,8 @@ class AlignmentMap:
         """The column holding a 0-based global position, or None if no column does."""
         if not 0 <= position < self.reference.length:
             raise ReferenceError(
-                f"position {position + 1} is outside the reference of "
-                f"{self.reference.length} bases")
+                f"position {position + 1} is outside the reference of {self.reference.length} bases"
+            )
         if self._columns is None:
             columns = array("q", [-1]) * self.reference.length
             for column, found in enumerate(self._positions):

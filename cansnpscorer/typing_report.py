@@ -68,27 +68,87 @@ BASES = frozenset("ACGT")
 
 DERIVED, ANCESTRAL, MISSING, OTHER = "D", "A", "N", "O"
 
-GENOME_COLUMNS = ("genome", "role", "single_call", "single_depth", "single_stop_node",
-                  "single_stop_reason", "set_call",
-                  "set_depth", "derived_on_path", "missing_on_path", "ancestral_on_path",
-                  "derived_off_path", "discordant", "expected", "single_outcome",
-                  "set_outcome")
-SNP_COLUMNS = ("node", "rank", "reference_genome", "sequence", "position",
-               "derived_base", "ancestral_base",
-               "genomes", "called", "missing", "derived", "ancestral", "other",
-               "discordant_in_set", "ancestral_on_path", "derived_off_path", "derived_set",
-               "set_apart")
+GENOME_COLUMNS = (
+    "genome",
+    "role",
+    "single_call",
+    "single_depth",
+    "single_stop_node",
+    "single_stop_reason",
+    "set_call",
+    "set_depth",
+    "derived_on_path",
+    "missing_on_path",
+    "ancestral_on_path",
+    "derived_off_path",
+    "discordant",
+    "expected",
+    "single_outcome",
+    "set_outcome",
+)
+SNP_COLUMNS = (
+    "node",
+    "rank",
+    "reference_genome",
+    "sequence",
+    "position",
+    "derived_base",
+    "ancestral_base",
+    "genomes",
+    "called",
+    "missing",
+    "derived",
+    "ancestral",
+    "other",
+    "discordant_in_set",
+    "ancestral_on_path",
+    "derived_off_path",
+    "derived_set",
+    "set_apart",
+)
 #: The columns evaluate --observed needs. The position is on the reference
 #: sequence of the ``sequence`` column; tables without that column give it
 #: along the joined reference sequences and are refused.
-OBSERVED_COLUMNS = ("node", "sequence", "position", "derived_base", "ancestral_base", "missing", "derived",
-                    "ancestral", "other", "discordant_in_set", "ancestral_on_path",
-                    "derived_off_path")
-RANK_COLUMNS = ("rank", "snps", "genomes", "called", "missing", "missing_pct",
-                "discordant_in_set", "ancestral_on_path", "derived_off_path",
-                "snps_disagreeing", "snps_disagreeing_pct")
-NODE_COLUMNS = ("node", "depth", "snps", "single_calls", "set_calls", "through",
-                "all_derived", "unknown_on_path", "split", "min_margin", "single_stops")
+OBSERVED_COLUMNS = (
+    "node",
+    "sequence",
+    "position",
+    "derived_base",
+    "ancestral_base",
+    "missing",
+    "derived",
+    "ancestral",
+    "other",
+    "discordant_in_set",
+    "ancestral_on_path",
+    "derived_off_path",
+)
+RANK_COLUMNS = (
+    "rank",
+    "snps",
+    "genomes",
+    "called",
+    "missing",
+    "missing_pct",
+    "discordant_in_set",
+    "ancestral_on_path",
+    "derived_off_path",
+    "snps_disagreeing",
+    "snps_disagreeing_pct",
+)
+NODE_COLUMNS = (
+    "node",
+    "depth",
+    "snps",
+    "single_calls",
+    "set_calls",
+    "through",
+    "all_derived",
+    "unknown_on_path",
+    "split",
+    "min_margin",
+    "single_stops",
+)
 SUMMARY_COLUMNS = ("metric", "single", "single_pct", "set", "set_pct")
 RUN_COLUMNS = ("item", "value")
 
@@ -162,22 +222,25 @@ class TypingReport:
     def genome_rows(self) -> list[list[str]]:
         rows = []
         for typed in self.genomes:
-            rows.append([
-                typed.genome, typed.role,
-                typed.single_call or NA,
-                str(self.depth[typed.single_call]) if typed.single_call else NA,
-                *(part or NA for part in typed.single_stop),
-                typed.set_call or NA,
-                str(self.depth[typed.set_call]) if typed.set_call else NA,
-                str(typed.derived_on_path), str(typed.missing_on_path),
-                str(typed.ancestral_on_path), str(typed.derived_off_path),
-                "yes" if typed.discordant else "no",
-                typed.expected or NA,
-                outcome(typed.single_call, typed.expected, self.lineage)
-                if typed.expected else NA,
-                outcome(typed.set_call, typed.expected, self.lineage)
-                if typed.expected else NA,
-            ])
+            rows.append(
+                [
+                    typed.genome,
+                    typed.role,
+                    typed.single_call or NA,
+                    str(self.depth[typed.single_call]) if typed.single_call else NA,
+                    *(part or NA for part in typed.single_stop),
+                    typed.set_call or NA,
+                    str(self.depth[typed.set_call]) if typed.set_call else NA,
+                    str(typed.derived_on_path),
+                    str(typed.missing_on_path),
+                    str(typed.ancestral_on_path),
+                    str(typed.derived_off_path),
+                    "yes" if typed.discordant else "no",
+                    typed.expected or NA,
+                    outcome(typed.single_call, typed.expected, self.lineage) if typed.expected else NA,
+                    outcome(typed.set_call, typed.expected, self.lineage) if typed.expected else NA,
+                ]
+            )
         return rows
 
 
@@ -251,9 +314,14 @@ def deepest(candidates: Sequence[str], lineage: Mapping[str, Sequence[str]]) -> 
 STRICTNESS = 0.7
 
 
-def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
-                  min_required_hits: int, strictness: float = STRICTNESS,
-                  labels: Set[str] = frozenset()) -> tuple[str, str]:
+def confirm_chain(
+    node: str,
+    first: Mapping[str, str],
+    lineage: Mapping[str, Sequence[str]],
+    min_required_hits: int,
+    strictness: float = STRICTNESS,
+    labels: Set[str] = frozenset(),
+) -> tuple[str, str]:
     """Whether CanSNPer2 2.3.0 confirms the chain from the root to a node.
 
     A node of the tree without a SNP, in ``labels``, is no part of the chain:
@@ -292,22 +360,30 @@ def confirm_chain(node: str, first: Mapping[str, str], lineage: Mapping[str, Seq
     return "", ""
 
 
-def single_call(first: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
-                min_required_hits: int, strictness: float = STRICTNESS,
-                labels: Set[str] = frozenset()) -> str | None:
+def single_call(
+    first: Mapping[str, str],
+    lineage: Mapping[str, Sequence[str]],
+    min_required_hits: int,
+    strictness: float = STRICTNESS,
+    labels: Set[str] = frozenset(),
+) -> str | None:
     """The call of CanSNPer2 2.3.0 from the state of each node's first canSNP:
     the deepest node whose chain ``confirm_chain`` confirms. Two confirmed
     nodes at the greatest depth give no call. (CanSNPer2 also requires the
     genome to have ``min_required_hits`` derived nodes in all, which a
     confirmed chain already holds.)"""
-    confirmed = [node for node, state in first.items() if state == DERIVED
-                 and confirm_chain(node, first, lineage, min_required_hits, strictness,
-                                   labels) == ("", "")]
+    confirmed = [
+        node
+        for node, state in first.items()
+        if state == DERIVED
+        and confirm_chain(node, first, lineage, min_required_hits, strictness, labels) == ("", "")
+    ]
     return deepest(confirmed, lineage)
 
 
-def set_path(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]
-             ) -> tuple[str | None, frozenset[str]]:
+def set_path(
+    states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]
+) -> tuple[str | None, frozenset[str]]:
     """The call of the set rule and the nodes from the root to it.
 
     A derived node with no ancestral node above it can be the call. The one
@@ -317,13 +393,14 @@ def set_path(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]
     what the genome carries beyond it still counts as contradicting the
     scheme.
     """
-    reachable = [node for node, state in states.items()
-                 if state == DERIVED
-                 and not any(states.get(above) == ANCESTRAL for above in lineage[node])]
+    reachable = [
+        node
+        for node, state in states.items()
+        if state == DERIVED and not any(states.get(above) == ANCESTRAL for above in lineage[node])
+    ]
     if not reachable:
         return None, frozenset()
-    support = {node: sum(1 for above in lineage[node] if states.get(above) == DERIVED)
-               for node in reachable}
+    support = {node: sum(1 for above in lineage[node] if states.get(above) == DERIVED) for node in reachable}
     most = max(support.values())
     best = [node for node in reachable if support[node] == most]
     lowest = max(best, key=lambda node: len(lineage[node]))
@@ -340,8 +417,9 @@ def set_call(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]]) ->
     return set_path(states, lineage)[0]
 
 
-def derived_off(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
-                call: str | None, path: frozenset[str]) -> int:
+def derived_off(
+    states: Mapping[str, str], lineage: Mapping[str, Sequence[str]], call: str | None, path: frozenset[str]
+) -> int:
     """How many derived nodes contradict the path of a genome.
 
     With a call these are the derived nodes off its path. Where branches tie
@@ -358,8 +436,9 @@ def derived_off(states: Mapping[str, str], lineage: Mapping[str, Sequence[str]],
     return len(off) - own
 
 
-def scheme_columns(scheme: Scheme, mapping: AlignmentMap, genome: str | None
-                   ) -> dict[str, list[tuple[SchemeSnp, int | None]]]:
+def scheme_columns(
+    scheme: Scheme, mapping: AlignmentMap, genome: str | None
+) -> dict[str, list[tuple[SchemeSnp, int | None]]]:
     """The canSNPs of each node, best rank first, with their alignment column."""
     by_node: dict[str, list[tuple[SchemeSnp, int | None]]] = {}
     for snp in sorted(scheme.checked_snps, key=lambda snp: (snp.rank, snp.line)):
@@ -367,18 +446,21 @@ def scheme_columns(scheme: Scheme, mapping: AlignmentMap, genome: str | None
             continue
         if snp.node not in scheme.hierarchy.parents:
             continue
-        by_node.setdefault(snp.node, []).append(
-            (snp, mapping.column_at(snp.sequence, snp.position)))
+        by_node.setdefault(snp.node, []).append((snp, mapping.column_at(snp.sequence, snp.position)))
     return by_node
 
 
-def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Reference,
-                   genome: str | None = None,
-                   clusters: Mapping[str, Sequence[str]] | None = None,
-                   min_required_hits: int = MINIMUM_SNPS_PER_NODE,
-                   genome_conflicts: int = 3,
-                   strictness: float = STRICTNESS,
-                   outgroups: Sequence[str] = ()) -> TypingReport:
+def type_alignment(
+    scheme: Scheme,
+    alignment: Mapping[str, str],
+    reference: Reference,
+    genome: str | None = None,
+    clusters: Mapping[str, Sequence[str]] | None = None,
+    min_required_hits: int = MINIMUM_SNPS_PER_NODE,
+    genome_conflicts: int = 3,
+    strictness: float = STRICTNESS,
+    outgroups: Sequence[str] = (),
+) -> TypingReport:
     """Type every genome of the alignment with the scheme, under both rules.
 
     Args:
@@ -409,7 +491,8 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     if genome is None and len(annotated) > 1:
         raise TypingError(
             f"the scheme annotates {len(annotated)} reference genomes ({', '.join(annotated)}), "
-            f"so --genome must say which one the alignment is against")
+            f"so --genome must say which one the alignment is against"
+        )
 
     mapping = AlignmentMap(next(iter(alignment.values())), reference)
     hierarchy = scheme.hierarchy
@@ -422,8 +505,7 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     # the nodes of the tree without one, as CanSNPer2 does. The typed canSNP is not
     # always rank 1: in a published scheme the canSNP the papers give may score lower
     # than another of its node.
-    called = {node: next((entry for entry in snps if entry[0].typed), None)
-              for node, snps in by_node.items()}
+    called = {node: next((entry for entry in snps if entry[0].typed), None) for node, snps in by_node.items()}
     has_first = {node: entry is not None for node, entry in called.items()}
     labels = frozenset(hierarchy.nodes) - {snp.node for snp in scheme.snps}
     # Nodes whose canSNPs are all annotated on another reference genome cannot
@@ -433,13 +515,13 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     # A node whose typed canSNP lies on another reference genome is read from
     # its other canSNPs by the set rule, but has no base here for the single
     # rule.
-    first_elsewhere = elsewhere | {node for node, present in has_first.items()
-                                   if not present}
+    first_elsewhere = elsewhere | {node for node, present in has_first.items() if not present}
     if elsewhere:
         logging.warning(
             f"{len(elsewhere)} nodes carry canSNPs on other reference genomes only, and count "
             f"as without a base here: {', '.join(sorted(elsewhere)[:5])}. Below them the "
-            f"single rule's call is not what CanSNPer2 gives, which aligns to every reference")
+            f"single rule's call is not what CanSNPer2 gives, which aligns to every reference"
+        )
 
     expected: dict[str, str] = {}
     if clusters:
@@ -461,19 +543,24 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         result = GenomeTyping(genome=name, role=role, expected=expected.get(name))
         per_node: dict[str, list[str]] = {}
         for node, snps in by_node.items():
-            per_node[node] = [MISSING if column is None else snp_state(sequence[column], snp)
-                              for snp, column in snps]
+            per_node[node] = [
+                MISSING if column is None else snp_state(sequence[column], snp) for snp, column in snps
+            ]
         result.states = "".join("".join(states) for states in per_node.values())
 
         nodes = {node: node_state(states) for node, states in per_node.items()}
         # CanSNPer2 2.3.0 tells a third base, which breaks a chain, from no
         # base, which is a gap in it.
-        first = {node: (MISSING if called[node] is None or called[node][1] is None
-                        else cansnper2_state(sequence[called[node][1]], called[node][0]))
-                 for node in by_node}
+        first = {
+            node: (
+                MISSING
+                if called[node] is None or called[node][1] is None
+                else cansnper2_state(sequence[called[node][1]], called[node][0])
+            )
+            for node in by_node
+        }
         result.set_call, result.path = set_path(nodes, lineage)
-        result.single_call = single_call(first, lineage, min_required_hits, strictness,
-                                         labels)
+        result.single_call = single_call(first, lineage, min_required_hits, strictness, labels)
 
         path = result.path
         for node, state in nodes.items():
@@ -488,12 +575,12 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
         # Nodes of the path that carry no canSNP at all are missing too.
         result.missing_on_path += sum(1 for node in path if node not in nodes)
         result.discordant = result.conflicts >= genome_conflicts
-        result.single_stop = _single_stop(result, first, lineage, min_required_hits,
-                                          first_elsewhere, strictness, labels)
+        result.single_stop = _single_stop(
+            result, first, lineage, min_required_hits, first_elsewhere, strictness, labels
+        )
         typed.append(result)
 
-    report = TypingReport(genomes=typed, snp_rows=[], node_rows=[], summary=[], depth=depth,
-                          lineage=lineage)
+    report = TypingReport(genomes=typed, snp_rows=[], node_rows=[], summary=[], depth=depth, lineage=lineage)
     # Where the canSNPs of each node begin in a genome's string of states.
     starts: dict[str, int] = {}
     total = 0
@@ -504,13 +591,15 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
     report.snp_rows = _snp_rows(by_node, starts, typed)
     report.node_rows = _node_rows(hierarchy.nodes, by_node, starts, typed, lineage)
     report.rank_rows = _rank_rows(report.snp_rows)
-    report.stops = [(node, reason, count) for (node, reason), count in sorted(
-        Counter(result.single_stop for result in counted
-                if result.single_stop[1] in BROKEN).items(),
-        key=lambda item: (-item[1], item[0]))]
+    report.stops = [
+        (node, reason, count)
+        for (node, reason), count in sorted(
+            Counter(result.single_stop for result in counted if result.single_stop[1] in BROKEN).items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
     on_a_path = {node for result in counted for node in result.path}
-    report.unreached = [node for node in hierarchy.nodes
-                        if node in by_node and node not in on_a_path]
+    report.unreached = [node for node in hierarchy.nodes if node in by_node and node not in on_a_path]
     report.summary = _summary(typed, depth, lineage, by_node, report)
     return report
 
@@ -519,11 +608,15 @@ def type_alignment(scheme: Scheme, alignment: Mapping[str, str], reference: Refe
 BROKEN = ("missing", "ancestral", "other-base", "other-reference")
 
 
-def _single_stop(result: GenomeTyping, first: Mapping[str, str],
-                 lineage: Mapping[str, Sequence[str]], min_required_hits: int,
-                 elsewhere: frozenset[str] | set[str] = frozenset(),
-                 strictness: float = STRICTNESS,
-                 labels: Set[str] = frozenset()) -> tuple[str, str]:
+def _single_stop(
+    result: GenomeTyping,
+    first: Mapping[str, str],
+    lineage: Mapping[str, Sequence[str]],
+    min_required_hits: int,
+    elsewhere: frozenset[str] | set[str] = frozenset(),
+    strictness: float = STRICTNESS,
+    labels: Set[str] = frozenset(),
+) -> tuple[str, str]:
     """Why the single rule did not give the set call, as (node, reason).
 
     The reason is why ``confirm_chain`` does not confirm the chain to the
@@ -538,8 +631,7 @@ def _single_stop(result: GenomeTyping, first: Mapping[str, str],
         return "", ""  # the first canSNPs lead further than the majority of the sets
     if result.single_call and result.single_call not in lineage[result.set_call]:
         return result.single_call, "other-branch"
-    node, reason = confirm_chain(result.set_call, first, lineage, min_required_hits,
-                                 strictness, labels)
+    node, reason = confirm_chain(result.set_call, first, lineage, min_required_hits, strictness, labels)
     if reason == "missing" and node in elsewhere:
         return node, "other-reference"
     if reason:
@@ -571,10 +663,15 @@ def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[
     sets = []
     for index in range(start, start + width):
         column = [states[index] for states in judged]
-        sets.append((frozenset(g for g, state in enumerate(column) if state == DERIVED),
-                     frozenset(g for g, state in enumerate(column) if state == ANCESTRAL)))
-    order = sorted((index for index in range(width) if sets[index][0]),
-                   key=lambda index: (-len(sets[index][0]), index))
+        sets.append(
+            (
+                frozenset(g for g, state in enumerate(column) if state == DERIVED),
+                frozenset(g for g, state in enumerate(column) if state == ANCESTRAL),
+            )
+        )
+    order = sorted(
+        (index for index in range(width) if sets[index][0]), key=lambda index: (-len(sets[index][0]), index)
+    )
     covered, sparse = [], []
     for index in order:
         missing = len(judged) - len(sets[index][0]) - len(sets[index][1])
@@ -585,8 +682,7 @@ def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[
     def agreeing(index: int) -> int:
         derived, ancestral = sets[index]
         for label, (other_derived, other_ancestral) in enumerate(first, start=1):
-            if (len(derived & other_ancestral) + len(ancestral & other_derived)
-                    <= tolerance):
+            if len(derived & other_ancestral) + len(ancestral & other_derived) <= tolerance:
                 return label
         return 0
 
@@ -605,8 +701,9 @@ def derived_sets(start: int, count: int, typed: Sequence[GenomeTyping]) -> list[
     return labels
 
 
-def set_apart(start: int, count: int, typed: Sequence[GenomeTyping],
-              labels: Sequence[int]) -> list[int | None]:
+def set_apart(
+    start: int, count: int, typed: Sequence[GenomeTyping], labels: Sequence[int]
+) -> list[int | None]:
     """How far each canSNP of one node lies from the narrowest of its sets.
 
     The sets are those of ``derived_sets``, as ``width_groups`` reads them
@@ -635,27 +732,36 @@ def set_apart(start: int, count: int, typed: Sequence[GenomeTyping],
         if len(column) - derived - column.count(ANCESTRAL) > tolerance:
             continue
         members.setdefault(labels[index] if derived else 0, []).append(index)
-    sets = [label for label in sorted(members, key=lambda label: (not label, label))
-            if len(members[label]) > 1]
+    sets = [
+        label for label in sorted(members, key=lambda label: (not label, label)) if len(members[label]) > 1
+    ]
     if not sets:
         return [None] * count
     narrowest = members[sets[-1]]
-    judged = [result.states[start:start + count] for result in typed if not result.discordant]
+    judged = [result.states[start : start + count] for result in typed if not result.discordant]
     reference = []
     for states in judged:
         votes = Counter(states[index] for index in narrowest)
-        reference.append(DERIVED if votes[DERIVED] > votes[ANCESTRAL]
-                         else ANCESTRAL if votes[ANCESTRAL] > votes[DERIVED] else MISSING)
+        reference.append(
+            DERIVED
+            if votes[DERIVED] > votes[ANCESTRAL]
+            else ANCESTRAL
+            if votes[ANCESTRAL] > votes[DERIVED]
+            else MISSING
+        )
     apart = []
     for index in range(count):
-        apart.append(sum(1 for states, state in zip(judged, reference, strict=True)
-                         if state != MISSING and states[index] in (DERIVED, ANCESTRAL)
-                         and states[index] != state))
+        apart.append(
+            sum(
+                1
+                for states, state in zip(judged, reference, strict=True)
+                if state != MISSING and states[index] in (DERIVED, ANCESTRAL) and states[index] != state
+            )
+        )
     return apart
 
 
-def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]
-              ) -> list[list[str]]:
+def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]) -> list[list[str]]:
     rows = []
     crowded = [node for node, snps in by_node.items() if len(snps) > MAX_SET_LABELLED]
     if crowded:
@@ -663,7 +769,8 @@ def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]
             f"Typing: {len(crowded)} nodes hold more than {MAX_SET_LABELLED} canSNPs; only "
             f"their first {MAX_SET_LABELLED} are labelled in derived_set, and evaluate "
             f"--observed groups their canSNPs by count: {', '.join(crowded[:5])}"
-            + (" and others" if len(crowded) > 5 else ""))
+            + (" and others" if len(crowded) > 5 else "")
+        )
     for node, snps in by_node.items():
         start = starts[node]
         labels = derived_sets(start, len(snps), typed)
@@ -673,7 +780,7 @@ def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]
         # costs no more per canSNP than a node of one.
         totals = []
         for result in typed:
-            states = result.states[start:start + len(snps)]
+            states = result.states[start : start + len(snps)]
             totals.append((states.count(DERIVED), states.count(ANCESTRAL)))
         for index, (snp, _column) in enumerate(snps):
             counts: Counter = Counter()
@@ -684,7 +791,8 @@ def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]
                     continue
                 # The other canSNPs of the node: its totals without this one.
                 if (state == DERIVED and ancestral > derived - 1) or (
-                        state == ANCESTRAL and derived > ancestral - 1):
+                    state == ANCESTRAL and derived > ancestral - 1
+                ):
                     counts["discordant"] += 1
                 on_path = node in result.path
                 if on_path and state == ANCESTRAL:
@@ -692,15 +800,28 @@ def _snp_rows(by_node, starts: Mapping[str, int], typed: Sequence[GenomeTyping]
                 elif not on_path and state == DERIVED:
                     counts["derived_off_path"] += 1
             called = counts[DERIVED] + counts[ANCESTRAL] + counts[OTHER]
-            rows.append([
-                node, str(snp.rank), snp.genome, snp.sequence, str(snp.position),
-                snp.derived, snp.ancestral,
-                str(len(typed)), str(called), str(counts[MISSING]), str(counts[DERIVED]),
-                str(counts[ANCESTRAL]), str(counts[OTHER]), str(counts["discordant"]),
-                str(counts["ancestral_on_path"]), str(counts["derived_off_path"]),
-                str(labels[index]) if labels[index] else "",
-                "" if distances[index] is None else str(distances[index]),
-            ])
+            rows.append(
+                [
+                    node,
+                    str(snp.rank),
+                    snp.genome,
+                    snp.sequence,
+                    str(snp.position),
+                    snp.derived,
+                    snp.ancestral,
+                    str(len(typed)),
+                    str(called),
+                    str(counts[MISSING]),
+                    str(counts[DERIVED]),
+                    str(counts[ANCESTRAL]),
+                    str(counts[OTHER]),
+                    str(counts["discordant"]),
+                    str(counts["ancestral_on_path"]),
+                    str(counts["derived_off_path"]),
+                    str(labels[index]) if labels[index] else "",
+                    "" if distances[index] is None else str(distances[index]),
+                ]
+            )
     return rows
 
 
@@ -711,8 +832,7 @@ def percent(part: int, whole: int) -> str:
 def _rank_rows(snp_rows: Sequence[Sequence[str]]) -> list[list[str]]:
     """The counts of the canSNP table summed over the canSNPs of each rank."""
     at = {column: SNP_COLUMNS.index(column) for column in SNP_COLUMNS}
-    summed = ("genomes", "called", "missing", "discordant_in_set", "ancestral_on_path",
-              "derived_off_path")
+    summed = ("genomes", "called", "missing", "discordant_in_set", "ancestral_on_path", "derived_off_path")
     by_rank: dict[int, Counter] = {}
     for row in snp_rows:
         counts = by_rank.setdefault(int(row[at["rank"]]), Counter())
@@ -723,31 +843,42 @@ def _rank_rows(snp_rows: Sequence[Sequence[str]]) -> list[list[str]]:
             counts["disagreeing"] += 1
     rows = []
     for rank, counts in sorted(by_rank.items()):
-        rows.append([
-            str(rank), str(counts["snps"]), str(counts["genomes"]), str(counts["called"]),
-            str(counts["missing"]), percent(counts["missing"], counts["genomes"]),
-            str(counts["discordant_in_set"]), str(counts["ancestral_on_path"]),
-            str(counts["derived_off_path"]), str(counts["disagreeing"]),
-            percent(counts["disagreeing"], counts["snps"]),
-        ])
+        rows.append(
+            [
+                str(rank),
+                str(counts["snps"]),
+                str(counts["genomes"]),
+                str(counts["called"]),
+                str(counts["missing"]),
+                percent(counts["missing"], counts["genomes"]),
+                str(counts["discordant_in_set"]),
+                str(counts["ancestral_on_path"]),
+                str(counts["derived_off_path"]),
+                str(counts["disagreeing"]),
+                percent(counts["disagreeing"], counts["snps"]),
+            ]
+        )
     return rows
 
 
-def _node_rows(nodes: Sequence[str], by_node, starts: Mapping[str, int],
-               typed: Sequence[GenomeTyping],
-               lineage: Mapping[str, Sequence[str]]) -> list[list[str]]:
+def _node_rows(
+    nodes: Sequence[str],
+    by_node,
+    starts: Mapping[str, int],
+    typed: Sequence[GenomeTyping],
+    lineage: Mapping[str, Sequence[str]],
+) -> list[list[str]]:
     rows = []
     single_calls = Counter(result.single_call for result in typed)
     set_calls = Counter(result.set_call for result in typed)
-    stops = Counter(result.single_stop[0] for result in typed
-                    if result.single_stop[1] in BROKEN)
+    stops = Counter(result.single_stop[0] for result in typed if result.single_stop[1] in BROKEN)
     for node in nodes:
         snps = by_node.get(node, [])
         start = starts.get(node, 0)
         through = all_derived = unknown = split = 0
         margin: int | None = None
         for result in typed:
-            states = result.states[start:start + len(snps)]
+            states = result.states[start : start + len(snps)]
             derived, ancestral = states.count(DERIVED), states.count(ANCESTRAL)
             if derived and ancestral:
                 split += 1
@@ -755,17 +886,26 @@ def _node_rows(nodes: Sequence[str], by_node, starts: Mapping[str, int],
                 continue
             through += 1
             if derived > ancestral:
-                margin = derived - ancestral if margin is None else min(margin,
-                                                                       derived - ancestral)
+                margin = derived - ancestral if margin is None else min(margin, derived - ancestral)
                 if derived == len(snps):
                     all_derived += 1
             else:
                 unknown += 1
-        rows.append([
-            node, str(len(lineage[node])), str(len(snps)), str(single_calls[node]),
-            str(set_calls[node]), str(through), str(all_derived), str(unknown), str(split),
-            NA if margin is None else str(margin), str(stops[node]),
-        ])
+        rows.append(
+            [
+                node,
+                str(len(lineage[node])),
+                str(len(snps)),
+                str(single_calls[node]),
+                str(set_calls[node]),
+                str(through),
+                str(all_derived),
+                str(unknown),
+                str(split),
+                NA if margin is None else str(margin),
+                str(stops[node]),
+            ]
+        )
     return rows
 
 
@@ -773,9 +913,13 @@ def _node_rows(nodes: Sequence[str], by_node, starts: Mapping[str, int],
 NAMED_STOPS = 5
 
 
-def _summary(everyone: Sequence[GenomeTyping], depth: Mapping[str, int],
-             lineage: Mapping[str, Sequence[str]], by_node,
-             report: "TypingReport") -> list[tuple[str, str, str, str, str]]:
+def _summary(
+    everyone: Sequence[GenomeTyping],
+    depth: Mapping[str, int],
+    lineage: Mapping[str, Sequence[str]],
+    by_node,
+    report: "TypingReport",
+) -> list[tuple[str, str, str, str, str]]:
     typed = [result for result in everyone if result.role == ISOLATE]
     total = len(typed)
     singles = [result.single_call for result in typed]
@@ -800,11 +944,13 @@ def _summary(everyone: Sequence[GenomeTyping], depth: Mapping[str, int],
         return (metric, single, NA, by_set, NA)
 
     def count(metric: str, single: int | None, by_set: int | None, whole: int = total):
-        return (metric,
-                NA if single is None else str(single),
-                NA if single is None else percent(single, whole),
-                NA if by_set is None else str(by_set),
-                NA if by_set is None else percent(by_set, whole))
+        return (
+            metric,
+            NA if single is None else str(single),
+            NA if single is None else percent(single, whole),
+            NA if by_set is None else str(by_set),
+            NA if by_set is None else percent(by_set, whole),
+        )
 
     beside = Counter(compared(result) for result in typed if result.set_call)
     only_single = sum(1 for result in typed if result.single_call and not result.set_call)
@@ -815,23 +961,27 @@ def _summary(everyone: Sequence[GenomeTyping], depth: Mapping[str, int],
     sizes = sorted(len(snps) for snps in by_node.values())
     rows = [
         text("records of the alignment", str(len(everyone)), str(len(everyone))),
-        text("reference genome, typed at",
-             *((references[0].single_call or NA, references[0].set_call or NA)
-               if references else (NA, NA))),
+        text(
+            "reference genome, typed at",
+            *((references[0].single_call or NA, references[0].set_call or NA) if references else (NA, NA)),
+        ),
         text("outgroups, not counted below", str(len(outgroups)), str(len(outgroups))),
-        text("outgroups given a call",
-             str(sum(1 for result in outgroups if result.single_call)),
-             str(sum(1 for result in outgroups if result.set_call))),
+        text(
+            "outgroups given a call",
+            str(sum(1 for result in outgroups if result.single_call)),
+            str(sum(1 for result in outgroups if result.set_call)),
+        ),
         text("genomes", str(total), str(total)),
         text("nodes with canSNPs", str(len(by_node)), str(len(by_node))),
-        text("canSNPs per node, fewest to most", f"{sizes[0]}-{sizes[-1]}",
-             f"{sizes[0]}-{sizes[-1]}"),
+        text("canSNPs per node, fewest to most", f"{sizes[0]}-{sizes[-1]}", f"{sizes[0]}-{sizes[-1]}"),
         count("typed", sum(1 for call in singles if call), sum(1 for call in sets if call)),
-        count("not typed", sum(1 for call in singles if not call),
-              sum(1 for call in sets if not call)),
+        count("not typed", sum(1 for call in singles if not call), sum(1 for call in sets if not call)),
         text("mean depth of the calls made", mean_depth(singles), mean_depth(sets)),
-        text("nodes called at", str(len({call for call in singles if call})),
-             str(len({call for call in sets if call}))),
+        text(
+            "nodes called at",
+            str(len({call for call in singles if call})),
+            str(len({call for call in sets if call})),
+        ),
         text("nodes no genome passes through", NA, str(len(report.unreached))),
         count("single call is the set call", beside["same"], None),
         count("single call above the set call", beside["above"], None),
@@ -842,33 +992,44 @@ def _summary(everyone: Sequence[GenomeTyping], depth: Mapping[str, int],
         count("single rule stopped at a canSNP without a base", reasons["missing"], None),
         count("single rule stopped at an ancestral canSNP", reasons["ancestral"], None),
         count("single rule stopped at a canSNP of another base", reasons["other-base"], None),
-        count("single rule stopped at a node on another reference",
-              reasons["other-reference"], None),
+        count("single rule stopped at a node on another reference", reasons["other-reference"], None),
         count("single rule stopped for too few nodes on the chain", reasons["min-hits"], None),
-        count("single rule stopped for too few derived nodes of the chain (strictness)",
-              reasons["strictness"], None),
+        count(
+            "single rule stopped for too few derived nodes of the chain (strictness)",
+            reasons["strictness"],
+            None,
+        ),
         count("single rule stopped at two chains of equal depth", reasons["ambiguous"], None),
-        text("nodes where the single rule stopped most often",
-             "; ".join(f"{node} ({found} {reason})"
-                       for node, reason, found in report.stops[:NAMED_STOPS]) or NA),
-        count("genomes with a derived node off their path", None,
-              sum(1 for result in typed if result.derived_off_path)),
+        text(
+            "nodes where the single rule stopped most often",
+            "; ".join(f"{node} ({found} {reason})" for node, reason, found in report.stops[:NAMED_STOPS])
+            or NA,
+        ),
+        count(
+            "genomes with a derived node off their path",
+            None,
+            sum(1 for result in typed if result.derived_off_path),
+        ),
         count("discordant genomes", None, sum(1 for result in typed if result.discordant)),
     ]
     with_expected = [result for result in typed if result.expected]
     if with_expected:
-        rows.append(text("genomes with an expected node", str(len(with_expected)),
-                         str(len(with_expected))))
+        rows.append(text("genomes with an expected node", str(len(with_expected)), str(len(with_expected))))
         for kind in (SAME, ABOVE, BELOW, ELSEWHERE, NO_CALL):
-            rows.append(count(
-                f"call {kind} the expected node" if kind in (ABOVE, BELOW)
-                else {SAME: "call is the expected node", ELSEWHERE: "call on another branch",
-                      NO_CALL: "no call"}[kind],
-                sum(1 for r in with_expected
-                    if outcome(r.single_call, r.expected, lineage) == kind),
-                sum(1 for r in with_expected
-                    if outcome(r.set_call, r.expected, lineage) == kind),
-                len(with_expected)))
+            rows.append(
+                count(
+                    f"call {kind} the expected node"
+                    if kind in (ABOVE, BELOW)
+                    else {
+                        SAME: "call is the expected node",
+                        ELSEWHERE: "call on another branch",
+                        NO_CALL: "no call",
+                    }[kind],
+                    sum(1 for r in with_expected if outcome(r.single_call, r.expected, lineage) == kind),
+                    sum(1 for r in with_expected if outcome(r.set_call, r.expected, lineage) == kind),
+                    len(with_expected),
+                )
+            )
     return rows
 
 
@@ -878,16 +1039,17 @@ def write_table(path: str, header: Sequence[str], rows: Sequence[Sequence[str]])
         handle.writelines("\t".join(row) + "\n" for row in rows)
 
 
-def write_report(report: TypingReport, prefix: str,
-                 run: Sequence[tuple[str, str]] = ()) -> list[str]:
+def write_report(report: TypingReport, prefix: str, run: Sequence[tuple[str, str]] = ()) -> list[str]:
     """Write the tables as PREFIX_genomes.tsv, _snps.tsv, _nodes.tsv,
     _ranks.tsv and _summary.tsv, and with ``run``, what the report was made
     from, as PREFIX_run.tsv. Returns the paths written."""
-    tables = [("_genomes.tsv", GENOME_COLUMNS, report.genome_rows()),
-              ("_snps.tsv", SNP_COLUMNS, report.snp_rows),
-              ("_nodes.tsv", NODE_COLUMNS, report.node_rows),
-              ("_ranks.tsv", RANK_COLUMNS, report.rank_rows),
-              ("_summary.tsv", SUMMARY_COLUMNS, report.summary)]
+    tables = [
+        ("_genomes.tsv", GENOME_COLUMNS, report.genome_rows()),
+        ("_snps.tsv", SNP_COLUMNS, report.snp_rows),
+        ("_nodes.tsv", NODE_COLUMNS, report.node_rows),
+        ("_ranks.tsv", RANK_COLUMNS, report.rank_rows),
+        ("_summary.tsv", SUMMARY_COLUMNS, report.summary),
+    ]
     if run:
         tables.append(("_run.tsv", RUN_COLUMNS, [list(item) for item in run]))
     written = []
@@ -895,15 +1057,20 @@ def write_report(report: TypingReport, prefix: str,
         write_table(prefix + suffix, header, rows)
         written.append(prefix + suffix)
     for metric, single, single_pct, by_set, set_pct in report.summary:
-        logging.info(f"Typing: {metric}: " + ", ".join(
-            f"{rule} {value}" + (f" ({share}%)" if share != NA else "")
-            for rule, value, share in (("single", single, single_pct), ("set", by_set, set_pct))
-            if value != NA))
+        logging.info(
+            f"Typing: {metric}: "
+            + ", ".join(
+                f"{rule} {value}" + (f" ({share}%)" if share != NA else "")
+                for rule, value, share in (("single", single, single_pct), ("set", by_set, set_pct))
+                if value != NA
+            )
+        )
     if report.unreached:
         logging.info(
             f"Typing: {len(report.unreached)} nodes lie on the path of no genome, so these "
             f"genomes do not test their canSNPs: {', '.join(report.unreached[:5])}"
-            + (" and others" if len(report.unreached) > 5 else ""))
+            + (" and others" if len(report.unreached) > 5 else "")
+        )
     logging.info(f"Wrote the typing report to {', '.join(written)}")
     return written
 
@@ -952,7 +1119,8 @@ def read_observed(path: str) -> dict[tuple[str, str, int], Observed]:
                 f"{path}: has no sequence column, so its positions are counted along the "
                 f"joined reference sequences, as CanSNPer2 2.2 and the typing reports of "
                 f"cansnpcreator 0.5 give them. Write the typing report again with audit "
-                f"--typing-report on a scheme in the CanSNPer2 2.3.0 format")
+                f"--typing-report on a scheme in the CanSNPer2 2.3.0 format"
+            )
         lacking = [column for column in OBSERVED_COLUMNS if column not in header]
         named = "reference_genome" if "reference_genome" in header else "genome"
         if named not in header:
@@ -960,7 +1128,8 @@ def read_observed(path: str) -> dict[tuple[str, str, int], Observed]:
         if lacking:
             raise ValueError(
                 f"{path}: has no column {', '.join(lacking)}; it should be the _snps.tsv table "
-                f"of audit --typing-report")
+                f"of audit --typing-report"
+            )
         at = {column: header.index(column) for column in (*OBSERVED_COLUMNS, named)}
         # Tables of 0.4.0 and earlier have no derived_set column.
         labelled = header.index("derived_set") if "derived_set" in header else None
@@ -970,36 +1139,45 @@ def read_observed(path: str) -> dict[tuple[str, str, int], Observed]:
             if not line.strip():
                 continue
             try:
-                key = (fields[at["node"]], fields[at["sequence"]],
-                       int(fields[at["position"]]))
+                key = (fields[at["node"]], fields[at["sequence"]], int(fields[at["position"]]))
                 genomes.add(fields[at[named]])
                 row = Observed(
                     genomes=int(fields[at["derived"]]) + int(fields[at["ancestral"]]),
                     missing=int(fields[at["missing"]]) + int(fields[at["other"]]),
-                    discordant=max(int(fields[at["discordant_in_set"]]),
-                                   int(fields[at["ancestral_on_path"]])
-                                   + int(fields[at["derived_off_path"]])),
+                    discordant=max(
+                        int(fields[at["discordant_in_set"]]),
+                        int(fields[at["ancestral_on_path"]]) + int(fields[at["derived_off_path"]]),
+                    ),
                     derived=fields[at["derived_base"]].upper(),
                     ancestral=fields[at["ancestral_base"]].upper(),
                     derived_genomes=int(fields[at["derived"]]),
-                    derived_set=(int(fields[labelled]) if labelled is not None
-                                 and labelled < len(fields) and fields[labelled] else 0),
-                    set_apart=(int(fields[distant]) if distant is not None
-                               and distant < len(fields) and fields[distant] else None))
+                    derived_set=(
+                        int(fields[labelled])
+                        if labelled is not None and labelled < len(fields) and fields[labelled]
+                        else 0
+                    ),
+                    set_apart=(
+                        int(fields[distant])
+                        if distant is not None and distant < len(fields) and fields[distant]
+                        else None
+                    ),
+                )
                 earlier = observed.get(key)
                 if earlier is not None:
                     # Listed twice, as a node with two ranks at one position:
                     # the worse of the two is kept, not whichever came last.
-                    row = Observed(min(row.genomes, earlier.genomes),
-                                   max(row.missing, earlier.missing),
-                                   max(row.discordant, earlier.discordant),
-                                   row.derived, row.ancestral,
-                                   min(row.derived_genomes, earlier.derived_genomes),
-                                   row.derived_set if row.derived_set == earlier.derived_set
-                                   else 0,
-                                   # set_apart counted both rows as members of
-                                   # their set; read as one, the sets may differ.
-                                   None)
+                    row = Observed(
+                        min(row.genomes, earlier.genomes),
+                        max(row.missing, earlier.missing),
+                        max(row.discordant, earlier.discordant),
+                        row.derived,
+                        row.ancestral,
+                        min(row.derived_genomes, earlier.derived_genomes),
+                        row.derived_set if row.derived_set == earlier.derived_set else 0,
+                        # set_apart counted both rows as members of
+                        # their set; read as one, the sets may differ.
+                        None,
+                    )
                 observed[key] = row
             except (IndexError, ValueError):
                 raise ValueError(f"{path}: line {number} is not a row of the table") from None
@@ -1008,7 +1186,8 @@ def read_observed(path: str) -> dict[tuple[str, str, int], Observed]:
     if len(genomes) > 1:
         raise ValueError(
             f"{path}: holds canSNPs of {len(genomes)} reference genomes "
-            f"({', '.join(sorted(genomes))}); run the typing report with --genome")
+            f"({', '.join(sorted(genomes))}); run the typing report with --genome"
+        )
     return observed
 
 
@@ -1039,15 +1218,12 @@ def _width_groups(rows: Sequence[Observed]) -> tuple[list[list[Observed]], bool]
         The groups, and whether they were told apart by the labels.
     """
     groups: list[list[Observed]] = []
-    known = [row for row in rows
-             if row.genomes and row.missing <= width_tolerance(row.genomes + row.missing)]
-    if any(row.derived_set for row in known) and all(
-            row.derived_set for row in known if row.derived_genomes):
+    known = [row for row in rows if row.genomes and row.missing <= width_tolerance(row.genomes + row.missing)]
+    if any(row.derived_set for row in known) and all(row.derived_set for row in known if row.derived_genomes):
         by_label: dict[int, list[Observed]] = {}
         for row in sorted(known, key=lambda row: -row.derived_genomes):
             by_label.setdefault(row.derived_set if row.derived_genomes else 0, []).append(row)
-        return [by_label[label] for label in sorted(by_label, key=lambda label: (not label,
-                                                                                   label))], True
+        return [by_label[label] for label in sorted(by_label, key=lambda label: (not label, label))], True
     for row in sorted(known, key=lambda row: -row.derived_genomes):
         tolerance = width_tolerance(row.genomes + row.missing)
         if groups and groups[-1][-1].derived_genomes - row.derived_genomes <= tolerance:
@@ -1058,7 +1234,7 @@ def _width_groups(rows: Sequence[Observed]) -> tuple[list[list[Observed]], bool]
 
 
 def judge_by_narrowest_group(
-        observed: Mapping[tuple[str, str, int], Observed]
+    observed: Mapping[tuple[str, str, int], Observed],
 ) -> tuple[dict[tuple[str, str, int], Observed], list[str]]:
     """Judge the canSNPs of nodes that hold no majority by their narrowest group.
 
@@ -1109,16 +1285,14 @@ def judge_by_narrowest_group(
             continue
         counts = Counter(row.derived_genomes for row in narrowest)
         width = min(counts, key=lambda count: (-counts[count], count))
-        by_set = by_set and all(row.set_apart is not None for _key, row in found
-                                if row.genomes)
+        by_set = by_set and all(row.set_apart is not None for _key, row in found if row.genomes)
         for key, row in found:
             if not row.genomes:
                 continue
             if by_set:
                 apart = row.set_apart
             else:
-                apart = max(0, row.derived_genomes - width,
-                            width - row.derived_genomes - row.missing)
+                apart = max(0, row.derived_genomes - width, width - row.derived_genomes - row.missing)
             judged[key] = replace(row, discordant=apart)
         changed.append(node)
     return judged, changed

@@ -26,17 +26,32 @@ from cansnpscorer.typing_report import (
     type_alignment,
 )
 
-LINEAGE = {"r": ["r"], "A": ["A", "r"], "A1": ["A1", "A", "r"], "A11": ["A11", "A1", "A", "r"],
-           "B": ["B", "r"], "B1": ["B1", "B", "r"], "B11": ["B11", "B1", "B", "r"],
-           "B111": ["B111", "B11", "B1", "B", "r"]}
+LINEAGE = {
+    "r": ["r"],
+    "A": ["A", "r"],
+    "A1": ["A1", "A", "r"],
+    "A11": ["A11", "A1", "A", "r"],
+    "B": ["B", "r"],
+    "B1": ["B1", "B", "r"],
+    "B11": ["B11", "B1", "B", "r"],
+    "B111": ["B111", "B11", "B1", "B", "r"],
+}
 
 
 # -- the set rule ------------------------------------------------------------
 
 
 def test_one_derived_node_below_unknown_ones_does_not_outweigh_a_supported_path():
-    states = {"r": DERIVED, "A": DERIVED, "A1": DERIVED, "A11": DERIVED,
-              "B": MISSING, "B1": MISSING, "B11": MISSING, "B111": DERIVED}
+    states = {
+        "r": DERIVED,
+        "A": DERIVED,
+        "A1": DERIVED,
+        "A11": DERIVED,
+        "B": MISSING,
+        "B1": MISSING,
+        "B11": MISSING,
+        "B111": DERIVED,
+    }
     call, path = set_path(states, LINEAGE)
     assert call == "A11" and "B111" not in path
     assert derived_off(states, LINEAGE, call, path) == 1, "the stray node, not the path"
@@ -71,9 +86,15 @@ def typed(scheme, alignment, **arguments):
 
 def chain_scheme(extra=()):
     """root > A > A.1, a SNP each at positions 2, 4 and 6 (G derived, A ancestral)."""
-    scheme = scheme_of([["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "B"]],
-                       [("root", "G", 2, "G", "A"), ("A", "G", 4, "G", "A"),
-                        ("A.1", "G", 6, "G", "A"), ("B", "G", 8, "G", "A")])
+    scheme = scheme_of(
+        [["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "B"]],
+        [
+            ("root", "G", 2, "G", "A"),
+            ("A", "G", 4, "G", "A"),
+            ("A.1", "G", 6, "G", "A"),
+            ("B", "G", 8, "G", "A"),
+        ],
+    )
     # The canSNP file holds every canSNP of every node: the typed ones and these.
     scheme.snp_set = [*scheme.snps, *extra] if extra else []
     return scheme
@@ -82,13 +103,17 @@ def chain_scheme(extra=()):
 def test_a_single_call_on_another_branch_is_labelled_as_such():
     # First canSNPs: derived down root, A, A.1. B's set of three is derived by
     # majority and A's set is ancestral by majority, so the set rule calls B.
-    extra = [SchemeSnp("A", "", "", "G", "c1", 10, "G", "A", rank=2, typed=False),
-             SchemeSnp("A", "", "", "G", "c1", 11, "G", "A", rank=3, typed=False),
-             SchemeSnp("B", "", "", "G", "c1", 12, "G", "A", rank=2, typed=False),
-             SchemeSnp("B", "", "", "G", "c1", 13, "G", "A", rank=3, typed=False)]
-    alignment = {"ref": "AAAAAAAAAAAAAA",
-                 #        .G.G.G.A.AAGG
-                 "g": "AGAGAGAAAAAGGA"}
+    extra = [
+        SchemeSnp("A", "", "", "G", "c1", 10, "G", "A", rank=2, typed=False),
+        SchemeSnp("A", "", "", "G", "c1", 11, "G", "A", rank=3, typed=False),
+        SchemeSnp("B", "", "", "G", "c1", 12, "G", "A", rank=2, typed=False),
+        SchemeSnp("B", "", "", "G", "c1", 13, "G", "A", rank=3, typed=False),
+    ]
+    alignment = {
+        "ref": "AAAAAAAAAAAAAA",
+        #        .G.G.G.A.AAGG
+        "g": "AGAGAGAAAAAGGA",
+    }
     genomes, report = typed(chain_scheme(extra), alignment)
     result = genomes["g"]
     assert (result.single_call, result.set_call) == ("A.1", "B")
@@ -102,8 +127,7 @@ def test_a_single_call_on_another_branch_is_labelled_as_such():
 
 def test_the_single_rule_does_not_read_an_alternative_where_no_canSNP_is_typed():
     scheme = chain_scheme()
-    scheme.snp_set = [replace(snp, typed=False) if snp.node == "A" else snp
-                      for snp in scheme.snps]
+    scheme.snp_set = [replace(snp, typed=False) if snp.node == "A" else snp for snp in scheme.snps]
     scheme.snps = [row for row in scheme.snps if row.node != "A"]
     genomes, _report = typed(scheme, {"ref": "AAAAAAAA", "g": "AGAGAGAA"})
     assert genomes["g"].single_call is None, "CanSNPer2 has no SNP at A"
@@ -143,23 +167,21 @@ def test_the_summary_counts_the_stop_reasons_of_2_2_1():
     summary = {row[0]: row[1] for row in report.summary}
     assert summary["single rule stopped at a canSNP of another base"] == "1"
     # No base at the root: two derived nodes of three fall short of 0.9.
-    genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "ANAGAGAA"},
-                            min_required_hits=1, strictness=0.9)
+    genomes, report = typed(
+        chain_scheme(), {"ref": "AAAAAAAA", "g": "ANAGAGAA"}, min_required_hits=1, strictness=0.9
+    )
     assert genomes["g"].single_stop == ("", "strictness")
     summary = {row[0]: row[1] for row in report.summary}
-    assert summary["single rule stopped for too few derived nodes of the chain "
-                   "(strictness)"] == "1"
+    assert summary["single rule stopped for too few derived nodes of the chain (strictness)"] == "1"
 
 
 def test_the_mean_depth_is_over_the_calls_made():
-    _genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "AGAGAGAA",
-                                              "none": "AAAAAAAA"})
+    _genomes, report = typed(chain_scheme(), {"ref": "AAAAAAAA", "g": "AGAGAGAA", "none": "AAAAAAAA"})
     summary = {row[0]: (row[1], row[3]) for row in report.summary}
     assert summary["mean depth of the calls made"] == ("3.00", "3.00")
 
 
-def test_the_findings_are_written_when_the_genomes_cannot_be_typed(written, dataset,
-                                                                    tmp_path, caplog):
+def test_the_findings_are_written_when_the_genomes_cannot_be_typed(written, dataset, tmp_path, caplog):
     # The first record of the alignment is not the reference: the audit says
     # so in a finding, which a failed typing report must not take away.
     outdir, _scores = written
@@ -170,9 +192,19 @@ def test_the_findings_are_written_when_the_genomes_cannot_be_typed(written, data
     write_fasta(path, records[1:] + records[:1])
     output = tmp_path / "findings.tsv"
     with caplog.at_level(logging.ERROR):
-        status = cli_run("audit", "--scheme-dir", outdir, "--reference", dataset.reference,
-                         "--alignment", path, "--typing-report", str(tmp_path / "t"),
-                         "-o", str(output))
+        status = cli_run(
+            "audit",
+            "--scheme-dir",
+            outdir,
+            "--reference",
+            dataset.reference,
+            "--alignment",
+            path,
+            "--typing-report",
+            str(tmp_path / "t"),
+            "-o",
+            str(output),
+        )
     assert status in (1, 2) and output.exists()
     assert "No typing report was written" in caplog.text
 
@@ -182,7 +214,8 @@ def test_a_node_without_a_snp_is_passed_but_not_counted():
     # path and A.1.1 three.
     scheme = scheme_of(
         [["root"], ["root", "A"], ["root", "A", "A.1"], ["root", "A", "A.1", "A.1.1"]],
-        [("root", "G", 2, "G", "A"), ("A.1", "G", 6, "G", "A"), ("A.1.1", "G", 8, "G", "A")])
+        [("root", "G", 2, "G", "A"), ("A.1", "G", 6, "G", "A"), ("A.1.1", "G", 8, "G", "A")],
+    )
     findings = check_callability(scheme, 3)
     unreachable = [finding for finding in findings if finding.category == "unreachable"]
     assert [finding.node for finding in unreachable] == ["A"]
@@ -197,9 +230,11 @@ def test_a_node_without_a_snp_is_passed_but_not_counted():
 def observed_table(tmp_path, rows):
     """A typing report's canSNP table. A row of 15 fields gives no sequence,
     and its canSNP is taken to lie on sequence c1."""
-    header = ("node\trank\tgenome\tsequence\tposition\tderived_base\tancestral_base\t"
-              "genomes\tcalled\tmissing\tderived\tancestral\tother\tdiscordant_in_set\t"
-              "ancestral_on_path\tderived_off_path")
+    header = (
+        "node\trank\tgenome\tsequence\tposition\tderived_base\tancestral_base\t"
+        "genomes\tcalled\tmissing\tderived\tancestral\tother\tdiscordant_in_set\t"
+        "ancestral_on_path\tderived_off_path"
+    )
     rows = [[*row[:3], "c1", *row[3:]] if len(row) == 15 else row for row in rows]
     path = tmp_path / "observed_snps.tsv"
     path.write_text(header + "\n" + "".join("\t".join(map(str, row)) + "\n" for row in rows))
@@ -210,70 +245,148 @@ def test_a_snp_called_in_no_genome_was_not_observed(tmp_path):
     path = observed_table(tmp_path, [("A", 1, "T", 461, "C", "G", 6, 0, 6, 0, 0, 0, 0, 0, 0)])
     seen = read_observed(path)[("A", "c1", 461)]
     assert seen.genomes == 0 and seen.missing == 6
-    never_called = snp(461, total=180, observed_genomes=seen.genomes,
-                       observed_missing=seen.missing)
+    never_called = snp(461, total=180, observed_genomes=seen.genomes, observed_missing=seen.missing)
     untried = snp(201, total=350)
     assert ranking(untried) < ranking(never_called)
 
 
 def test_two_rows_for_one_snp_keep_the_worse(tmp_path):
-    path = observed_table(tmp_path, [
-        ("A", 1, "T", 461, "C", "G", 6, 6, 0, 3, 3, 0, 5, 0, 0),
-        ("A", 2, "T", 461, "C", "G", 6, 6, 0, 3, 3, 0, 0, 0, 0)])
+    path = observed_table(
+        tmp_path,
+        [
+            ("A", 1, "T", 461, "C", "G", 6, 6, 0, 3, 3, 0, 5, 0, 0),
+            ("A", 2, "T", 461, "C", "G", 6, 6, 0, 3, 3, 0, 0, 0, 0),
+        ],
+    )
     assert read_observed(path)[("A", "c1", 461)].discordant == 5
 
 
-def test_a_report_naming_genbank_sequences_is_matched_through_the_aliases(
-        written, dataset, tmp_path):
+def test_a_report_naming_genbank_sequences_is_matched_through_the_aliases(written, dataset, tmp_path):
     # An exported scheme names a sequence by its GenBank accession, and so
     # does the typing report of it; the candidates name it as the reference
     # does. The alias table relates the two names.
     _status, prefix = run_report(written, dataset, tmp_path)
     rows = table(prefix + "_snps.tsv")
     genbank = {"c1": "CP000001.1", "c2": "CP000002.1"}
-    renamed = observed_table(tmp_path, [
-        [row["node"], row["rank"], row["reference_genome"], genbank[row["sequence"]],
-         row["position"], row["derived_base"], row["ancestral_base"], 6, 6, 0, 3, 3, 0, 4, 0,
-         0] for row in rows])
+    renamed = observed_table(
+        tmp_path,
+        [
+            [
+                row["node"],
+                row["rank"],
+                row["reference_genome"],
+                genbank[row["sequence"]],
+                row["position"],
+                row["derived_base"],
+                row["ancestral_base"],
+                6,
+                6,
+                0,
+                3,
+                3,
+                0,
+                4,
+                0,
+                0,
+            ]
+            for row in rows
+        ],
+    )
     aliases = tmp_path / "aliases.txt"
     aliases.write_text("".join(f"{name}\t{accession}\n" for name, accession in genbank.items()))
     typed_at = {(row["node"], row["sequence"], int(row["position"])) for row in rows}
 
     def observed(*extra):
         scores = str(tmp_path / "renamed.vcf")
-        assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
-                       dataset.reference, "--genes", dataset.gff, "--repeats",
-                       dataset.repeats, "-o", scores, "--observed", renamed, *extra) == 0
-        return {(record.node, record.chrom, record.pos) for record in vcf_records(scores)
-                if record.info.get("OBS_DISCORDANT") == "4"}
+        assert (
+            cli_run(
+                "evaluate",
+                "--snps",
+                str(tmp_path / "snps.vcf"),
+                "--reference",
+                dataset.reference,
+                "--genes",
+                dataset.gff,
+                "--repeats",
+                dataset.repeats,
+                "-o",
+                scores,
+                "--observed",
+                renamed,
+                *extra,
+            )
+            == 0
+        )
+        return {
+            (record.node, record.chrom, record.pos)
+            for record in vcf_records(scores)
+            if record.info.get("OBS_DISCORDANT") == "4"
+        }
 
     assert observed() == set()
     assert observed("--contig-aliases", str(aliases)) == typed_at
 
 
-def test_a_row_with_other_alleles_is_not_taken_for_the_snp(written, dataset, tmp_path,
-                                                            caplog):
+def test_a_row_with_other_alleles_is_not_taken_for_the_snp(written, dataset, tmp_path, caplog):
     _status, prefix = run_report(written, dataset, tmp_path)
     rows = table(prefix + "_snps.tsv")
-    swapped = observed_table(tmp_path, [
-        [row["node"], row["rank"], "OTHER", row["sequence"], row["position"], "N", "N", 6, 6,
-         0, 3, 3, 0, 4, 0, 0] for row in rows])
+    swapped = observed_table(
+        tmp_path,
+        [
+            [
+                row["node"],
+                row["rank"],
+                "OTHER",
+                row["sequence"],
+                row["position"],
+                "N",
+                "N",
+                6,
+                6,
+                0,
+                3,
+                3,
+                0,
+                4,
+                0,
+                0,
+            ]
+            for row in rows
+        ],
+    )
     scores = str(tmp_path / "observed.vcf")
     with caplog.at_level(logging.WARNING):
-        assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
-                       dataset.reference, "--genes", dataset.gff, "--repeats",
-                       dataset.repeats, "-o", scores, "--observed", swapped) == 0
+        assert (
+            cli_run(
+                "evaluate",
+                "--snps",
+                str(tmp_path / "snps.vcf"),
+                "--reference",
+                dataset.reference,
+                "--genes",
+                dataset.gff,
+                "--repeats",
+                dataset.repeats,
+                "-o",
+                scores,
+                "--observed",
+                swapped,
+            )
+            == 0
+        )
     assert "other alleles" in caplog.text
     assert all(record.info["OBS_DISCORDANT"] == "0" for record in vcf_records(scores))
 
 
 def test_abutting_genes_are_two_loci(tmp_path):
     gff = tmp_path / "genes.gff3"
-    gff.write_text("##gff-version 3\n"
-                   "c1\tt\tgene\t151\t450\t.\t+\t.\tID=g1\n"
-                   "c1\tt\tCDS\t151\t450\t.\t+\t0\tID=c1\n"
-                   "c1\tt\tgene\t451\t650\t.\t-\t.\tID=g2\n"
-                   "c1\tt\tgene\t640\t700\t.\t+\t.\tID=g3\n")
+    gff.write_text(
+        "##gff-version 3\n"
+        "c1\tt\tgene\t151\t450\t.\t+\t.\tID=g1\n"
+        "c1\tt\tCDS\t151\t450\t.\t+\t0\tID=c1\n"
+        "c1\tt\tgene\t451\t650\t.\t-\t.\tID=g2\n"
+        "c1\tt\tgene\t640\t700\t.\t+\t.\tID=g3\n"
+    )
     model = read_gff3(str(gff))
     assert model.genes["c1"] == [(150, 699)], "joined, for the gene term"
     loci = model.loci["c1"]
@@ -290,16 +403,31 @@ def test_abutting_genes_are_two_loci(tmp_path):
 
 def test_a_cutoff_no_score_can_pass_is_said(written, dataset, tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
-        assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
-                       dataset.reference, "--genes", dataset.gff, "--repeats",
-                       dataset.repeats, "-o", str(tmp_path / "s.vcf"), "--profile", "assay",
-                       "--score-weight", "gc_score=0") == 0
+        assert (
+            cli_run(
+                "evaluate",
+                "--snps",
+                str(tmp_path / "snps.vcf"),
+                "--reference",
+                dataset.reference,
+                "--genes",
+                dataset.gff,
+                "--repeats",
+                dataset.repeats,
+                "-o",
+                str(tmp_path / "s.vcf"),
+                "--profile",
+                "assay",
+                "--score-weight",
+                "gc_score=0",
+            )
+            == 0
+        )
     assert "No canSNP can pass" in caplog.text
 
 
 def test_a_copy_number_that_could_not_be_counted_ranks_after_unique_sequence():
-    assert min([snp(1, copies=2), snp(2, copies=0), snp(3, copies=1)],
-               key=ranking).copies == 1
+    assert min([snp(1, copies=2), snp(2, copies=0), snp(3, copies=1)], key=ranking).copies == 1
     assert ranking(snp(1, total=100, copies=1)) < ranking(snp(2, total=600, copies=0))
 
 
@@ -307,23 +435,30 @@ def test_a_copy_number_that_could_not_be_counted_ranks_after_unique_sequence():
 
 
 def test_genomes_without_a_base_at_the_parents_snp_do_not_break_the_order():
-    scheme = scheme_of([["root"], ["root", "X"], ["root", "X", "X.1"]],
-                       [("X", "G", 3, "T", "G"), ("X.1", "G", 6, "A", "C")])
+    scheme = scheme_of(
+        [["root"], ["root", "X"], ["root", "X", "X.1"]], [("X", "G", 3, "T", "G"), ("X.1", "G", 6, "A", "C")]
+    )
     reference = Reference.from_records([("c1", "ACGTACGT")])
-    alignment = {"r": "ACGTACGT", "x1": "ACTTACGT", "x2": "ACTTACGT", "x3": "ACTTACGT",
-                 "x4": "AC-TAAGT", "x5": "AC-TAAGT", "y1": "ACGTACGT", "y2": "ACGTACGT"}
+    alignment = {
+        "r": "ACGTACGT",
+        "x1": "ACTTACGT",
+        "x2": "ACTTACGT",
+        "x3": "ACTTACGT",
+        "x4": "AC-TAAGT",
+        "x5": "AC-TAAGT",
+        "y1": "ACGTACGT",
+        "y2": "ACGTACGT",
+    }
     tree = Hierarchy.from_newick("(r,(((x1,x2,x3),(x4,x5)),(y1,y2)));", support_labels=True)
     placement = place(scheme, tree, alignment, reference)
-    assert not [finding for finding in placement.findings
-                if finding.category == "placement-order"]
+    assert not [finding for finding in placement.findings if finding.category == "placement-order"]
     assert sorted(placement.clusters["X.1"]) == ["x4", "x5"]
 
 
 def test_one_outgroup_of_an_unrooted_tree_stays_outside_the_root():
     scheme = scheme_of([["root"]], [("root", "G", 3, "T", "G")])
     reference = Reference.from_records([("c1", "ACGTACGT")])
-    alignment = {"r": "ACTTACGT", "a": "ACTTACGT", "b": "ACTTACGT", "c": "ACTTACGT",
-                 "o": "ACGTACGT"}
+    alignment = {"r": "ACTTACGT", "a": "ACTTACGT", "b": "ACTTACGT", "c": "ACTTACGT", "o": "ACGTACGT"}
     alignment = {"ref": "ACGTACGT", **alignment}
     tree = Hierarchy.from_newick("(r,a,(o,(b,c)));", support_labels=True)
     placement = place(scheme, tree, alignment, reference)
@@ -335,8 +470,14 @@ def test_a_node_is_placed_by_its_best_cansnp_not_only_its_first():
     scheme.snp_set = [SchemeSnp("X", "", "", "G", "c1", 6, "A", "C", rank=2)]
     reference = Reference.from_records([("c1", "ACGTACGT")])
     # Rank 1 is derived in x1 and in y2; rank 2 in exactly x1, x2 and x3.
-    alignment = {"r": "ACGTACGT", "x1": "ACTTAAGT", "x2": "ACGTAAGT", "x3": "ACGTAAGT",
-                 "y1": "ACGTACGT", "y2": "ACTTACGT"}
+    alignment = {
+        "r": "ACGTACGT",
+        "x1": "ACTTAAGT",
+        "x2": "ACGTAAGT",
+        "x3": "ACGTAAGT",
+        "y1": "ACGTACGT",
+        "y2": "ACTTACGT",
+    }
     tree = Hierarchy.from_newick("(r,((x1,x2,x3),(y1,y2)));", support_labels=True)
     placement = place(scheme, tree, alignment, reference)
     assert sorted(placement.clusters["X"]) == ["x1", "x2", "x3"]
@@ -348,8 +489,25 @@ def widths(tmp_path, counts, genomes=400):
     rows = []
     for index, count in enumerate(counts):
         derived, missing = count if isinstance(count, tuple) else (count, 0)
-        rows.append(("A", index + 1, "T", 100 + index, "C", "G", genomes, genomes - missing,
-                     missing, derived, genomes - missing - derived, 0, 7, 0, 0))
+        rows.append(
+            (
+                "A",
+                index + 1,
+                "T",
+                100 + index,
+                "C",
+                "G",
+                genomes,
+                genomes - missing,
+                missing,
+                derived,
+                genomes - missing - derived,
+                0,
+                7,
+                0,
+                0,
+            )
+        )
     return read_observed(observed_table(tmp_path, rows))
 
 
@@ -395,16 +553,52 @@ def test_evaluate_names_the_nodes_it_judged_by_a_group(written, dataset, tmp_pat
     real = next(row for row in table(prefix + "_snps.tsv") if row["node"] == "A")
     # The canSNP of the scheme and one more are derived in 150 genomes, two
     # further candidates of the node in 50.
-    nested = observed_table(tmp_path, [
-        ["A", rank, real["reference_genome"], real["sequence"], position, real["derived_base"],
-         real["ancestral_base"], 300, 300, 0, derived, 300 - derived, 0, 0, 0, 0]
-        for rank, (position, derived) in enumerate(
-            [(real["position"], 150), (9001, 150), (9002, 50), (9003, 50)], start=1)])
+    nested = observed_table(
+        tmp_path,
+        [
+            [
+                "A",
+                rank,
+                real["reference_genome"],
+                real["sequence"],
+                position,
+                real["derived_base"],
+                real["ancestral_base"],
+                300,
+                300,
+                0,
+                derived,
+                300 - derived,
+                0,
+                0,
+                0,
+                0,
+            ]
+            for rank, (position, derived) in enumerate(
+                [(real["position"], 150), (9001, 150), (9002, 50), (9003, 50)], start=1
+            )
+        ],
+    )
     scores = str(tmp_path / "nested.vcf")
     with caplog.at_level(logging.WARNING):
-        assert cli_run("evaluate", "--snps", str(tmp_path / "snps.vcf"), "--reference",
-                       dataset.reference, "--genes", dataset.gff, "--repeats",
-                       dataset.repeats, "-o", scores, "--observed", nested) == 0
+        assert (
+            cli_run(
+                "evaluate",
+                "--snps",
+                str(tmp_path / "snps.vcf"),
+                "--reference",
+                dataset.reference,
+                "--genes",
+                dataset.gff,
+                "--repeats",
+                dataset.repeats,
+                "-o",
+                scores,
+                "--observed",
+                nested,
+            )
+            == 0
+        )
     assert "judged against the narrowest group and not against the majority" in caplog.text
     by_node = {record.node: record for record in vcf_records(scores)}
     assert by_node["A"].info["OBS_DISCORDANT"] == "100"

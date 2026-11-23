@@ -23,8 +23,7 @@ REFERENCE = Reference.from_records([("c1", "AAAAA"), ("c2", "CCCCC")])
 
 
 def snp(node, sequence, position, derived="G", ancestral="C", rank=1):
-    return SchemeSnp(node, "s", "r", "G1", sequence, position, derived, ancestral, rank=rank,
-                     typed=rank == 1)
+    return SchemeSnp(node, "s", "r", "G1", sequence, position, derived, ancestral, rank=rank, typed=rank == 1)
 
 
 def scheme_with(*snps, snp_set=()):
@@ -61,8 +60,9 @@ def test_a_position_past_the_end_of_its_sequence_is_reported():
 
 def test_a_sequence_the_reference_does_not_hold_is_reported():
     findings = check_against_reference(
-        scheme_with(snp("A", "c1", 1, "A", "G"), snp("B", "CP000001.1", 2),
-                    snp("C", "CP000001.1", 3)), REFERENCE)
+        scheme_with(snp("A", "c1", 1, "A", "G"), snp("B", "CP000001.1", 2), snp("C", "CP000001.1", 3)),
+        REFERENCE,
+    )
     (found,) = [finding for finding in findings if finding.category == "sequence"]
     assert found.severity == PROBLEM
     assert "2 SNPs" in found.detail and "'CP000001.1'" in found.detail
@@ -83,19 +83,23 @@ def test_spacing_is_measured_along_one_sequence():
 
 
 def test_a_set_is_clustered_only_along_one_sequence():
-    spread = scheme_with(snp("A", "c1", 100), snp_set=[
-        snp("A", "c1", 105, rank=2), snp("A", "c2", 102, rank=3)])
+    spread = scheme_with(
+        snp("A", "c1", 100), snp_set=[snp("A", "c1", 105, rank=2), snp("A", "c2", 102, rank=3)]
+    )
     assert check_set_region(spread, 10) == []
-    together = scheme_with(snp("A", "c2", 100), snp_set=[
-        snp("A", "c2", 105, rank=2), snp("A", "c2", 102, rank=3)])
+    together = scheme_with(
+        snp("A", "c2", 100), snp_set=[snp("A", "c2", 105, rank=2), snp("A", "c2", 102, rank=3)]
+    )
     (found,) = check_set_region(together, 10)
     assert "G1 c2 (100-105)" in found.detail
 
 
 def test_a_scored_candidate_is_matched_on_its_sequence():
     scheme = scheme_with(snp("B", "c2", 2))
-    scores = [ScoredSnp(contig="c2", position=2, node="B", total=100, terms={}),
-              ScoredSnp(contig="c2", position=4, node="B", total=200, terms={})]
+    scores = [
+        ScoredSnp(contig="c2", position=2, node="B", total=100, terms={}),
+        ScoredSnp(contig="c2", position=4, node="B", total=200, terms={}),
+    ]
     findings = check_against_scores(scheme, scores, REFERENCE)
     assert categories(findings) == ["better-available"]
     assert "scheme's SNP at c2:2 scores 100" in findings[0].detail
@@ -129,10 +133,10 @@ def test_a_scheme_sequence_is_resolved_through_an_alias_group():
     from cansnpscorer.cansnp_audit import resolve_sequences
     from cansnpscorer.helpers.file_utils import AliasGroup
 
-    scheme = scheme_with(snp("A", "CP000001.1", 1, "A", "G"),
-                         snp_set=[snp("A", "CP000002.1", 2, "C", "G", rank=2)])
-    aliases = [AliasGroup({"CP000001.1", "c1"}),
-               AliasGroup({"CP000002.1", "c2"}, differs={"c2"})]
+    scheme = scheme_with(
+        snp("A", "CP000001.1", 1, "A", "G"), snp_set=[snp("A", "CP000002.1", 2, "C", "G", rank=2)]
+    )
+    aliases = [AliasGroup({"CP000001.1", "c1"}), AliasGroup({"CP000002.1", "c2"}, differs={"c2"})]
     resolved = resolve_sequences(scheme, REFERENCE, aliases)
     assert [snp.sequence for snp in resolved.snps] == ["c1"]
     # NCBI gives that pair as not identical (<>), so it is not used.
@@ -146,7 +150,8 @@ def test_the_sequence_finding_counts_one_snp_and_the_nodes_left_out():
     assert "1 SNP is annotated" in found.detail and "it was not checked" in found.detail
     assert "--contig-aliases" in found.detail
     many = check_against_reference(
-        scheme_with(*(snp(f"N{index}", "X", index + 1) for index in range(7))), REFERENCE)
+        scheme_with(*(snp(f"N{index}", "X", index + 1) for index in range(7))), REFERENCE
+    )
     (found,) = [finding for finding in many if finding.category == "sequence"]
     assert found.node == "N0, N1, N2, N3, N4 and 2 more"
     assert "7 SNPs are annotated" in found.detail
