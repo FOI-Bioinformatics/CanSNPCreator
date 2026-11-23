@@ -825,7 +825,12 @@ it is given before the subcommand.
 pip install -e ".[dev]"
 python -m pytest tests
 python -m ruff check cansnpscorer tests
+python -m ruff format --check cansnpscorer tests
 ```
+
+The reformat of the whole code base is listed in `.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so that `git blame`
+passes over it.
 
 The tests build a small dataset with one canSNP planted per node, including a
 two-contig reference, a node whose genomes are two, a SNP crossing two
