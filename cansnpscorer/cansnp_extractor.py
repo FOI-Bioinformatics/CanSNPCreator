@@ -25,17 +25,19 @@ from cansnpscorer.validate import (
     check_alignment_against_reference,
     check_groups,
     report,
+    resolve_outgroups,
     unresolved_genomes,
 )
 
 
 def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output=None,
-         min_called=1.0) -> int:
+         min_called=1.0, outgroups=(), allow_no_outgroup=False) -> int:
     """Extract canSNPs from an alignment. Returns a process exit status."""
     logging.info(f"Started analysis at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(
         f"Parameters: alignment={alignment}, reference={reference}, hierarchy={hierarchy}, "
-        f"genome_map={genome_map}, output={output}, min_called={min_called}")
+        f"genome_map={genome_map}, output={output}, min_called={min_called}, "
+        f"outgroups={list(outgroups)}, allow_no_outgroup={allow_no_outgroup}")
 
     missing = [path for path in (alignment, reference, hierarchy, genome_map)
                if not os.path.isfile(path)]
@@ -61,7 +63,10 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     clusters, unmatched, ambiguous = resolve_clusters(clusters, list(aligned))
     found = unresolved_genomes(unmatched, ambiguous)
     problems, warnings = problems + found[0], warnings + found[1]
-    found = check_groups(aligned, clusters, tree, next(iter(aligned)))
+    declared, found_problems = resolve_outgroups(outgroups, list(aligned))
+    problems += found_problems
+    found = check_groups(aligned, clusters, tree, next(iter(aligned)), outgroups=declared,
+                         require_outgroup=not allow_no_outgroup)
     problems, warnings = problems + found[0], warnings + found[1]
     if not report(problems, warnings):
         return 2
@@ -123,8 +128,13 @@ def main(alignment=None, reference=None, hierarchy=None, genome_map=None, output
     logging.info(f"{len(flank_columns)} columns differ among the {len(scheme_genomes)} genomes of the "
                  f"scheme, which gives each SNP the distance to its nearest variation")
 
+    # The genomes at no node are what settled polarity; recording them puts
+    # that choice in the file rather than only on the command line.
+    placed = {name for names in clusters.values() for name in names}
+    outside = sorted(set(aligned) - placed)
     header = vcf.header_lines(genome, reference, "extract",
-                              [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST, vcf.MISSING])
+                              [vcf.NODE, vcf.ANCESTRAL, vcf.NEAREST, vcf.MISSING],
+                              extra=[f"##outgroup={','.join(outside) if outside else 'none'}"])
     written = vcf.write(output, header, records)
 
     found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
