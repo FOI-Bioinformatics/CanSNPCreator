@@ -220,6 +220,13 @@ def main():
                               "genomes without a base are ignored when the node is judged, "
                               "INFO/MISSING counts them, and export prefers SNPs with fewer.")
     extract.add_argument("-o", "--output", required=True, help="The SNPs to write.")
+    add_outgroup(extract, "A genome of the alignment that is outside the scheme and placed at no "
+                          "node; it settles which base of a SNP is ancestral. Without it, a "
+                          "genome the genome map places at no node is taken as one.")
+    extract.add_argument("--allow-no-outgroup", action="store_true",
+                         help="Go ahead when no genome of the alignment is placed outside every "
+                              "node, taking the reference genome's base as ancestral where the "
+                              "data cannot tell. Without it such a run stops.")
     add_version(extract)
 
     # evaluate
@@ -576,7 +583,8 @@ def run(args, parser, evaluate, place) -> int:
     if args.command == "extract":
         return cansnp_extractor.main(
             alignment=args.alignment, reference=args.reference, hierarchy=args.hierarchy,
-            genome_map=args.genome_map, output=args.output, min_called=args.min_called)
+            genome_map=args.genome_map, output=args.output, min_called=args.min_called,
+            outgroups=args.outgroup, allow_no_outgroup=args.allow_no_outgroup)
     if args.command == "evaluate":
         try:
             weights = score_weights(args.score_weight, args.profile)

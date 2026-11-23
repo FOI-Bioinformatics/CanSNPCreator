@@ -27,7 +27,8 @@ def changed(sequence, *positions):
     return "".join(bases)
 
 
-def extract(tmp_path, reference, alignment, genome_map, hierarchy=TWO_SIDES):
+def extract(tmp_path, reference, alignment, genome_map, hierarchy=TWO_SIDES,
+            allow_no_outgroup=False):
     """Run extract on these records; the output path and its records."""
     for name, records in (("ref.fa", reference), ("aln.fa", alignment)):
         (tmp_path / name).write_text("".join(f">{n}\n{s}\n" for n, s in records))
@@ -36,7 +37,7 @@ def extract(tmp_path, reference, alignment, genome_map, hierarchy=TWO_SIDES):
     output = tmp_path / "out.vcf"
     status = cansnp_extractor.main(str(tmp_path / "aln.fa"), str(tmp_path / "ref.fa"),
                                    str(tmp_path / "h.tsv"), str(tmp_path / "g.tsv"),
-                                   str(output), 1.0)
+                                   str(output), 1.0, allow_no_outgroup=allow_no_outgroup)
     return status, output
 
 
@@ -98,6 +99,7 @@ def test_root_polarity_does_not_follow_the_order_of_rows(tmp_path):
     # The reference sits in A and no genome lies outside A and B, so the column
     # cannot tell which side is derived: the reference's base is taken as
     # ancestral, and the SNP marks B whichever side the hierarchy lists first.
+    # Having no outgroup is now refused unless asked for, so this asks for it.
     sequence = random_sequence(60)
     derived = changed(sequence, 10)
     alignment = [("REF", sequence), ("a1", sequence), ("b1", derived), ("b2", derived)]
@@ -106,7 +108,8 @@ def test_root_polarity_does_not_follow_the_order_of_rows(tmp_path):
         directory = tmp_path / str(number)
         directory.mkdir()
         status, output = extract(directory, [("c", sequence)], alignment,
-                                 "REF\tA\na1\tA\nb1\tB\nb2\tB\n", hierarchy)
+                                 "REF\tA\na1\tA\nb1\tB\nb2\tB\n", hierarchy,
+                                 allow_no_outgroup=True)
         assert status == 0
         found.append([(r.pos, r.node, r.ancestral) for r in vcf_records(output) if r.node])
     assert found[0] == found[1] == [(11, "B", sequence[10])]

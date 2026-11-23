@@ -13,6 +13,18 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
+## Upgrading to 0.8.0
+
+`extract` now stops when no genome of the alignment is placed outside every
+node. Such a genome, the outgroup, is what settles which base of a SNP is
+ancestral; without one, earlier versions took the reference genome's base as
+ancestral and said so only in a warning, so a run given the wrong alignment
+still finished and wrote a scheme whose root could be inverted. Name the
+outgroup with `--outgroup`, or give `--allow-no-outgroup` to keep the old
+behaviour. A run whose genome map already leaves a genome at no node, such as
+the reference, goes ahead as before. The VCF header records which genomes
+acted as the outgroup, as `##outgroup=`.
+
 ## Upgrading to 0.7.0
 
 Version 0.7.0 writes and reads the canSNP file of a scheme,
@@ -138,6 +150,9 @@ both as VCF 4.3:
   1000 means at least 1000.
 - `INFO/MISSING` is the number of genomes without a base at the SNP, which is
   0 unless `extract --min-called` is below 1.
+- The header line `##outgroup=` names the genomes `extract` placed at no node,
+  which are what settled polarity, or `none` when `--allow-no-outgroup` let it
+  run without one.
 - `evaluate` adds `INFO/SCORE` and the five terms (`NEIGHBOUR`, `GC`, `TANDEM`,
   `GENE`, `MUTATION`), and records the weights in a `##CanSNPCreatorWeights`
   line.
@@ -168,7 +183,7 @@ or by hand. Every subcommand overwrites its output files.
 CanSNPCreator extract \
     --alignment alignment.fasta --reference reference.fasta \
     --hierarchy hierarchy.tsv --genome-map genome_map.tsv \
-    -o snps.vcf
+    --outgroup Coxiella_sp_GCF_000000000.1 -o snps.vcf
 
 # Tandem repeats of the reference, as BED
 CanSNPCreator trf --reference reference.fasta -o repeats.bed
@@ -448,10 +463,11 @@ A node holding exactly its parent's genomes is joined into the parent too.
 `--outgroup` names a leaf, by its name or by an assembly accession the name
 holds, placed at no node, so that it stays in the alignment
 as a genome outside every node: that is what lets `extract` find the root's
-canSNP and tell which side of each split is derived. Without one, `extract`
-warns that the two sides of the root cannot be told apart, and takes the
-base of the reference genome as ancestral, so that such a SNP marks the side
-without the reference. `--members` reads
+canSNP and tell which side of each split is derived. Pass the same name to
+`extract --outgroup`. Without any genome at no node, `extract` stops, since
+the two sides of the root cannot then be told apart; `--allow-no-outgroup`
+lets it go ahead, taking the base of the reference genome as ancestral, so
+that such a SNP marks the side without the reference. `--members` reads
 RepGenR2's `genomes_map.tsv`, so that genomes dereplication folded into a
 representative count towards its node and are placed with it. `--rename Cb`
 names the nodes `Cb`, `Cb.1`, `Cb.1.2` and so on, largest first and, among

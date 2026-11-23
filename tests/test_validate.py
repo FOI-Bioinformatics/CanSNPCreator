@@ -15,6 +15,7 @@ from cansnpscorer.validate import (
     check_annotations,
     check_groups,
     report,
+    resolve_outgroups,
 )
 
 
@@ -107,6 +108,67 @@ def test_an_unplaced_reference_is_named_on_its_own(pieces):
     _problems, warnings = check_groups(alignment, clusters, hierarchy, "ref")
     assert not any("genomes of the alignment are placed at no node" in w for w in warnings)
     assert any("reference genome 'ref'" in warning for warning in warnings)
+
+
+# -- the outgroup -------------------------------------------------------------
+# A genome in the alignment that the genome map places at no node settles which
+# base is ancestral. With none, extract falls back to the reference's base and
+# says so only in a warning; RepGenR2 writes two alignments of the same name in
+# sibling folders that differ by exactly that genome, so the mistake is easy.
+
+
+def test_no_genome_outside_every_node_is_a_problem_when_one_is_required(pieces):
+    alignment, _reference, hierarchy, clusters = pieces
+    placed = {**clusters, "A.1": [*clusters["A.1"], "ref"]}
+    problems, _warnings = check_groups(alignment, placed, hierarchy, "ref", require_outgroup=True)
+    assert len(problems) == 1
+    assert "no genome of the alignment is placed outside every node" in problems[0]
+    assert "--allow-no-outgroup" in problems[0], "the way to proceed is named"
+
+
+def test_an_outgroup_is_not_required_unless_asked(pieces):
+    # Other callers of check_groups keep the behaviour they had.
+    alignment, _reference, hierarchy, clusters = pieces
+    placed = {**clusters, "A.1": [*clusters["A.1"], "ref"]}
+    assert check_groups(alignment, placed, hierarchy, "ref") == ([], [])
+
+
+def test_the_unplaced_reference_counts_as_an_outgroup(pieces):
+    # The planted dataset relies on it: the reference sits at no node.
+    alignment, _reference, hierarchy, clusters = pieces
+    problems, _warnings = check_groups(alignment, clusters, hierarchy, "ref", require_outgroup=True)
+    assert problems == []
+
+
+def test_a_declared_outgroup_that_sits_at_a_node_is_a_problem(pieces):
+    alignment, _reference, hierarchy, clusters = pieces
+    problems, _warnings = check_groups(alignment, clusters, hierarchy, "ref", outgroups=["s4"])
+    assert any("s4" in problem and "B.2" in problem for problem in problems)
+
+
+def test_undeclared_genomes_at_no_node_are_named_when_an_outgroup_is_declared(pieces):
+    # With --outgroup the warning can say which genomes were not meant to be outside.
+    alignment, _reference, hierarchy, _clusters = pieces
+    clusters = {name: list(isolates) for name, isolates in CLUSTERS.items() if name != "B.2"}
+    _problems, warnings = check_groups(alignment, clusters, hierarchy, "ref", outgroups=["ref"])
+    undeclared = [w for w in warnings if "not declared" in w]
+    assert len(undeclared) == 1 and "s4" in undeclared[0] and "ref" not in undeclared[0].split(":")[-1]
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("ref", ["ref"]),
+    ("ref.fasta", ["ref"]),
+])
+def test_outgroups_resolve_to_alignment_records(pieces, name, expected):
+    alignment = pieces[0]
+    resolved, problems = resolve_outgroups([name], list(alignment))
+    assert (resolved, problems) == (expected, [])
+
+
+def test_an_outgroup_the_alignment_lacks_is_a_problem(pieces):
+    resolved, problems = resolve_outgroups(["GCF_000000001.1"], list(pieces[0]))
+    assert resolved == []
+    assert len(problems) == 1 and "GCF_000000001.1" in problems[0]
 
 
 # -- annotations -------------------------------------------------------------
