@@ -2,7 +2,8 @@
 
 import logging
 from bisect import bisect_right
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import TypeVar
 
 from cansnpscorer import vcf
 from cansnpscorer.helpers.data_utils import apply_filters, summarize_scores
@@ -113,13 +114,16 @@ def wrap_origin(intervals: Sequence, length: int, cds: bool = False) -> tuple[li
     return kept, split
 
 
+Annotation = TypeVar("Annotation")
+
+
 def annotations_by_contig(
-    annotations: dict[str, Sequence],
+    annotations: Mapping[str, Sequence[Annotation]],
     reference: Reference,
     description: str,
     aliases: Sequence[set[str]] | None = None,
     sequences: dict[str, str] | None = None,
-) -> dict[str, Sequence]:
+) -> dict[str, list[Annotation]]:
     """Attach annotations to the contigs of the reference.
 
     A sequence is matched by its ID, by an alias, or by its own sequence, as
@@ -157,7 +161,7 @@ def annotations_by_contig(
             f"or sequence: " + ", ".join(f"{a}={b}" for a, b in sorted(renamed.items())[:5])
         )
 
-    attached: dict[str, list] = {name: [] for name in reference.names}
+    attached: dict[str, list[Annotation]] = {name: [] for name in reference.names}
     claimed: dict[str, str] = {}
     for name, contig in found.items():
         if contig in claimed:
@@ -182,8 +186,8 @@ def annotations_by_contig(
 
 def locate_snps(
     snps: Sequence[vcf.Snp], reference: Reference, examples: int = 3
-) -> list[tuple[Contig, int, str, Sequence[str]]]:
-    """Place each SNP on its contig, as (contig, 0-based position, node, alleles).
+) -> list[tuple[Contig, int, str, tuple[str, str], int | None]]:
+    """Place each SNP on its contig, as (contig, 0-based position, node, alleles, nearest).
 
     The alleles are (derived, ancestral) for a canSNP. A SNP that marks no node
     gets the node 'None'; it is kept, because it is still a neighbour of the
@@ -193,7 +197,7 @@ def locate_snps(
         ValueError: If a SNP falls outside its contig or disagrees with the
             reference base.
     """
-    located: list[tuple[Contig, int, str, Sequence[str]]] = []
+    located: list[tuple[Contig, int, str, tuple[str, str], int | None]] = []
     problems: list[str] = []
     for snp in snps:
         try:
@@ -239,7 +243,7 @@ def locus_at(
 
 
 def regions_over_contigs(
-    regions: dict[str, Sequence[tuple[int, int]]], reference: Reference
+    regions: Mapping[str, Sequence[tuple[int, int]]], reference: Reference
 ) -> dict[str, list[tuple[int, int]]]:
     """Place regions given over the whole concatenated reference on its contigs.
 

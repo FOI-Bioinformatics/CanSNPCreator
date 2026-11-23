@@ -24,7 +24,7 @@ The five terms are, each on a scale of 0 to 1 before weighting:
     introduces or removes a stop codon, or lies outside any CDS, scores 0.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from cansnpscorer.helpers.data_utils import codon_comparer, gc_content, neighbour_distance, search
@@ -75,7 +75,7 @@ class SnpContext:
     """0-based position of the closest SNP to the right on this contig."""
     genes: Sequence[Sequence[int]] = field(default_factory=list)
     """Bases covered by a gene or CDS on this contig as (start, end), sorted and joined."""
-    cds: Sequence[Sequence[int]] = field(default_factory=list)
+    cds: Sequence[tuple[int, int, str, int]] = field(default_factory=list)
     """CDS intervals on this contig as (start, end, strand, phase), sorted by start."""
     repeats: Sequence[Sequence[int]] = field(default_factory=list)
     """Tandem repeat intervals on this contig as (start, end), sorted by start."""
@@ -293,10 +293,10 @@ def score_snp(
 
 
 def contexts_for(
-    snps: Sequence[tuple[Contig, int, str, Sequence[str]]],
-    genes: dict[str, Sequence[Sequence[int]]],
-    repeats: dict[str, Sequence[Sequence[int]]],
-    cds: dict[str, Sequence[Sequence[int]]] | None = None,
+    snps: Sequence[tuple[Contig, int, str, Sequence[str]] | tuple[Contig, int, str, Sequence[str], int | None]],
+    genes: Mapping[str, Sequence[tuple[int, int]]],
+    repeats: Mapping[str, Sequence[tuple[int, int]]],
+    cds: Mapping[str, Sequence[tuple[int, int, str, int]]] | None = None,
 ) -> list[SnpContext]:
     """Build the contexts for a set of SNPs, filling in each SNP's neighbours.
 
@@ -318,7 +318,7 @@ def contexts_for(
 
     # Sorted once per contig and shared by its SNPs, not copied for each, which
     # on a genome of a few thousand genes and some 10^5 SNPs is gigabytes.
-    def by_start(intervals: dict[str, Sequence[Sequence[int]]]) -> dict[str, list]:
+    def by_start[T: Sequence[int | str]](intervals: Mapping[str, Sequence[T]]) -> dict[str, list[T]]:
         return {name: sorted(found, key=lambda interval: interval[0]) for name, found in intervals.items()}
 
     sorted_genes, sorted_repeats, sorted_cds = by_start(genes), by_start(repeats), by_start(cds or {})
