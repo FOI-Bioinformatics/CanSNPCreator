@@ -13,37 +13,12 @@ substitutions, reports which of them sit in well behaved sequence, and exports
 a scheme for
 [CanSNPer2-data](https://github.com/FOI-Bioinformatics/CanSNPer2-data).
 
-## Upgrading to 0.8.0
+## Upgrading
 
-`extract` now stops when no genome of the alignment is placed outside every
-node. Such a genome, the outgroup, is what settles which base of a SNP is
-ancestral; without one, earlier versions took the reference genome's base as
-ancestral and said so only in a warning, so a run given the wrong alignment
-still finished and wrote a scheme whose root could be inverted. Name the
-outgroup with `--outgroup`, or give `--allow-no-outgroup` to keep the old
-behaviour. A run whose genome map already leaves a genome at no node, such as
-the reference, goes ahead as before. The VCF header records which genomes
-acted as the outgroup, as `##outgroup=`.
-
-## Upgrading to 0.7.0
-
-Version 0.7.0 writes and reads the canSNP file of a scheme,
-`<organism>_canSNPs.txt`, which holds every canSNP of every node with the ones the
-scheme types marked, and no longer writes `<organism>_snp.txt`. It is the format
-CanSNPer2 2.4.0 reads, and CanSNPer2-data holds. `audit` and `place` read a
-`<organism>_snp.txt` an earlier version exported as rank 1 of each node, typed, so
-an older export is still audited.
-
-## Upgrading to 0.6.0
-
-Version 0.6.0 wrote and read the CanSNPer2 2.3.0 scheme format, in
-which each canSNP is a sequence (a GenBank accession) and a position on it.
-A scheme made for an earlier version is converted with
-`CanSNPer2-database --convert` (CanSNPer2 2.3.0) before `audit` or `place` reads
-it. A `_snps.tsv` table written by `audit --typing-report` before 0.6.0 has no
-`sequence` column and is refused by `evaluate --observed`; write it again. The
-`_snps.tsv` of the typing report now has the columns `sequence` and `position`
-in place of `contig` and `contig_position`.
+[CHANGELOG.md](CHANGELOG.md) lists the changes of each version. Those that
+change what an earlier command line, scheme or file does are under
+**Upgrading**; the next release stops `extract` without an outgroup unless
+`--allow-no-outgroup` is given.
 
 ## Installation
 
