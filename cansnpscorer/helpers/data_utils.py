@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import groupby
+from typing import NotRequired, TypedDict
 
 from cansnpscorer.helpers.genetic_code import codon_table
 from cansnpscorer.model import GAP_CHARACTERS
@@ -158,7 +159,15 @@ def called_needed(total: int, min_called: float) -> int:
     return max(1, math.ceil(min_called * total - 1e-9))
 
 
-def snp_extractor(fasta: dict[str, str], min_called: float = 1.0) -> list[dict[str, int | dict[str, int]]]:
+class SnpColumn(TypedDict):
+    """A variable alignment column, as snp_extractor reports it."""
+
+    index: int
+    variants: dict[str, int]
+    missing: NotRequired[int]
+
+
+def snp_extractor(fasta: dict[str, str], min_called: float = 1.0) -> list[SnpColumn]:
     """
     Extract Single Nucleotide Polymorphisms (SNPs) from genomic alignments.
 
@@ -187,7 +196,7 @@ def snp_extractor(fasta: dict[str, str], min_called: float = 1.0) -> list[dict[s
     nucleotides = frozenset("ACGT")
     rows = list(fasta.values())
     total_length = len(rows[0]) if rows else 0
-    snps = []
+    snps: list[SnpColumn] = []
     step = max(total_length // 10, 1)
 
     logging.info("Starting SNP extraction...")
@@ -368,7 +377,7 @@ class CanSnp:
 def canSNP_extractor(
     alignment: dict[str, str],
     groups: dict[str, list[str]],
-    snps: list[dict[str, int | dict[str, int]]],
+    snps: Sequence[SnpColumn],
     min_called: float = 1.0,
 ) -> list[CanSnp]:
     """
@@ -409,11 +418,11 @@ def canSNP_extractor(
     logging.info(f"Looking for canSNPs among {len(snps)} SNPs over {len(groups)} nodes")
 
     wanted = {isolate for isolates in groups.values() for isolate in isolates}
-    missing = sorted(wanted - set(alignment))
-    if missing:
+    absent = sorted(wanted - set(alignment))
+    if absent:
         raise ValueError(
-            f"the genome map names {len(missing)} isolates that the alignment does not hold: "
-            f"{', '.join(missing[:5])}"
+            f"the genome map names {len(absent)} isolates that the alignment does not hold: "
+            f"{', '.join(absent[:5])}"
         )
 
     # Nodes with no isolates cannot be marked by any SNP. They are reported

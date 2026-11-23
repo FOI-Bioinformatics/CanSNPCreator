@@ -217,7 +217,8 @@ class Hierarchy:
                 label = tokens[position].lstrip(QUOTED)
                 position += 1
             length = None
-            if peek() is not None and not peek().startswith(QUOTED) and peek().startswith(":"):
+            following = peek()
+            if following is not None and not following.startswith(QUOTED) and following.startswith(":"):
                 try:
                     length = float(tokens[position][1:])
                 except ValueError:
@@ -362,8 +363,7 @@ class Hierarchy:
                 own.extend(isolates[child])
             # Keep the first mention of each isolate, so that a cluster named at
             # two depths does not inflate the count.
-            seen: set[str] = set()
-            isolates[node] = [name for name in own if not (name in seen or seen.add(name))]
+            isolates[node] = list(dict.fromkeys(own))
         return isolates
 
     def __len__(self) -> int:
