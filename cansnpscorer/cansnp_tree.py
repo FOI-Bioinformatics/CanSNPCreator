@@ -119,7 +119,7 @@ def collapse_main(
             return "too few genomes"
         return "the same genomes as the parent"
 
-    reasons = {}
+    reasons: dict[str, int] = {}
     for reason in collapsed.removed.values():
         for part in reason.split(", "):
             reasons[kind(part)] = reasons.get(kind(part), 0) + 1

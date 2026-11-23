@@ -302,6 +302,8 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
         new_root = f"root{number}"
 
     upper = tree.parents[branch]
+    # The branch is not the root, so it has a parent.
+    assert upper is not None
     pairs: list[tuple[str, str | None]] = [(new_root, None), (branch, new_root), (upper, new_root)]
     # The branch that held the root is split in two; both halves are the same
     # split of the genomes, so they carry the same support.
@@ -328,13 +330,13 @@ def reroot(tree: Hierarchy, outgroups: Sequence[str]) -> Hierarchy:
 
     # The old root, when it had two children, is now a node with one child:
     # its two branches are one, and it is removed.
-    children: dict[str, list[str]] = {}
+    new_children: dict[str, list[str]] = {}
     for child, parent in pairs:
         if parent is not None:
-            children.setdefault(parent, []).append(child)
+            new_children.setdefault(parent, []).append(child)
     old = root
-    if old != upper and len(children.get(old, [])) == 1:
-        (only,) = children[old]
+    if old != upper and len(new_children.get(old, [])) == 1:
+        (only,) = new_children[old]
         parent = next(parent for child, parent in pairs if child == old)
         pairs = [(child, parent if child == only else above) for child, above in pairs if child != old]
         if old in lengths or only in lengths:
@@ -407,6 +409,8 @@ def collapse(
     kept_above: dict[str, str] = {}
     for node in nodes[1:]:
         parent = tree.parents[node]
+        # Every node after the first, the root, has a parent.
+        assert parent is not None
         kept_above[node] = parent if parent in kept else kept_above[parent]
 
     parent_of = {node: (None if node == root else kept_above[node]) for node in nodes if node in kept}
@@ -557,6 +561,8 @@ def name_from_labels(
         if node == root or len(held[node]) != 1:
             continue
         parent = hierarchy.parents[node]
+        # Only the root has no parent, and it is skipped above.
+        assert parent is not None
         if parent == root or held[parent] != held[node]:
             label_at[node] = next(iter(held[node]))
 
@@ -592,6 +598,8 @@ def name_from_labels(
         # Bsu.1.1.2 becomes Bsu.bv2.1. A name that is its own, such as S.5 under
         # B.2, is kept as it is.
         old_parent = hierarchy.parents[node]
+        # Only the root has no parent, and it is skipped above.
+        assert old_parent is not None
         if node.startswith(old_parent + ".") and names[old_parent] != old_parent:
             names[node] = unique(names[old_parent] + node[len(old_parent) :])
         else:
@@ -866,9 +874,9 @@ def place(
         below_called: dict[str, int] = {}
         below_carriers: dict[str, int] = {}
         for tree_node in reversed(nodes):
-            record = leaf_record.get(tree_node)
-            own_called = 1 if record in called else 0
-            own_carrier = 1 if record in carriers else 0
+            node_record = leaf_record.get(tree_node)
+            own_called = 1 if node_record in called else 0
+            own_carrier = 1 if node_record in carriers else 0
             below_called[tree_node] = own_called + sum(
                 below_called[child] for child in tree.children[tree_node]
             )
@@ -907,6 +915,9 @@ def place(
                 if best is None or key < best:
                     best = key
 
+        # The root, taken as the clade below it, holds every carrier, and
+        # there is at least one, so a side was kept.
+        assert best is not None
         index, outside, _size, clade = -best[0], bool(best[1]), best[2], best[3]
         inside = _clade(tree, clade, leaf_record)
         group = in_tree - inside if outside else inside
@@ -1132,11 +1143,11 @@ def place_by_clade(
     for leaf in tree.leaves:
         if leaf in leaf_node or leaf in outgroup:
             continue
-        node = next((node for node in order if leaf in clade_of[node]), None)
-        if node is None:
+        owner = next((node for node in order if leaf in clade_of[node]), None)
+        if owner is None:
             unplaced.append(leaf)
         else:
-            placed[leaf] = node
+            placed[leaf] = owner
     logging.info(
         f"Found the clades of {len(clade_of)} scheme nodes from {len(leaf_node)} scheme genomes "
         f"in the tree, and placed {len(placed)} of {len(placed) + len(unplaced)} other genomes"

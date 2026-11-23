@@ -112,6 +112,8 @@ def main(
             continue
         contig, position = placed
         if cansnp.is_canonical:
+            # A canonical SNP has its derived and ancestral bases set.
+            assert cansnp.derived is not None and cansnp.ancestral is not None
             records.append(
                 vcf.snp_record(
                     genome,
@@ -152,8 +154,8 @@ def main(
 
     # The genomes at no node are what settled polarity; recording them puts
     # that choice in the file rather than only on the command line.
-    placed = {name for names in clusters.values() for name in names}
-    outside = sorted(set(aligned) - placed)
+    held = {name for names in clusters.values() for name in names}
+    outside = sorted(set(aligned) - held)
     header = vcf.header_lines(
         genome,
         reference,
@@ -163,7 +165,7 @@ def main(
     )
     written = vcf.write(output, header, records)
 
-    found = sum(1 for cansnp in cansnps if cansnp.is_canonical)
+    canonical = sum(1 for cansnp in cansnps if cansnp.is_canonical)
     # A node whose SNPs were all reported against a node with the same
     # isolates has them as well.
     marked = {cansnp.node for cansnp in cansnps if cansnp.node}
@@ -177,7 +179,7 @@ def main(
     without = sorted(set(tree.nodes) - marked)
     if without:
         logging.warning(f"{len(without)} of {len(tree)} nodes have no canSNP: {', '.join(without)}")
-    logging.info(f"Wrote {written} SNPs to {output}, of which {found} are canonical")
+    logging.info(f"Wrote {written} SNPs to {output}, of which {canonical} are canonical")
     if min_called < 1.0:
         partial = sum(1 for cansnp in cansnps if cansnp.is_canonical and cansnp.missing)
         logging.info(

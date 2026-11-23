@@ -345,6 +345,8 @@ def read_alignment_columns(
         raise ValueError(
             f"{path}: an alignment needs the reference and at least one other genome, found {len(records)}"
         )
+    # Both are set once a record has been read, and records is not empty here.
+    assert shortest is not None and longest is not None
     if shortest[1] != longest[1]:
         raise ValueError(
             f"{path}: the records are not aligned; '{longest[0]}' holds "
@@ -603,7 +605,7 @@ def read_gff3(gff_file: str) -> GeneModel:
     # features where the file has them, as NCBI and Bakta write a gene with
     # its CDS, and the CDS features where it does not, as Prokka can.
     loci = {
-        sequence: sorted(found.get("gene") or found.get("CDS", ())) for sequence, found in features.items()
+        sequence: sorted(found.get("gene") or found.get("CDS", set())) for sequence, found in features.items()
     }
     return GeneModel(
         genes=merged, cds=cds, loci=loci, sequences={key: "".join(value) for key, value in sequences.items()}
