@@ -2,18 +2,20 @@
 
 A group whose members differ too much for one alignment is built in tiers: a
 coarse scheme over the whole group, against one reference, in which one node
-holds a subgroup as a leaf, and a finer scheme of that subgroup, against the
-same reference, rooted at that node. The node both hold is the seam. Merging
-hangs the finer scheme's tree from the seam and joins the two canSNP files.
+holds a subgroup, and a finer scheme of that subgroup, against the same
+reference, rooted at that node. The node both hold is the seam. Merging hangs
+the finer scheme's tree from the seam and joins the two canSNP files. Whatever
+the coarse scheme holds below the seam, where its alignment still separates
+some of the subgroup, is replaced by the finer scheme.
 
-The node sets are disjoint apart from the seam, so the merge is a union; what
-it adds is the checks. Each refusal below is a scheme CanSNPer2 or
+After that replacement the node sets are disjoint apart from the seam, so the
+merge is a union; what it adds is the checks. Each refusal below is a scheme CanSNPer2 or
 CanSNPer2-data would reject later, at a point far from the cause.
 """
 
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from cansnpscorer.scheme import (
@@ -49,6 +51,8 @@ class Merged:
     genomes: list[tuple[str, str, str]]
     seams: list[tuple[str, int]]
     """Each seam, and how many canSNPs of the finer scheme were dropped there."""
+    replaced: dict[str, list[str]]
+    """Each seam, and the nodes of the schemes before it that held its genomes below it."""
     left_out: list[tuple[str, str]]
     """Genome rows left out because their node is no longer a terminal node."""
 
@@ -63,7 +67,8 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]) -> tuple[Merg
     The first scheme is the coarsest. Each later one must share exactly one node
     with those before it, its own root, which is the seam; the seam keeps the
     canSNPs of the scheme before it, the only one that holds a genome outside
-    the seam to settle their polarity.
+    the seam to settle their polarity. Whatever the schemes before it hold below
+    the seam is replaced by the finer scheme, which resolves those genomes.
     """
     problems: list[str] = []
     warnings: list[str] = []
@@ -76,12 +81,27 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]) -> tuple[Merg
     held = set(first.nodes)
     snps = list(first.snp_set)
     seams: list[tuple[str, int]] = []
+    replaced: dict[str, list[str]] = {}
 
     for scheme, name in zip(schemes[1:], names[1:], strict=True):
         if scheme.hierarchy is None:
             problems.append(f"{name}: the tree is not a single rooted tree, so it has no seam")
             continue
         root = scheme.hierarchy.root
+        if root in held:
+            # A coarse tier can resolve the seam's genomes itself, where its
+            # alignment still tells some of them apart; the finer tier replaces it.
+            below = {node for path in paths if root in path[:-1] for node in path[path.index(root) + 1 :]}
+            if below:
+                paths = [path for path in paths if not below & set(path)]
+                path_to = {path[-1]: path for path in paths}
+                snps = [snp for snp in snps if snp.node not in below]
+                held -= below
+                replaced[root] = sorted(below)
+                warnings.append(
+                    f"{name} replaced {len(below)} nodes of the schemes before it below the seam "
+                    f"{root!r}, with their canSNPs: {', '.join(sorted(below)[:5])}"
+                )
         shared = set(scheme.nodes) & held
         if not shared:
             problems.append(
@@ -140,7 +160,9 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]) -> tuple[Merg
         )
     check_ranks(snps, "the merged canSNPs", problems)
 
-    genomes, left_out = merge_genomes(schemes, set(hierarchy.leaves) if hierarchy else set(), problems)
+    genomes, left_out = merge_genomes(
+        schemes, set(hierarchy.leaves) if hierarchy else set(), problems, warnings, replaced
+    )
     return (
         Merged(
             paths=paths,
@@ -148,6 +170,7 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]) -> tuple[Merg
             references=list(first.references),
             genomes=genomes,
             seams=seams,
+            replaced=replaced,
             left_out=left_out,
         ),
         problems,
@@ -156,16 +179,22 @@ def merge_schemes(schemes: Sequence[Scheme], names: Sequence[str]) -> tuple[Merg
 
 
 def merge_genomes(
-    schemes: Sequence[Scheme], terminal: set[str], problems: list[str]
+    schemes: Sequence[Scheme],
+    terminal: set[str],
+    problems: list[str],
+    warnings: list[str],
+    replaced: Mapping[str, Sequence[str]],
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
     """The genomes of all schemes, at terminal nodes of the merged tree.
 
-    In the coarse scheme the seam is a leaf, so its genomes file lists the finer
-    scheme's genomes there; merged, the seam is an inner node and the genomes
-    file lists terminal nodes only, so those rows are left out, and the finer
-    scheme places the genomes. A genome one scheme uses as its outgroup and
-    another places at a node stays placed.
+    The coarse scheme lists the finer scheme's genomes at the seam, or at the
+    nodes below it that the finer scheme replaced; merged, those nodes are inner
+    nodes or gone, and the genomes file lists terminal nodes only, so those rows
+    are left out, and the finer scheme places the genomes. A genome one scheme uses as its outgroup and
+    another places at a node stays placed. A genome left out that no scheme
+    places at a terminal node leaves the merged scheme, and is reported.
     """
+    seam_of = {node: seam for seam, nodes in replaced.items() for node in [seam, *nodes]}
     placed: dict[str, dict[str, list[str]]] = {}
     outgroup: dict[str, str] = {}
     left_out: list[tuple[str, str]] = []
@@ -183,12 +212,22 @@ def merge_genomes(
         if len(nodes) > 1:
             problems.append(
                 f"{genome} is placed at {len(nodes)} terminal nodes of the merged "
-                f"tree, {', '.join(sorted(nodes))}; a genome sits at one node"
+                f"tree, {', '.join(sorted(nodes))}; a genome sits at one node, so the "
+                f"schemes disagree about which genomes lie below the seam"
             )
             continue
         ((node, roles),) = nodes.items()
         rows.append((genome, node, min(roles, key=ROLE_ORDER.__getitem__)))
     moved = {genome for genome, _node in left_out}
+    lost: dict[str, list[str]] = {}
+    for genome, node in left_out:
+        if genome not in placed and genome not in outgroup:
+            lost.setdefault(seam_of.get(node, node), []).append(genome)
+    for seam, genomes in sorted(lost.items()):
+        warnings.append(
+            f"{len(genomes)} genomes placed below {seam!r} by a scheme before the finer one are "
+            f"placed by no scheme after it, and leave the merged scheme: {', '.join(sorted(genomes)[:5])}"
+        )
     rows += [
         (genome, "", role)
         for genome, role in sorted(outgroup.items())

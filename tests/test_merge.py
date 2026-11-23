@@ -63,6 +63,26 @@ def split_at(outdir, seam, tmp_path):
     return parts["coarse"], parts["fine"]
 
 
+def resolving_below(coarse, outdir, seam):
+    """Give the coarse scheme its own resolution below the seam, as a tier
+    whose alignment still separates some of the finer tier's genomes does:
+    the original nodes below the seam, renamed A.x1, A.x2, with their canSNPs,
+    which sit at the same sites as the fine scheme's."""
+
+    def rename(node):
+        return node.replace(seam + ".", seam + ".x", 1) if node.startswith(seam + ".") else node
+
+    tree = [line.split("\t") for line in lines(os.path.join(outdir, ORGANISM + TREE_SUFFIX))]
+    write(os.path.join(coarse, ORGANISM + TREE_SUFFIX), ["\t".join(map(rename, path)) for path in tree])
+    cansnps = lines(os.path.join(outdir, ORGANISM + CANSNP_SUFFIX))
+    rows = []
+    for row in cansnps[1:]:
+        fields = row.split("\t")
+        rows.append("\t".join([rename(fields[0]), *fields[1:]]))
+    write(os.path.join(coarse, ORGANISM + CANSNP_SUFFIX), [cansnps[0], *rows])
+    return sorted({rename(node) for path in tree for node in path} - {node for path in tree for node in path})
+
+
 def merge(tmp_path, *schemes, outdir=None):
     outdir = outdir or str(tmp_path / "merged")
     arguments = ["merge"]
@@ -220,6 +240,87 @@ def test_a_scheme_with_problems_of_its_own_is_refused(written, tmp_path, caplog)
     status, _merged = merge(tmp_path, coarse, fine)
     assert status == 2
     assert "A.1" in caplog.text
+
+
+# -- a coarse scheme that resolves the seam itself -------------------------------
+
+
+def test_the_finer_scheme_replaces_the_coarse_one_below_the_seam(written, tmp_path):
+    # The coarse tier's own nodes below the seam use the same sites as the fine
+    # tier's; they are replaced, so they neither stay nor count as a collision.
+    outdir, _scores = written
+    coarse, fine = split_at(outdir, "A", tmp_path)
+    assert resolving_below(coarse, outdir, "A") == ["A.x1", "A.x2"]
+    status, merged = merge(tmp_path, coarse, fine)
+    assert status == 0
+    assert cansnp_rows(merged) == cansnp_rows(outdir)
+    original = read_scheme(outdir)
+    result = read_scheme(merged)
+    assert result.problems == []
+    assert {node: result.hierarchy.parents[node] for node in result.nodes} == {
+        node: original.hierarchy.parents[node] for node in original.nodes
+    }
+
+
+def test_replacing_below_the_seam_is_said(written, tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    outdir, _scores = written
+    coarse, fine = split_at(outdir, "A", tmp_path)
+    resolving_below(coarse, outdir, "A")
+    status, _merged = merge(tmp_path, coarse, fine)
+    assert status == 0
+    replaced = [record for record in caplog.records if "replaced" in record.getMessage()]
+    assert len(replaced) == 1
+    assert replaced[0].levelno == logging.WARNING
+    assert "2 nodes" in replaced[0].getMessage()
+    assert "'A'" in replaced[0].getMessage()
+
+
+def test_a_genome_only_the_coarse_scheme_places_below_the_seam_is_reported(written, tmp_path, caplog):
+    # The fine tier was built from the genomes below the seam; one it lacks
+    # would leave the scheme, which is worth knowing before publishing it.
+    outdir, _scores = written
+    coarse, fine = split_at(outdir, "A", tmp_path)
+    resolving_below(coarse, outdir, "A")
+    write(
+        os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
+        [
+            "genome\tnode\trole",
+            "GCF_000000001.1\tA.x1\trepresentative",
+            "GCF_000000002.1\tA.x2\trepresentative",
+            "GCF_000000009.1\tB.1\trepresentative",
+        ],
+    )
+    write(
+        os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative"],
+    )
+    status, merged = merge(tmp_path, coarse, fine)
+    assert status == 0
+    assert sorted(read_scheme(merged).genomes) == [
+        ("GCF_000000001.1", "A.1", "representative"),
+        ("GCF_000000009.1", "B.1", "representative"),
+    ]
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("GCF_000000002.1" in message and "'A'" in message for message in warned), warned
+
+
+def test_a_genome_the_tiers_place_on_both_sides_of_the_seam_is_refused(written, tmp_path, caplog):
+    outdir, _scores = written
+    coarse, fine = split_at(outdir, "A", tmp_path)
+    resolving_below(coarse, outdir, "A")
+    write(
+        os.path.join(coarse, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tB.1\trepresentative"],
+    )
+    write(
+        os.path.join(fine, ORGANISM + GENOMES_SUFFIX),
+        ["genome\tnode\trole", "GCF_000000001.1\tA.1\trepresentative"],
+    )
+    status, _merged = merge(tmp_path, coarse, fine)
+    assert status == 2
+    assert "GCF_000000001.1" in caplog.text
+    assert "disagree" in caplog.text
 
 
 # -- the genomes file -----------------------------------------------------------
