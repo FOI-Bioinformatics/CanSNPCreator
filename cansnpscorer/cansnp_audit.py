@@ -30,7 +30,7 @@ its default of three required hits.
 import itertools
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 
 from cansnpscorer import __version__, vcf
 from cansnpscorer.alignment_audit import GENOME_CONFLICTS, check_against_alignment
@@ -65,6 +65,7 @@ from cansnpscorer.typing_report import (
     NA,
     STRICTNESS,
     TypingError,
+    TypingReport,
     scheme_columns,
     type_alignment,
     write_report,
@@ -864,6 +865,351 @@ def _scheme_columns(
     }
 
 
+def _placement_problems(
+    by_clade: bool,
+    alignment: str | None,
+    genome_map: str | None,
+    tree: str | None,
+    members: str | None,
+    outgroups: Sequence[str],
+    no_new_clades: bool,
+    typing_report: str | None,
+) -> list[str]:
+    """The options that place the genomes of the alignment, and those that need one, refused in this order."""
+    refusals = [
+        (
+            by_clade and not (tree and genome_map and outgroups),
+            "--rule clade needs --tree, --genome-map with the scheme's genomes, and --outgroup",
+        ),
+        (outgroups and not by_clade, "--outgroup applies to --rule clade"),
+        (by_clade and members, "--members applies to --rule jaccard"),
+        (
+            ((genome_map or tree) and not alignment) or (genome_map and tree and not by_clade),
+            "checking the scheme against the genomes needs --alignment, and either "
+            "--genome-map or --tree to say where the genomes sit in the scheme, or the "
+            "scheme's own genomes file",
+        ),
+        (members and not tree, "--members applies to the leaves of --tree"),
+        (no_new_clades and not alignment, "--no-new-clades applies to --alignment"),
+        (
+            typing_report and not alignment,
+            "--typing-report types the genomes of --alignment, so it needs one",
+        ),
+    ]
+    return [message for refused, message in refusals if refused]
+
+
+def _option_problems(
+    reference: str | None,
+    scores: str | None,
+    masks: str | None,
+    masks_concatenated: bool,
+    alignment: str | None,
+    genome: str | None,
+    placement_problems: Sequence[str],
+) -> list[str]:
+    """The option combinations the audit refuses, in the order they are checked.
+
+    ``placement_problems`` are those of :func:`_placement_problems`, which come
+    between the options that need the reference and the last two. Only the
+    first problem is reported, so the order decides which one a user sees.
+    """
+    first = [
+        (scores and not reference, "--scores needs --reference, the genome the scores were made against"),
+        (masks and not reference, "--masks needs --reference, which names the sequences the masks lie on"),
+        (alignment and not reference, "--alignment needs --reference, the genome the alignment is against"),
+    ]
+    last = [
+        (
+            genome and not reference,
+            "--genome names the scheme's reference genome that --reference holds, so it needs --reference",
+        ),
+        (masks_concatenated and not masks, "--masks-concatenated applies to --masks"),
+    ]
+    return [
+        *(message for refused, message in first if refused),
+        *placement_problems,
+        *(message for refused, message in last if refused),
+    ]
+
+
+@dataclass
+class _Inputs:
+    """The scheme and the files read beside it."""
+
+    scheme: Scheme
+    annotated: list[str]
+    """The reference genomes the scheme's SNPs are annotated on."""
+    sequence: Reference | None
+    scored: list[ScoredSnp] | None
+    masked: dict[str, list[tuple[int, int]]] | None
+
+
+def _read_inputs(
+    scheme_dir: str,
+    organism: str | None,
+    reference: str | None,
+    scores: str | None,
+    genome: str | None,
+    masks: str | None,
+    masks_concatenated: bool,
+    contig_aliases: str | None,
+) -> _Inputs:
+    """Read the scheme, and the reference, scores and masks when given.
+
+    Raises:
+        OSError, ValueError, SchemeError, ReferenceError: If a file cannot be
+            read, or the scheme annotates no SNP on ``genome``.
+    """
+    scheme = read_scheme(scheme_dir, organism)
+    annotated = sorted({snp.genome for snp in scheme.snps})
+    if genome and genome not in annotated:
+        raise ValueError(
+            f"the scheme annotates no SNP on genome '{genome}'; it names {', '.join(annotated) or 'none'}"
+        )
+    sequence = reference_parser(reference) if reference else None
+    scored = vcf.read_scores(scores, sequence) if scores else None
+    aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
+    masked = (
+        read_masks(masks, sequence, masks_concatenated, aliases) if masks and sequence is not None else None
+    )
+    if sequence is not None:
+        scheme = resolve_sequences(scheme, sequence, aliases)
+    return _Inputs(scheme, annotated, sequence, scored, masked)
+
+
+@dataclass
+class _Placed:
+    """The alignment as read, and where its genomes sit in the scheme; empty
+    when no alignment is given."""
+
+    aligned: Mapping[str, str | ColumnRow] | None = None
+    clusters: dict[str, list[str]] | None = None
+    findings: list[Finding] = field(default_factory=list)
+    """The findings of a tree placement."""
+
+
+def _read_aligned(
+    alignment: str, scheme: Scheme, sequence: Reference, genome: str | None, every_column: bool
+) -> tuple[Mapping[str, str | ColumnRow], dict[str, str] | None]:
+    """The alignment, and the same alignment whole when every column was read."""
+    if every_column:
+        logging.info("Reading every column of the alignment")
+        whole = read_alignment(alignment)
+        return whole, whole
+    logging.info("Reading only the scheme's columns of the alignment")
+    aligned = read_alignment_columns(alignment, lambda row: _scheme_columns(scheme, row, sequence, genome))
+    return aligned, None
+
+
+def _clusters_from_genomes_file(
+    scheme: Scheme, aligned: Mapping[str, str | ColumnRow], typing_report: str | None
+) -> dict[str, list[str]] | None:
+    """The genomes placed as the scheme's own genomes file lists them.
+
+    The scheme lists the genomes it was made from; an outgroup sits at no
+    node and counts as outside every node.
+
+    Raises:
+        ValueError: If the scheme lists no genomes and no typing report is
+            asked for, so that there is nothing to do with the alignment.
+    """
+    if not scheme.genomes:
+        if typing_report:
+            logging.info(
+                "No genome map, tree or genomes file says where the genomes sit, so "
+                "they are typed with the scheme but its SNPs are not checked against "
+                "a placement"
+            )
+            return None
+        raise ValueError(
+            f"the scheme lists no genomes ({scheme.organism}_genomes.txt), so "
+            f"--genome-map or --tree must say where the genomes sit"
+        )
+    # Members are used where the alignment holds them, as one made with
+    # RepGenR2's --all-genomes does, and passed over quietly where it does
+    # not: they were never aligned.
+    from cansnpscorer.helpers.names import resolve_names
+
+    grouped: dict[str, list[str]] = {}
+    listed = [entry for entry in scheme.genomes if entry[2] != "outgroup"]
+    matched, _unmatched, _ambiguous = resolve_names(
+        [accession for accession, _node, _role in listed], list(aligned)
+    )
+    skipped = 0
+    for accession, node, role in listed:
+        if role == "member" and accession not in matched:
+            skipped += 1
+            continue
+        grouped.setdefault(node, []).append(accession)
+    logging.info(
+        f"Placed {sum(len(found) for found in grouped.values())} genomes as "
+        f"the scheme's genomes file lists them"
+        + (f"; {skipped} members are not in the alignment" if skipped else "")
+    )
+    return grouped
+
+
+def _place_genomes(
+    alignment: str,
+    scheme: Scheme,
+    sequence: Reference,
+    genome: str | None,
+    by_clade: bool,
+    tree: str | None,
+    genome_map: str | None,
+    members: str | None,
+    outgroups: Sequence[str],
+    no_new_clades: bool,
+    typing_report: str | None,
+) -> _Placed:
+    """Read the alignment and place its genomes in the scheme.
+
+    Raises:
+        OSError, ValueError, HierarchyError, ReferenceError, SchemeError: If
+            a file cannot be read or the genomes cannot be placed.
+    """
+    placed = bool(by_clade or genome_map or tree or scheme.genomes)
+    every_column = (placed and not no_new_clades) or bool(tree and not by_clade)
+    aligned, whole = _read_aligned(alignment, scheme, sequence, genome, every_column)
+    if by_clade:
+        from cansnpscorer.cansnp_tree import place_clade
+
+        # --rule clade needs both, which is checked before this is reached.
+        assert tree and genome_map
+        # The first record is the reference, which the tree need not hold.
+        return _Placed(aligned, place_clade(scheme, tree, genome_map, outgroups, list(aligned)[1:]).clusters)
+    if genome_map:
+        return _Placed(aligned, read_genome_map(genome_map))
+    if not tree:
+        return _Placed(aligned, _clusters_from_genomes_file(scheme, aligned, typing_report))
+    genome_tree = read_genome_tree(tree)
+    folded = read_members(members, genome_tree) if members else None
+    # A tree placement without the clade rule reads every column.
+    assert whole is not None
+    placement = place(scheme, genome_tree, whole, sequence, genome, members=folded)
+    return _Placed(aligned, placement.clusters, placement.findings)
+
+
+def _with_placement_findings(findings: list[Finding], placement_findings: Sequence[Finding]) -> list[Finding]:
+    """The audit's findings with those of a tree placement, problems first."""
+    if not placement_findings:
+        return findings
+    order = {PROBLEM: 0, RECOMMENDATION: 1}
+    return sorted(
+        [*findings, *placement_findings],
+        key=lambda finding: (order[finding.severity], finding.category, finding.node),
+    )
+
+
+def _log_findings(scheme: Scheme, findings: Sequence[Finding]) -> None:
+    """Log each finding, problems as errors, then the summary."""
+    for finding in findings:
+        if finding.severity == PROBLEM:
+            logging.error(str(finding))
+        else:
+            logging.warning(str(finding))
+    for line in summarize(scheme, findings):
+        logging.info(line)
+
+
+def _placed_by(
+    scheme: Scheme, by_clade: bool, tree: str | None, genome_map: str | None, alignment: str | None
+) -> str:
+    """What placed the genomes, as the run table of the reports gives it."""
+    if by_clade:
+        return f"tree {tree}, by the clades of the genomes of {genome_map}"
+    if genome_map:
+        return f"genome map {genome_map}"
+    if tree:
+        return f"tree {tree}"
+    if alignment and scheme.genomes:
+        return "the scheme's genomes file"
+    return NA
+
+
+def _run_rows(
+    scheme: Scheme,
+    scheme_dir: str,
+    reference: str | None,
+    genomes: str,
+    alignment: str | None,
+    placed_by: str,
+    scores: str | None,
+    masks: str | None,
+    min_required_hits: int,
+    strictness: float,
+    genome_conflicts: int,
+) -> list[tuple[str, str]]:
+    """The run table of the reports: what was read, and with which settings.
+
+    ``genomes`` names the reference genomes of the scheme, as ``--genome``
+    gives it or as the scheme annotates its SNPs.
+    """
+    return [
+        ("cansnpcreator", __version__),
+        ("scheme", f"{scheme.organism} in {scheme_dir}"),
+        ("reference", str(reference) if reference else NA),
+        ("reference genome of the scheme", genomes or NA),
+        ("alignment", str(alignment) if alignment else NA),
+        ("genomes placed by", placed_by),
+        ("scores", str(scores) if scores else NA),
+        ("masks", str(masks) if masks else NA),
+        ("min_required_hits", str(min_required_hits)),
+        ("strictness", f"{strictness:g}"),
+        ("genome_conflicts", str(genome_conflicts)),
+    ]
+
+
+def _type_genomes(
+    scheme: Scheme,
+    placed: _Placed,
+    sequence: Reference | None,
+    genome: str | None,
+    min_required_hits: int,
+    genome_conflicts: int,
+    strictness: float,
+    typing_report: str | None,
+    run: Sequence[tuple[str, str]],
+) -> tuple[TypingReport | None, bool]:
+    """Type the genomes of the alignment, and write the typing report when asked.
+
+    Returns the typing, None when it could not be made, and whether a typing
+    report that was asked for was not written.
+    """
+    typing = None
+    try:
+        # Typing follows an alignment that was read, and --alignment needs
+        # --reference, which is checked before this is reached.
+        assert placed.aligned is not None and sequence is not None
+        typing = type_alignment(
+            scheme,
+            placed.aligned,
+            sequence,
+            genome,
+            placed.clusters,
+            min_required_hits,
+            genome_conflicts,
+            strictness=strictness,
+            outgroups=[accession for accession, _node, role in scheme.genomes if role == "outgroup"],
+        )
+        if typing_report:
+            write_report(typing, typing_report, run)
+    except (OSError, TypingError, ReferenceError) as error:
+        logging.error(f"No typing report was written: {error}")
+        return typing, bool(typing_report)
+    return typing, False
+
+
+def _exit_status(findings: Sequence[Finding], strict: bool, not_typed: bool) -> int:
+    """2 for a problem, or with ``strict`` any finding; 1 when the typing report failed; 0 otherwise."""
+    if any(finding.severity == PROBLEM for finding in findings):
+        return 2
+    if strict and findings:
+        return 2
+    return 1 if not_typed else 0
+
+
 def main(
     scheme_dir=None,
     organism=None,
@@ -911,143 +1257,48 @@ def main(
     is also done when nothing places the genomes, so that only the typing
     runs. A tree placement reads every column, so it reads them all.
     """
-    if scores and not reference:
-        logging.error("--scores needs --reference, the genome the scores were made against")
-        return 1
-    if masks and not reference:
-        logging.error("--masks needs --reference, which names the sequences the masks lie on")
-        return 1
-    if alignment and not reference:
-        logging.error("--alignment needs --reference, the genome the alignment is against")
-        return 1
     by_clade = rule == "clade"
-    if by_clade and not (tree and genome_map and outgroups):
-        logging.error("--rule clade needs --tree, --genome-map with the scheme's genomes, and --outgroup")
-        return 1
-    if outgroups and not by_clade:
-        logging.error("--outgroup applies to --rule clade")
-        return 1
-    if by_clade and members:
-        logging.error("--members applies to --rule jaccard")
-        return 1
-    if ((genome_map or tree) and not alignment) or (genome_map and tree and not by_clade):
-        logging.error(
-            "checking the scheme against the genomes needs --alignment, and either "
-            "--genome-map or --tree to say where the genomes sit in the scheme, or the "
-            "scheme's own genomes file"
-        )
-        return 1
-    if members and not tree:
-        logging.error("--members applies to the leaves of --tree")
-        return 1
-    if no_new_clades and not alignment:
-        logging.error("--no-new-clades applies to --alignment")
-        return 1
-    if typing_report and not alignment:
-        logging.error("--typing-report types the genomes of --alignment, so it needs one")
-        return 1
-
-    if genome and not reference:
-        logging.error(
-            "--genome names the scheme's reference genome that --reference holds, so it needs --reference"
-        )
-        return 1
-    if masks_concatenated and not masks:
-        logging.error("--masks-concatenated applies to --masks")
+    problems = _option_problems(
+        reference,
+        scores,
+        masks,
+        masks_concatenated,
+        alignment,
+        genome,
+        _placement_problems(
+            by_clade, alignment, genome_map, tree, members, outgroups, no_new_clades, typing_report
+        ),
+    )
+    if problems:
+        logging.error(problems[0])
         return 1
     try:
-        scheme = read_scheme(scheme_dir, organism)
-        annotated = sorted({snp.genome for snp in scheme.snps})
-        if genome and genome not in annotated:
-            logging.error(
-                f"the scheme annotates no SNP on genome '{genome}'; it names {', '.join(annotated) or 'none'}"
-            )
-            return 1
-        sequence = reference_parser(reference) if reference else None
-        scored = vcf.read_scores(scores, sequence) if scores else None
-        aliases = read_contig_aliases(contig_aliases) if contig_aliases else None
-        masked = (
-            read_masks(masks, sequence, masks_concatenated, aliases)
-            if masks and sequence is not None
-            else None
+        inputs = _read_inputs(
+            scheme_dir, organism, reference, scores, genome, masks, masks_concatenated, contig_aliases
         )
-        if sequence is not None:
-            scheme = resolve_sequences(scheme, sequence, aliases)
     except (OSError, ValueError, SchemeError, ReferenceError) as error:
         logging.error(error)
         return 1
+    scheme, sequence = inputs.scheme, inputs.sequence
 
-    aligned: Mapping[str, str | ColumnRow] | None = None
-    whole: dict[str, str] | None = None
-    clusters: dict[str, list[str]] | None = None
-    placement_findings: list[Finding] = []
+    placed = _Placed()
     if alignment:
         # --alignment needs --reference, which is checked above.
         assert sequence is not None
         try:
-            placed = bool(by_clade or genome_map or tree or scheme.genomes)
-            if (placed and not no_new_clades) or (tree and not by_clade):
-                logging.info("Reading every column of the alignment")
-                whole = aligned = read_alignment(alignment)
-            else:
-                logging.info("Reading only the scheme's columns of the alignment")
-                aligned = read_alignment_columns(
-                    alignment, lambda row: _scheme_columns(scheme, row, sequence, genome)
-                )
-            if by_clade:
-                from cansnpscorer.cansnp_tree import place_clade
-
-                # The first record is the reference, which the tree need not hold.
-                clusters = place_clade(scheme, tree, genome_map, outgroups, list(aligned)[1:]).clusters
-            elif genome_map:
-                clusters = read_genome_map(genome_map)
-            elif not tree:
-                # The scheme lists the genomes it was made from; an outgroup
-                # sits at no node and counts as outside every node.
-                if not scheme.genomes and typing_report:
-                    logging.info(
-                        "No genome map, tree or genomes file says where the genomes sit, so "
-                        "they are typed with the scheme but its SNPs are not checked against "
-                        "a placement"
-                    )
-                elif not scheme.genomes:
-                    logging.error(
-                        f"the scheme lists no genomes ({scheme.organism}_genomes.txt), so "
-                        f"--genome-map or --tree must say where the genomes sit"
-                    )
-                    return 1
-                # Members are used where the alignment holds them, as one made
-                # with RepGenR2's --all-genomes does, and passed over quietly
-                # where it does not: they were never aligned.
-                from cansnpscorer.helpers.names import resolve_names
-
-                grouped: dict[str, list[str]] = {}
-                listed = [entry for entry in scheme.genomes if entry[2] != "outgroup"]
-                matched, _unmatched, _ambiguous = resolve_names(
-                    [accession for accession, _node, _role in listed], list(aligned)
-                )
-                skipped = 0
-                # The loop names its own variables: genome is the --genome option.
-                for accession, node, role in listed:
-                    if role == "member" and accession not in matched:
-                        skipped += 1
-                        continue
-                    grouped.setdefault(node, []).append(accession)
-                clusters = grouped if scheme.genomes else None
-                if clusters is not None:
-                    logging.info(
-                        f"Placed {sum(len(found) for found in clusters.values())} genomes as "
-                        f"the scheme's genomes file lists them"
-                        + (f"; {skipped} members are not in the alignment" if skipped else "")
-                    )
-            else:
-                genome_tree = read_genome_tree(tree)
-                folded = read_members(members, genome_tree) if members else None
-                # A tree placement without the clade rule reads every column.
-                assert whole is not None
-                placement = place(scheme, genome_tree, whole, sequence, genome, members=folded)
-                clusters = placement.clusters
-                placement_findings = placement.findings
+            placed = _place_genomes(
+                alignment,
+                scheme,
+                sequence,
+                genome,
+                by_clade,
+                tree,
+                genome_map,
+                members,
+                outgroups,
+                no_new_clades,
+                typing_report,
+            )
         except (OSError, ValueError, HierarchyError, ReferenceError, SchemeError) as error:
             logging.error(error)
             return 1
@@ -1055,34 +1306,21 @@ def main(
     findings = audit_scheme(
         scheme,
         sequence,
-        scored,
+        inputs.scored,
         genome,
         min_required_hits,
         proximity,
-        aligned,
-        clusters,
+        placed.aligned,
+        placed.clusters,
         min_clade_size,
         min_clade_snps,
-        masked,
+        inputs.masked,
         genome_conflicts,
         region,
         not no_new_clades,
     )
-    if placement_findings:
-        order = {PROBLEM: 0, RECOMMENDATION: 1}
-        findings = sorted(
-            findings + placement_findings,
-            key=lambda finding: (order[finding.severity], finding.category, finding.node),
-        )
-
-    for finding in findings:
-        if finding.severity == PROBLEM:
-            logging.error(str(finding))
-        else:
-            logging.warning(str(finding))
-
-    for line in summarize(scheme, findings):
-        logging.info(line)
+    findings = _with_placement_findings(findings, placed.findings)
+    _log_findings(scheme, findings)
 
     if output:
         try:
@@ -1093,53 +1331,36 @@ def main(
 
     # The findings are written first: a scheme that cannot be typed with, as
     # one with two roots, is exactly what they report.
-    if by_clade:
-        placed_by = f"tree {tree}, by the clades of the genomes of {genome_map}"
-    elif genome_map:
-        placed_by = f"genome map {genome_map}"
-    elif tree:
-        placed_by = f"tree {tree}"
-    elif alignment and scheme.genomes:
-        placed_by = "the scheme's genomes file"
-    else:
-        placed_by = NA
-    run = [
-        ("cansnpcreator", __version__),
-        ("scheme", f"{scheme.organism} in {scheme_dir}"),
-        ("reference", str(reference) if reference else NA),
-        ("reference genome of the scheme", genome or ", ".join(annotated) or NA),
-        ("alignment", str(alignment) if alignment else NA),
-        ("genomes placed by", placed_by),
-        ("scores", str(scores) if scores else NA),
-        ("masks", str(masks) if masks else NA),
-        ("min_required_hits", str(min_required_hits)),
-        ("strictness", f"{strictness:g}"),
-        ("genome_conflicts", str(genome_conflicts)),
-    ]
+    run = _run_rows(
+        scheme,
+        scheme_dir,
+        reference,
+        genome or ", ".join(inputs.annotated),
+        alignment,
+        _placed_by(scheme, by_clade, tree, genome_map, alignment),
+        scores,
+        masks,
+        min_required_hits,
+        strictness,
+        genome_conflicts,
+    )
 
     not_typed = False
     typing = None
-    if typing_report or (report and aligned is not None):
-        try:
-            # --typing-report needs --alignment, and --alignment needs --reference; a
-            # report is typed only when an alignment was read.
-            assert aligned is not None and sequence is not None
-            typing = type_alignment(
-                scheme,
-                aligned,
-                sequence,
-                genome,
-                clusters,
-                min_required_hits,
-                genome_conflicts,
-                strictness=strictness,
-                outgroups=[accession for accession, _node, role in scheme.genomes if role == "outgroup"],
-            )
-            if typing_report:
-                write_report(typing, typing_report, run)
-        except (OSError, TypingError, ReferenceError) as error:
-            logging.error(f"No typing report was written: {error}")
-            not_typed = bool(typing_report)
+    # --typing-report needs --alignment; a report is typed only when an
+    # alignment was read.
+    if placed.aligned is not None and (typing_report or report):
+        typing, not_typed = _type_genomes(
+            scheme,
+            placed,
+            sequence,
+            genome,
+            min_required_hits,
+            genome_conflicts,
+            strictness,
+            typing_report,
+            run,
+        )
 
     if report:
         try:
@@ -1149,8 +1370,4 @@ def main(
             logging.error(error)
             return 1
 
-    if any(finding.severity == PROBLEM for finding in findings):
-        return 2
-    if strict and findings:
-        return 2
-    return 1 if not_typed else 0
+    return _exit_status(findings, strict, not_typed)
