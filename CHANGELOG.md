@@ -8,6 +8,8 @@ scheme or file does.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-23
+
 ### Changed
 
 - `merge` takes a coarse scheme that has nodes of its own below the seam, as a
@@ -15,7 +17,7 @@ scheme or file does.
   genomes. The finer scheme replaces those nodes, with their canSNPs and genome
   rows, and a warning names them; before, such schemes were refused. A genome
   the coarse scheme places below the seam and the finer one does not place is
-  named in a warning, since it would leave the merged scheme.
+  named in a warning, since it would leave the merged scheme (#51).
 
 ## [0.8.0] - 2026-11-23
 
@@ -159,7 +161,8 @@ First release under the name CanSNPCreator.
 
 - `export`, `audit`, `collapse` and `place`, and `extract --min-called`.
 
-[Unreleased]: https://github.com/FOI-Bioinformatics/CanSNPCreator/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/FOI-Bioinformatics/CanSNPCreator/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.9.0
 [0.8.0]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.8.0
 [0.7.1]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.7.1
 [0.6.0]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.6.0
