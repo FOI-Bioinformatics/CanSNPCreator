@@ -9,6 +9,7 @@ from cansnpscorer import (
     cansnp_evaluator,
     cansnp_export,
     cansnp_extractor,
+    cansnp_merge,
     cansnp_tree,
     cansnp_trf,
     sites,
@@ -352,6 +353,18 @@ def main():
                                        "Without it, such a name stops the export")
     add_version(export)
 
+    # merge
+    merge = subparsers.add_parser(
+        "merge", help="Join schemes built in tiers into one scheme, at the node they share.")
+    merge.add_argument("--scheme", action="append", required=True, metavar="DIR",
+                       help="A scheme directory as export writes it. Repeatable, coarsest first: "
+                            "each later scheme is rooted at a node of those before it, the seam, "
+                            "and the seam keeps the canSNPs of the scheme before it.")
+    merge.add_argument("--outdir", required=True, help="Where to write the merged scheme.")
+    merge.add_argument("--organism", default=None,
+                       help="Names the merged scheme's files. Default: the first scheme's.")
+    add_version(merge)
+
     # audit
     audit = subparsers.add_parser(
         "audit", help="Report whether an existing CanSNPer2-data scheme should be extended or "
@@ -613,6 +626,8 @@ def run(args, parser, evaluate, place) -> int:
             assembly_name=args.assembly_name, prune=args.prune, genome_map=args.genome_map,
             alignment=args.alignment, snps_per_node=args.snps_per_node,
             spacing=args.min_spacing, contig_aliases=args.contig_aliases)
+    if args.command == "merge":
+        return cansnp_merge.main(schemes=args.scheme, outdir=args.outdir, organism=args.organism)
     if args.command == "audit":
         return cansnp_audit.main(
             scheme_dir=args.scheme_dir, organism=args.organism, reference=args.reference,
