@@ -14,7 +14,7 @@ from cansnpscorer.helpers.file_utils import read_alignment, read_gff3
 from cansnpscorer.hierarchy import Hierarchy
 from cansnpscorer.model import Reference
 from cansnpscorer.scheme import SchemeSnp
-from cansnpscorer.tree_tools import place
+from cansnpscorer.trees.placing import place
 from cansnpscorer.typing_report import (
     ANCESTRAL,
     DERIVED,

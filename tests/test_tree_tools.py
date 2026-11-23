@@ -19,16 +19,10 @@ from cansnpscorer.helpers.names import resolve_names
 from cansnpscorer.hierarchy import Hierarchy, HierarchyError
 from cansnpscorer.model import Reference
 from cansnpscorer.scheme import Scheme, SchemeSnp, hierarchy_from_paths, read_scheme
-from cansnpscorer.tree_tools import (
-    collapse,
-    name_from_labels,
-    place,
-    place_by_clade,
-    read_genome_tree,
-    read_members,
-    rename,
-    write_collapsed,
-)
+from cansnpscorer.trees.collapsing import collapse, rename, write_collapsed
+from cansnpscorer.trees.naming import name_from_labels
+from cansnpscorer.trees.placing import place, place_by_clade
+from cansnpscorer.trees.reading import read_genome_tree, read_members
 
 #: The planted dataset as a genome tree, rooted on the reference genome.
 PLANTED_TREE = "(ref:0.5,(((s1:0.01,s1b:0.01)97:0.2,s2:0.3)99:0.4,(s3:0.2,s4:0.2)100:0.4)100:0.1);"
