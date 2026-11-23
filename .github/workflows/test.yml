@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, so that a change in CanSNPer2 or CanSNPer2-data that breaks the
+  # export is found even in a week without commits here.
+  schedule:
+    - cron: "0 5 * * 1"
 
 jobs:
   test:
@@ -16,17 +20,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The export and audit tests check the scheme files against the
+      # repositories that read them: CanSNPer2-data's validate.py and its
+      # published schemes, and CanSNPer2 building and exporting a database.
+      # Without these checkouts those tests skip.
+      - uses: actions/checkout@v4
+        with:
+          repository: FOI-Bioinformatics/CanSNPer2-data
+          path: downstream/CanSNPer2-data
+
+      - uses: actions/checkout@v4
+        with:
+          repository: FOI-Bioinformatics/CanSNPer2
+          path: downstream/CanSNPer2
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install the package and its test dependencies
         run: |
+          sudo apt-get install -y --no-install-recommends zsh
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      # A skipped test is a failure here: every test can run in this job, so a
+      # skip means a checkout or tool went missing and a check silently stopped.
       - name: Test
-        run: python -m pytest tests -v
+        env:
+          CANSNPER2_DATA: ${{ github.workspace }}/downstream/CanSNPer2-data
+          CANSNPER2: ${{ github.workspace }}/downstream/CanSNPer2
+        run: |
+          set -o pipefail
+          python -m pytest tests -v -rs -p no:cacheprovider | tee pytest.log
+          if grep -q "^SKIPPED" pytest.log; then
+            echo "::error::tests were skipped; every test must run in CI"
+            exit 1
+          fi
 
       - name: Lint
         run: python -m ruff check cansnpscorer tests

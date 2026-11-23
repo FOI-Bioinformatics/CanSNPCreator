@@ -833,9 +833,17 @@ branches, a tri-allelic column and a gapped one, and check that the planted
 canSNPs are recovered at the planted coordinates with the planted polarity. CI
 runs them on Python 3.13 and 3.14.
 
-Two tests use the CanSNPer2-data repository when it is checked out beside this
-one, and are skipped otherwise: one runs that repository's `validate.py` over
-an exported scheme, the other audits its published schemes.
+Eleven tests check scheme files against the repositories that read them: they
+run CanSNPer2-data's `validate.py` over exported and merged schemes, audit its
+published schemes, and build a CanSNPer2 database from an export. They use
+checkouts of CanSNPer2-data and CanSNPer2 beside this repository, or the ones
+`CANSNPER2_DATA` and `CANSNPER2` name, and are skipped without them:
+
+```sh
+CANSNPER2_DATA=../CanSNPer2-data CANSNPER2=../CanSNPer2 python -m pytest tests -rs
+```
+
+CI checks out both and fails if any test is skipped.
 
 ## Contributing
 
