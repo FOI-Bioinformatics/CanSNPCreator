@@ -8,6 +8,8 @@ scheme or file does.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
 ### Upgrading
 
 `extract` now stops when no genome of the alignment is placed outside every
@@ -34,7 +36,7 @@ the reference, goes ahead as before.
 
 - The conflicting-sites finding of `audit` listed the genomes tied for most
   often involved in an order that changed from run to run, so the same audit
-  could name different genomes; ties are now broken by name.
+  could name different genomes; ties are now broken by name (#49).
 
 ### Development
 
@@ -44,6 +46,11 @@ the reference, goes ahead as before.
   side (#42).
 - The code is formatted with `ruff format`, checked in CI (#43).
 - CI fails when line and branch coverage falls below 90% (#44).
+- mypy reports no errors, and is checked in CI (#46).
+- `tree_tools.py` is split into the `cansnpscorer.trees` package, one module
+  per operation (#47).
+- The `main` functions of `audit`, `evaluate` and `export` are split into
+  smaller steps, with 45 tests pinning their exit paths and messages (#48).
 
 ## [0.7.1] - 2026-11-22
 
@@ -143,7 +150,8 @@ First release under the name CanSNPCreator.
 
 - `export`, `audit`, `collapse` and `place`, and `extract --min-called`.
 
-[Unreleased]: https://github.com/FOI-Bioinformatics/CanSNPCreator/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/FOI-Bioinformatics/CanSNPCreator/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.8.0
 [0.7.1]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.7.1
 [0.6.0]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.6.0
 [0.5.1]: https://github.com/FOI-Bioinformatics/CanSNPCreator/releases/tag/v0.5.1

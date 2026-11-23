@@ -17,7 +17,7 @@ a scheme for
 
 [CHANGELOG.md](CHANGELOG.md) lists the changes of each version. Those that
 change what an earlier command line, scheme or file does are under
-**Upgrading**; the next release stops `extract` without an outgroup unless
+**Upgrading**; 0.8.0 stops `extract` without an outgroup unless
 `--allow-no-outgroup` is given.
 
 ## Installation
