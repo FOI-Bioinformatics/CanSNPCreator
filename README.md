@@ -55,6 +55,7 @@ work with other tools as well as with this one.
 | alignment | FASTA | The reference genome as the first record, every record the same length. Gapped, where the reference row carries the aligner's gaps, or projected onto reference coordinates, as x2fa, snippy and RepGenR2 write it. |
 | hierarchy | `child`/`parent` table, or Newick | The scheme's tree. The table is tab separated with a header naming `child` and `parent`, as FlexTaxD's taxonomy and RepGenR2's `tree2tax.tsv`; other columns are ignored. In Newick every label is a node name. |
 | genome map | two tab separated columns, no header | Genome and the node it sits at, as FlexTaxD's `--genomeid2taxid` and RepGenR2's `genomes_map.tsv`. A genome may sit at an internal node. |
+| labels | two tab separated columns, `genome` and `label` | The label of each known genome, such as a reference strain and its biovar, read by `name`. A header naming the two columns is skipped. Most genomes have none. |
 | genes | GFF3, from Prokka, Bakta or NCBI | `gene` and `CDS` features say whether a SNP is in a gene; each CDS's phase gives the reading frame. Described below. |
 | repeats, masked regions | BED, or GFF3 | BED is 0-based and half open. Regions are named by contig ID, or, with `--masks-concatenated`, given over the whole concatenated reference, as Gubbins reports recombinant regions for an alignment in reference coordinates such as RepGenR2's `full_alignment.fasta`. |
 | SNPs and scores | VCF 4.3 | Described below. |
@@ -466,6 +467,42 @@ a leaf in both unless `tree2tax --remove-outgroup` was given, and names it in
 It writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv`, the `--hierarchy`
 and `--genome-map` of `extract`, and `PREFIX_nodes.tsv`, with each node's
 genome count, support, branch length and name in the tree.
+
+### Naming nodes after what they hold
+
+The names `--rename` gives say where a node is, not what it is. `name` gives a
+node the label of the genomes it holds, from a table of known genomes, such as
+the reference strain of each biovar:
+
+```sh
+CanSNPCreator name \
+    --hierarchy draft/suis_hierarchy.tsv --genome-map draft/suis_genomes.tsv \
+    --labels biovars.tsv --outdir named --prefix suis
+```
+
+A node takes a label when every labelled genome at or below it carries that
+label, and of the nodes that do, the shallowest takes it, so the name covers as
+much of the clade as the labels allow. It is named `<root>.<label>`, and a node
+whose name extends its own, as `--rename` writes them, follows it: with
+`Bsu.1.1.2` named `Bsu.bv2`, `Bsu.1.1.2.1` becomes `Bsu.bv2.1`. The root keeps
+its name, and so does a node whose name is its own rather than an extension of
+its parent's.
+
+Two outcomes are findings about the labels rather than errors, and are reported
+as warnings. A label whose genomes share every node with a genome of another
+label names nothing, since no node of the scheme tells them apart. A label whose
+genomes do not form one clade names each of them; the one with more genomes
+takes the plain name and the others a numbered one, such as `Bsu.bv1-2`.
+
+The rule names the largest clade the labels allow, so with few labels a node can
+take a label from one genome among many. `PREFIX_names.tsv` says how much stands
+behind each name: one row per node, with its old and new name, whether it was
+named after a label, the label, the genomes below it and how many of those are
+labelled. A label covering fifteen genomes of which one is labelled is worth
+checking before it is published. Labelled genomes are matched to the genome map
+as every other genome name is, so an accession finds a record that holds it. It
+also writes `PREFIX_hierarchy.tsv` and `PREFIX_genomes.tsv` under the new names,
+for `extract`.
 
 ## Checking an existing scheme
 

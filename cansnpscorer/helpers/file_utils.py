@@ -351,6 +351,34 @@ def read_alignment_columns(path: str, columns_of: Callable[[str], Collection[int
 
 
 
+def read_labels(path: str) -> dict[str, str]:
+    """The label of each genome a label table names: two tab separated columns,
+    genome and label, as ``name`` reads them. A ``genome`` and ``label`` header is
+    skipped, and lines starting with # are comments. A genome given two labels
+    is refused rather than one of them being kept.
+    """
+    labels: dict[str, str] = {}
+    with open_text(path) as handle:
+        for number, line in enumerate(handle, 1):
+            line = line.rstrip("\r\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            fields = line.split("\t")
+            if len(fields) < 2:
+                raise ValueError(f"{path} line {number}: expected a genome and a label, "
+                                 f"tab separated")
+            genome, label = strip_fasta_suffix(fields[0].strip()), fields[1].strip()
+            if (genome, label) == ("genome", "label") and not labels:
+                continue
+            if labels.get(genome, label) != label:
+                raise ValueError(f"{path} line {number}: {genome} is given two labels, "
+                                 f"{labels[genome]} and {label}")
+            labels[genome] = label
+    if not labels:
+        raise ValueError(f"{path} labels no genome")
+    return labels
+
+
 def read_genome_map(path: str) -> dict[str, list[str]]:
     """
     Read which genomes sit at each node: two tab separated columns, genome and
