@@ -1,4 +1,4 @@
-"""The collapse and place subcommands. The work is in tree_tools."""
+"""The collapse, name and place subcommands. The work is in tree_tools."""
 
 import logging
 from dataclasses import dataclass
@@ -8,6 +8,8 @@ from cansnpscorer.helpers.file_utils import (
     fasta_ids,
     read_alignment,
     read_genome_map,
+    read_hierarchy,
+    read_labels,
     reference_parser,
 )
 from cansnpscorer.helpers.names import resolve_names
@@ -16,6 +18,7 @@ from cansnpscorer.model import ReferenceError
 from cansnpscorer.scheme import Scheme, SchemeError, read_scheme
 from cansnpscorer.tree_tools import (
     collapse,
+    name_from_labels,
     outgroup_leaves,
     place,
     place_by_clade,
@@ -24,8 +27,52 @@ from cansnpscorer.tree_tools import (
     rename,
     reroot,
     write_collapsed,
+    write_named,
     write_placement,
 )
+
+
+def name_main(hierarchy=None, genome_map=None, labels=None, outdir=".",
+              prefix="named") -> int:
+    """Name the nodes of a hierarchy after labelled genomes. Returns an exit status."""
+    try:
+        tree = read_hierarchy(hierarchy)
+        clusters = read_genome_map(genome_map)
+        given = read_labels(labels)
+    except (OSError, ValueError, HierarchyError) as error:
+        logging.error(error)
+        return 1
+
+    # A label table usually names genomes by accession and a genome map by
+    # record name, so they are matched as every other genome name is.
+    placed = [genome for genomes in clusters.values() for genome in genomes]
+    matched, unmatched, ambiguous = resolve_names(list(given), placed)
+    resolved = {matched[genome]: label for genome, label in given.items() if genome in matched}
+    try:
+        named = name_from_labels(tree, clusters, resolved)
+        written = write_named(named, tree, outdir, prefix)
+    except (OSError, ValueError, HierarchyError) as error:
+        logging.error(error)
+        return 1
+
+    if unmatched or ambiguous:
+        logging.warning(
+            f"{len(unmatched) + len(ambiguous)} labelled genomes are not in the genome map, or "
+            f"match more than one genome of it, and name nothing: "
+            f"{', '.join([*unmatched, *ambiguous][:5])}")
+    if named.unplaced:
+        logging.warning(
+            f"{len(named.unplaced)} labels share every node with another label, so no node of "
+            f"the scheme tells their genomes apart, and they name nothing: "
+            f"{', '.join(named.unplaced)}")
+    for label, nodes in sorted(named.split.items()):
+        logging.warning(
+            f"the genomes labelled {label} do not form one clade, so {len(nodes)} nodes are "
+            f"named after it: {', '.join(named.names[node] for node in nodes)}")
+    logging.info(
+        f"Named {len(named.labels)} of {len(named.names)} nodes after labels; "
+        f"wrote {', '.join(written)}")
+    return 0
 
 
 def collapse_main(tree_file=None, nodes_file=None, members=None, min_support=None,
