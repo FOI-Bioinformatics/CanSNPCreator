@@ -435,6 +435,14 @@ the canSNPs of the scheme before it, the only one with a genome outside the seam
 to settle their polarity; the finer scheme's canSNPs there are dropped, and the
 run says how many.
 
+The coarse scheme need not end at the seam. Its alignment often still tells
+some of the subgroup apart, so its tree has nodes below the seam; the finer
+scheme replaces them, with their canSNPs and genome rows, and the run names
+them in a warning. Those nodes are not checked against the finer scheme's, so a
+site they used does not count as a collision. A genome the coarse scheme places
+below the seam and the finer one does not place at all would leave the merged
+scheme, and is named in a warning.
+
 Nothing is written when the schemes do not fit, and each refusal names what is
 wrong:
 
@@ -445,12 +453,11 @@ wrong:
 | a scheme that shares no node with those before it | its tree would hang from nothing, and the merged tree would have two roots |
 | references that differ | positions on two references do not agree |
 | a node without exactly one typed canSNP, or ranks that are not 1, 2, 3 in order | as CanSNPer2 and `validate.py` require |
-| a genome at two terminal nodes | a genome sits at one node |
+| a genome at two terminal nodes | a genome sits at one node; the schemes disagree about which genomes lie below the seam |
 
-In the coarse scheme the seam is a leaf, so its genomes file lists the finer
-scheme's genomes there. Merged, the seam is an inner node, and since the genomes
-file lists terminal nodes only those rows are left out; the finer scheme places
-the genomes. A genome the finer scheme uses as its outgroup and the coarse one
+The coarse scheme lists the finer scheme's genomes at the seam or below it.
+Merged, the seam is an inner node, and since the genomes file lists terminal
+nodes only those rows are left out; the finer scheme places the genomes. A genome the finer scheme uses as its outgroup and the coarse one
 places at a node stays placed.
 
 ## Starting from a genome tree

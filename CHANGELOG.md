@@ -8,6 +8,15 @@ scheme or file does.
 
 ## [Unreleased]
 
+### Changed
+
+- `merge` takes a coarse scheme that has nodes of its own below the seam, as a
+  genus tier does when its alignment still separates some of the finer tier's
+  genomes. The finer scheme replaces those nodes, with their canSNPs and genome
+  rows, and a warning names them; before, such schemes were refused. A genome
+  the coarse scheme places below the seam and the finer one does not place is
+  named in a warning, since it would leave the merged scheme.
+
 ## [0.8.0] - 2026-11-23
 
 ### Upgrading
