@@ -64,6 +64,8 @@ class Placement:
 
     def __init__(self, scheme: Scheme, clusters: Mapping[str, Sequence[str]], genomes: Sequence[str]) -> None:
         hierarchy = scheme.hierarchy
+        # check_against_alignment returns before it gets here when there is no tree.
+        assert hierarchy is not None
         self.hierarchy = hierarchy
         self.unknown_clusters = sorted(set(clusters) - set(hierarchy.parents))
         # A genome the map puts at a node the scheme does not hold, such as
@@ -582,7 +584,7 @@ def check_extension(
         ]
         return "; ".join(shown) + (" and others" if len(entries) > 3 else "")
 
-    for node in scheme.hierarchy.nodes:
+    for node in placement.hierarchy.nodes:
         if not placement.below.get(node):
             continue
         # Sites are credited to the deepest of nodes holding the same genomes,
@@ -609,7 +611,7 @@ def check_extension(
                     "whether the node should be merged with its parent",
                 )
             )
-        elif len(found) == 1 and node != scheme.hierarchy.root:
+        elif len(found) == 1 and node != placement.hierarchy.root:
             # found[0] is 0-based along the joined reference sequences; the
             # scheme gives a 1-based position on one sequence.
             contig, local = reference.locate(found[0][0])
@@ -661,7 +663,7 @@ def check_extension(
     for parent, group, entries in candidates[:REPORTED_CLADES]:
         children = [
             child
-            for child in scheme.hierarchy.children[parent]
+            for child in placement.hierarchy.children[parent]
             if placement.below[child] and placement.below[child] <= group
         ]
         if children:
